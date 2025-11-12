@@ -1,0 +1,29 @@
+# PyCharm / JetBrains
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pdb
+*.pyproj
+*.log
+
+# Virtualenv
+.venv/
+venv/
+env/
+
+# SQLite / cache / uploads
+*.db
+*.sqlite3
+/data/*.db
+/data/cache/
