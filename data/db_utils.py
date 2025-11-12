@@ -1,0 +1,82 @@
+import aiosqlite
+from config import DB_PATH
+
+CREATE_SQL = [
+    """
+    CREATE TABLE IF NOT EXISTS products (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      section TEXT NOT NULL,             -- 'fabrics' | 'hardware'
+      category TEXT NOT NULL,
+      subcategory TEXT,
+      name TEXT NOT NULL,
+      article TEXT,
+      country TEXT,
+      fabric_type TEXT,
+      segment TEXT,
+      -- ткани: цены по коридорам (могут быть NULL для фурнитуры)
+      price_piece_85_90 REAL,
+      price_roll_85_90  REAL,
+      price_piece_90_95 REAL,
+      price_roll_90_95  REAL,
+      price_piece_95_100 REAL,
+      price_roll_95_100  REAL,
+      -- фурнитура:
+      price_rrc REAL,
+      price_opt REAL,
+      special TEXT,                      -- 'sale' | 'new' | NULL
+      in_stock INTEGER,
+      image_url TEXT
+    );
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_section_cat ON products(section, category);",
+    """
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT
+    );
+    """
+]
+
+async def init_db() -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        for sql in CREATE_SQL:
+            await db.execute(sql)
+        await db.commit()
+
+async def get_setting(key: str, default: str="") -> str:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute("SELECT value FROM settings WHERE key=?", (key,))
+        row = await cur.fetchone()
+    return row[0] if row else default
+
+async def set_setting(key: str, value: str) -> None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("INSERT INTO settings(key,value) VALUES(?,?) "
+                         "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, value))
+        await db.commit()
+
+async def fetch_sections() -> list[str]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute("SELECT DISTINCT section FROM products ORDER BY section")
+        rows = await cur.fetchall()
+    return [r[0] for r in rows]
+
+async def fetch_categories(section: str) -> list[str]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute("SELECT DISTINCT category FROM products WHERE section=? ORDER BY category", (section,))
+        rows = await cur.fetchall()
+    return [r[0] for r in rows]
+
+async def fetch_products_by_category(section: str, category: str) -> list[tuple[int,str]]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute("SELECT id,name FROM products WHERE section=? AND category=? ORDER BY name",
+                               (section, category))
+        return [(int(r[0]), r[1]) for r in await cur.fetchall()]
+
+async def fetch_product(pid: int) -> dict:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute("SELECT * FROM products WHERE id=?", (pid,))
+        row = await cur.fetchone()
+        if not row: return {}
+        cols = [c[0] for c in cur.description]
+        return dict(zip(cols, row))
