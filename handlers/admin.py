@@ -7,6 +7,7 @@ from data.db_utils import init_db
 from data.db_utils import aiosqlite
 from config import DB_PATH
 from pathlib import Path
+from structure.markdown_utils import safe_answer
 
 router = Router()
 router.message.middleware(AdminOnly())
@@ -26,7 +27,12 @@ def admin_kb():
 
 @router.callback_query(F.data == "admin:open")
 async def open_admin(cb: CallbackQuery):
-    await cb.message.answer("Админ-панель:", reply_markup=admin_kb())
+    await safe_answer(
+        cb.message,
+        "Админ-панель:",
+        reply_markup=admin_kb(),
+        parse_mode="MarkdownV2",
+    )
     await cb.answer()
 
 # простые текстовые поля (без JSON)
@@ -36,7 +42,11 @@ async def ask_text(cb: CallbackQuery):
     pretty = {"contacts":"Контакты","address":"Адрес/маршрут","worktime":"Режим работы","requisites":"Реквизиты"}[key]
     await set_setting("edit_target", key)
     cur = await get_setting(key, "")
-    await cb.message.answer(f"Пришлите новый текст для «{pretty}». Поддерживается MarkdownV2.\nТекущая версия:\n{cur or '—'}")
+    await safe_answer(
+        cb.message,
+        f"Пришлите новый текст для «{pretty}». Поддерживается MarkdownV2.\nТекущая версия:\n{cur or '—'}",
+        parse_mode="MarkdownV2",
+    )
     await cb.answer()
 
 @router.message(F.content_type == ContentType.TEXT)
@@ -46,18 +56,31 @@ async def save_text(msg: Message):
         return
     await set_setting(target, msg.text)
     await set_setting("edit_target","")
-    await msg.answer("Готово ✅", reply_markup=admin_kb())
+    await safe_answer(
+        msg,
+        "Готово ✅",
+        reply_markup=admin_kb(),
+        parse_mode="MarkdownV2",
+    )
 
 # импорты
 @router.callback_query(F.data == "admin:import:fabrics")
 async def imp_fabrics(cb: CallbackQuery): 
     await set_setting("import_target","fabrics")
-    await cb.message.answer("Пришлите XLSX с тканями.")
+    await safe_answer(
+        cb.message,
+        "Пришлите XLSX с тканями.",
+        parse_mode="MarkdownV2",
+    )
 
 @router.callback_query(F.data == "admin:import:hardware")
 async def imp_hw(cb: CallbackQuery): 
     await set_setting("import_target","hardware")
-    await cb.message.answer("Пришлите XLSX с фурнитурой.")
+    await safe_answer(
+        cb.message,
+        "Пришлите XLSX с фурнитурой.",
+        parse_mode="MarkdownV2",
+    )
 
 @router.message(F.content_type == ContentType.DOCUMENT)
 async def import_xlsx(msg: Message):
@@ -87,4 +110,9 @@ async def import_xlsx(msg: Message):
         ) for i in items])
         await db.commit()
     await set_setting("import_target","")
-    await msg.answer(f"Импорт завершён: {len(items)} позиций", reply_markup=admin_kb())
+    await safe_answer(
+        msg,
+        f"Импорт завершён: {len(items)} позиций",
+        reply_markup=admin_kb(),
+        parse_mode="MarkdownV2",
+    )

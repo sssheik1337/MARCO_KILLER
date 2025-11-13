@@ -3,6 +3,7 @@ from aiogram import Router, F
 from aiogram.types import CallbackQuery
 from config import PAGE_SIZE, ADMINS
 from structure.keyboards import main_menu, pager, product_controls
+from structure.markdown_utils import safe_answer
 from services.pagination import slice_page
 from services import cart
 from data import db_utils
@@ -49,7 +50,12 @@ def _mdv2(s: str | None) -> str:
 
 @router.callback_query(F.data == "home")
 async def on_home(cb: CallbackQuery):
-    await cb.message.answer("Главное меню:", reply_markup=main_menu(_is_admin(cb.from_user.id)))
+    await safe_answer(
+        cb.message,
+        "Главное меню:",
+        reply_markup=main_menu(_is_admin(cb.from_user.id)),
+        parse_mode="MarkdownV2",
+    )
     await cb.answer()
 
 
@@ -59,7 +65,11 @@ async def on_home(cb: CallbackQuery):
 async def catalog_root(cb: CallbackQuery):
     sections = await db_utils.fetch_sections()                # ['fabrics', 'hardware']
     if not sections:
-        await cb.message.answer("Каталог пока пуст.")
+        await safe_answer(
+            cb.message,
+            "Каталог пока пуст.",
+            parse_mode="MarkdownV2",
+        )
         await cb.answer()
         return
 
@@ -70,7 +80,12 @@ async def catalog_root(cb: CallbackQuery):
     rng, usd = await current_range()
     label = range_label(rng, usd)  # «Курс: 91.05 ₽ → 90–95»
 
-    await cb.message.answer(label, reply_markup=pager("sec", page_items, page, total))
+    await safe_answer(
+        cb.message,
+        label,
+        reply_markup=pager("sec", page_items, page, total),
+        parse_mode="MarkdownV2",
+    )
     await cb.answer()
 
 
@@ -89,12 +104,21 @@ async def open_section(cb: CallbackQuery):
     section = cb.data.split(":")[-1]                          # 'fabrics' | 'hardware'
     cats = await db_utils.fetch_categories(section)
     if not cats:
-        await cb.message.answer("Здесь пока пусто.")
+        await safe_answer(
+            cb.message,
+            "Здесь пока пусто.",
+            parse_mode="MarkdownV2",
+        )
         await cb.answer()
         return
     items = [(c, c) for c in cats]
     page_items, page, total = slice_page(items, 1, PAGE_SIZE)
-    await cb.message.answer("Категории:", reply_markup=pager(f"cat:{section}", page_items, page, total))
+    await safe_answer(
+        cb.message,
+        "Категории:",
+        reply_markup=pager(f"cat:{section}", page_items, page, total),
+        parse_mode="MarkdownV2",
+    )
     await cb.answer()
 
 
@@ -117,7 +141,12 @@ async def open_category(cb: CallbackQuery):
     prods = await db_utils.fetch_products_by_category(section, category)
     items = [(name, str(pid)) for pid, name in prods]
     page_items, page, total = slice_page(items, 1, PAGE_SIZE)
-    await cb.message.answer(category, reply_markup=pager(f"prodlist:{section}:{category}", page_items, page, total))
+    await safe_answer(
+        cb.message,
+        category,
+        reply_markup=pager(f"prodlist:{section}:{category}", page_items, page, total),
+        parse_mode="MarkdownV2",
+    )
     await cb.answer()
 
 
@@ -168,8 +197,12 @@ async def product_card(cb: CallbackQuery):
             reply_markup=product_controls(pid, qty)
         )
     else:
-        await cb.message.answer(caption, parse_mode="MarkdownV2",
-                                reply_markup=product_controls(pid, qty))
+        await safe_answer(
+            cb.message,
+            caption,
+            parse_mode="MarkdownV2",
+            reply_markup=product_controls(pid, qty),
+        )
     await cb.answer()
 
 
@@ -206,7 +239,11 @@ async def prod_add(cb: CallbackQuery):
 async def show_cart(cb: CallbackQuery):
     lines = cart.as_lines(cb.from_user.id)
     text = "\n".join(lines) if lines else "Корзина пуста"
-    await cb.message.answer(text)
+    await safe_answer(
+        cb.message,
+        text,
+        parse_mode="MarkdownV2",
+    )
     await cb.answer()
 
 
@@ -216,5 +253,10 @@ async def show_price(cb: CallbackQuery):
     sections = await db_utils.fetch_sections()
     labeled = [("🧵 Ткани" if s == "fabrics" else "🔩 Фурнитура", s) for s in sections]
     page_items, page, total = slice_page(labeled, 1, PAGE_SIZE)
-    await cb.message.answer("Выберите раздел:", reply_markup=pager("sec", page_items, page, total))
+    await safe_answer(
+        cb.message,
+        "Выберите раздел:",
+        reply_markup=pager("sec", page_items, page, total),
+        parse_mode="MarkdownV2",
+    )
     await cb.answer()
