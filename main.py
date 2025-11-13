@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from aiogram import Bot, Dispatcher
+from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 from config import BOT_TOKEN, LOG_LEVEL
@@ -11,7 +12,10 @@ from data.db_utils import init_db
 
 async def main() -> None:
     logging.basicConfig(level=getattr(logging, LOG_LEVEL.upper(), logging.INFO))
-    bot = Bot(BOT_TOKEN, parse_mode=ParseMode.HTML)
+    bot = Bot(
+        BOT_TOKEN,
+        default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN_V2),
+    )
     dp = Dispatcher(storage=MemoryStorage())
 
     await init_db()  # создаём таблицы, если их нет
