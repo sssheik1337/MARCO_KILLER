@@ -302,29 +302,6 @@ def parse_fabrics(source: SourceType) -> list[dict]:
                 logger.info("Строка ткани BISON: %s", bison_rows.iloc[0].to_dict())
 
     price_columns: dict[tuple[str, str], str] = {}
-    pending: dict[str, list[tuple[int, str]]] = {key: [] for key in _PRICE_RANGES}
-
-    for index, column in enumerate(df.columns):
-        normalized = _normalize(column)
-        for range_key, range_label in _PRICE_RANGES.items():
-            if range_label in normalized:
-                if "рол" in normalized:
-                    price_columns[(range_key, "roll")] = column
-                elif "отр" in normalized:
-                    price_columns[(range_key, "piece")] = column
-                else:
-                    pending[range_key].append((index, column))
-
-    for range_key, candidates in pending.items():
-        if (range_key, "roll") in price_columns and (range_key, "piece") in price_columns:
-            continue
-
-        ordered = [col for _, col in sorted(candidates, key=lambda item: item[0])]
-        if (range_key, "roll") not in price_columns and ordered:
-            price_columns[(range_key, "roll")] = ordered[0]
-        if (range_key, "piece") not in price_columns and len(ordered) > 1:
-            price_columns[(range_key, "piece")] = ordered[1]
-
     price_order = [
         ("85_90", "roll"),
         ("85_90", "piece"),
@@ -334,45 +311,63 @@ def parse_fabrics(source: SourceType) -> list[dict]:
         ("95_100", "piece"),
     ]
 
-    if any(key not in price_columns for key in price_order):
-        column_list = list(df.columns)
-        segment_column = columns.get("сегмент")
-        special_column = columns.get("спеццена")
+    column_list = list(df.columns)
+    segment_column = columns.get("сегмент")
+    wholesale_roll_column = columns.get("оптовая от ролика")
+    wholesale_piece_column = columns.get("оптовая в отрез")
+    special_column = columns.get("спеццена")
 
+    def _column_index(target: str | None) -> int | None:
+        """Возвращает индекс колонки или None."""
+
+        if target is None:
+            return None
         try:
-            segment_index = column_list.index(segment_column) if segment_column else None
+            return column_list.index(target)
         except ValueError:
-            segment_index = None
+            return None
 
-        try:
-            special_index = column_list.index(special_column) if special_column else None
-        except ValueError:
-            special_index = None
+    segment_index = _column_index(segment_column)
+    wholesale_roll_index = _column_index(wholesale_roll_column)
+    wholesale_piece_index = _column_index(wholesale_piece_column)
+    special_index = _column_index(special_column)
 
-        start_index = (segment_index + 1) if segment_index is not None else 0
-        if special_index is not None and special_index > start_index:
-            end_index = special_index
-        else:
-            end_index = len(column_list)
+    base_index_candidates = [
+        index for index in (wholesale_roll_index, wholesale_piece_index) if index is not None
+    ]
+    if base_index_candidates:
+        base_index = max(base_index_candidates) + 1
+    elif segment_index is not None:
+        base_index = segment_index + 1
+    else:
+        base_index = 0
 
-        candidates = [col for col in column_list[start_index:end_index] if col is not None]
+    candidates: list[str] = []
+    current_index = base_index
+    limit_index = special_index if special_index is not None else len(column_list)
 
-        if len(candidates) < len(price_order):
-            tail_start = end_index
-            while len(candidates) < len(price_order) and tail_start < len(column_list):
-                candidate = column_list[tail_start]
-                tail_start += 1
-                if candidate is not None:
-                    candidates.append(candidate)
+    while current_index < limit_index and len(candidates) < len(price_order):
+        column_name = column_list[current_index]
+        current_index += 1
+        if column_name is None:
+            continue
+        candidates.append(column_name)
 
-        if len(candidates) >= len(price_order):
-            for key, column in zip(price_order, candidates[: len(price_order)]):
-                price_columns[key] = column
-        else:
-            logger.warning(
-                "Недостаточно колонок цен для позиционного сопоставления: %s",
-                candidates,
-            )
+    while len(candidates) < len(price_order) and current_index < len(column_list):
+        column_name = column_list[current_index]
+        current_index += 1
+        if column_name is None:
+            continue
+        candidates.append(column_name)
+
+    if len(candidates) >= len(price_order):
+        for key, column in zip(price_order, candidates[: len(price_order)]):
+            price_columns[key] = column
+    else:
+        logger.warning(
+            "Недостаточно колонок цен для позиционного сопоставления: %s",
+            candidates,
+        )
 
     if logger.isEnabledFor(logging.DEBUG):
         logger.debug(
