@@ -42,18 +42,59 @@ def _number_value(value: object) -> float | None:
 
     if value is None or pd.isna(value):
         return None
-    pattern = r"[^0-9,\.\-]"
-    raw = re.sub(pattern, "", str(value))
-    if not raw:
+    text = str(value).strip()
+    if not text:
         return None
-    if "," in raw and "." in raw:
-        text = raw.replace(",", "")
-    else:
-        text = raw.replace(",", ".")
+
+    normalized = text.replace("\xa0", " ")
+    cleaned = re.sub(r"[^0-9,\.\-]", "", normalized)
+    if not cleaned:
+        return None
+
+    negative = cleaned.startswith("-")
+    if negative:
+        cleaned = cleaned[1:]
+
+    cleaned = cleaned.strip()
+    if not cleaned:
+        return None
+
+    last_comma = cleaned.rfind(",")
+    last_dot = cleaned.rfind(".")
+
+    number_text = cleaned
+    decimal_sep = None
+    thousands_sep = None
+
+    if last_comma != -1 or last_dot != -1:
+        if last_comma > last_dot:
+            decimal_sep = ","
+            thousands_sep = "." if last_dot != -1 else None
+        elif last_dot > last_comma:
+            decimal_sep = "."
+            thousands_sep = "," if last_comma != -1 else None
+        else:
+            decimal_sep = "," if last_comma != -1 else "."
+
+        if thousands_sep:
+            number_text = number_text.replace(thousands_sep, "")
+        if decimal_sep != ".":
+            number_text = number_text.replace(decimal_sep, ".")
+
+    number_text = number_text.replace(" ", "")
+
     try:
-        return float(text)
+        number = float(number_text)
     except (TypeError, ValueError):
         return None
+
+    if negative:
+        number = -number
+
+    if number <= 0:
+        return None
+
+    return number
 
 
 def _read_fabric_frame(source: SourceType) -> tuple[pd.DataFrame, dict[str, str]]:
