@@ -83,12 +83,30 @@ async def show_usd(cb: CallbackQuery):
 async def refresh_usd(cb: CallbackQuery):
     rng, usd = await refresh_range()
     text = _format_usd_message(rng, usd)
-    await safe_edit(
-        cb.message,
-        text,
-        reply_markup=usd_keyboard(),
-        parse_mode="MarkdownV2",
+    keyboard = usd_keyboard()
+    current_text = cb.message.text or ""
+    current_markup_dump = (
+        cb.message.reply_markup.model_dump() if cb.message.reply_markup else None
     )
+    new_markup_dump = keyboard.model_dump()
+
+    if current_text == text and current_markup_dump == new_markup_dump:
+        await cb.answer("Курс актуален")
+        return
+
+    try:
+        await safe_edit(
+            cb.message,
+            text,
+            reply_markup=keyboard,
+            parse_mode="MarkdownV2",
+        )
+    except TelegramBadRequest as error:
+        if "message is not modified" in str(error).lower():
+            await cb.answer("Курс актуален")
+            return
+        raise
+
     await cb.answer("Курс обновлён")
 
 # простые текстовые поля (без JSON)
