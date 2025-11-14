@@ -8,7 +8,9 @@ from data.db_utils import init_db
 from data.db_utils import aiosqlite
 from config import DB_PATH
 from pathlib import Path
-from structure.markdown_utils import safe_answer
+from structure.markdown_utils import safe_answer, safe_edit
+from structure.keyboards import usd_keyboard
+from services.exchange import current_range, refresh_range
 
 router = Router()
 router.message.middleware(AdminOnly())
@@ -47,6 +49,47 @@ async def open_admin(cb: CallbackQuery):
         parse_mode="MarkdownV2",
     )
     await cb.answer()
+
+
+def _format_usd_message(rng: str, usd: float | None) -> str:
+    """Готовит текст с текущим курсом и коридором."""
+
+    corridor = rng.replace("_", "–")
+    if usd is None:
+        rate_line = "Курс ЦБ: н/д"
+    else:
+        rate_line = f"Курс ЦБ: {usd:.2f} ₽"
+    return "\n".join([
+        rate_line,
+        f"Активный коридор: {corridor}",
+        "Режим: Авто",
+    ])
+
+
+@router.callback_query(F.data == "admin:usd")
+async def show_usd(cb: CallbackQuery):
+    rng, usd = await current_range()
+    text = _format_usd_message(rng, usd)
+    await safe_answer(
+        cb.message,
+        text,
+        reply_markup=usd_keyboard(),
+        parse_mode="MarkdownV2",
+    )
+    await cb.answer()
+
+
+@router.callback_query(F.data == "admin:usd:refresh")
+async def refresh_usd(cb: CallbackQuery):
+    rng, usd = await refresh_range()
+    text = _format_usd_message(rng, usd)
+    await safe_edit(
+        cb.message,
+        text,
+        reply_markup=usd_keyboard(),
+        parse_mode="MarkdownV2",
+    )
+    await cb.answer("Курс обновлён")
 
 # простые текстовые поля (без JSON)
 @router.callback_query(F.data.startswith("admin:edit:"))

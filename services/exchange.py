@@ -55,3 +55,17 @@ def range_label(rng: str, usd: float | None) -> str:
     if usd is None:
         return f"Курс: н/д → {pretty}"
     return f"Курс: {usd:.2f} ₽ → {pretty}"
+
+
+async def refresh_range() -> tuple[str, float | None]:
+    """Принудительно обновляет курс и возвращает актуальный коридор."""
+
+    usd = await _fetch_usd()
+    if usd is not None:
+        now = time.time()
+        await set_setting("usd_cache_value", f"{usd}")
+        await set_setting("usd_cache_ts", f"{now}")
+        rng = _pick_range(usd)
+        await set_setting("usd_range", rng)
+        return rng, usd
+    return await current_range()

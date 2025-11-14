@@ -67,3 +67,14 @@ def product_controls(product_id: int, qty: int) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="⬅️ Назад", callback_data="back"),
          InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")],
     ])
+
+
+def usd_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура управления экраном курса USD."""
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🔄 Обновить", callback_data="admin:usd:refresh")],
+            [InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")],
+        ]
+    )
