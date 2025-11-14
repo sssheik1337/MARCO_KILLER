@@ -550,7 +550,7 @@ async def product_card(cb: CallbackQuery):
     lines.append(escape_user(price_line))
     if course_line:
         lines.append(escape_user(course_line))
-    lines.append(_line("Наличие", p.get("in_stock") or 0))
+    lines.append(_line("Наличие", p.get("in_stock")))
     if not course_line:
         lines.append(escape_user(lbl))
 

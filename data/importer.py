@@ -158,7 +158,7 @@ def parse_fabrics(source: SourceType) -> list[dict]:
             "fabric_type": fabric_type,
             "segment": segment,
             "special": special_flag,
-            "in_stock": 0,
+            "in_stock": None,
         }
 
         for range_key in _PRICE_RANGES:
