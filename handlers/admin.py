@@ -133,7 +133,7 @@ async def ask_text(cb: CallbackQuery):
 
     if cur:
         await safe_send(cb.message, "Текущая версия:")
-        await safe_send(cb.message, cur)
+        await cb.message.answer(cur)
     await cb.answer()
 
 
@@ -149,7 +149,7 @@ async def preview_text(cb: CallbackQuery):
         return
 
     await safe_send(cb.message, "Предпросмотр:")
-    await safe_send(cb.message, stored)
+    await cb.message.answer(stored)
     await cb.answer()
 
 

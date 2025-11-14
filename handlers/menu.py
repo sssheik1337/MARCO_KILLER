@@ -588,12 +588,15 @@ async def _send_setting_text(target: Message, user_id: int, key: str, empty_text
     """Отправляет пользователю текст из настроек или запасной вариант."""
 
     stored = await db_utils.get_setting(key, "")
-    text = stored or empty_text
-    await safe_send(
-        target,
-        text,
-        reply_markup=main_menu(_is_admin(user_id)),
-    )
+    reply_markup = main_menu(_is_admin(user_id))
+    if stored:
+        await target.answer(stored, reply_markup=reply_markup)
+    else:
+        await safe_send(
+            target,
+            empty_text,
+            reply_markup=reply_markup,
+        )
 
 
 _INFO_COMMANDS = {
