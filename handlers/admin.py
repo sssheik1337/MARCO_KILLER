@@ -198,11 +198,11 @@ async def import_xlsx(msg: Message):
     target = await get_setting("import_target","")
     if not target: return
     f = await msg.bot.get_file(msg.document.file_id)
-    p = await msg.bot.download_file(f.file_path)
+    stream = await msg.bot.download_file(f.file_path)
     if target == "fabrics":
-        items = parse_fabrics(p.name)
+        items = parse_fabrics(stream)
     else:
-        items = parse_hardware(p.name)
+        items = parse_hardware(stream)
     # полная замена раздела
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("DELETE FROM products WHERE section=?", (target,))
