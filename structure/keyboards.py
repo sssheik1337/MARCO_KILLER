@@ -49,13 +49,13 @@ def empty_catalog_keyboard(is_admin: bool) -> InlineKeyboardMarkup:
 def pager(prefix: str, items: list[tuple[str, str]], page: int, total: int) -> InlineKeyboardMarkup:
     rows = [[InlineKeyboardButton(text=title, callback_data=f"{prefix}:open:{item_id}")]
             for title, item_id in items]
-    nav = []
+    nav_row: list[InlineKeyboardButton] = []
     if page > 1:
-        nav.append(InlineKeyboardButton(text="⬅️", callback_data=f"{prefix}:page:{page-1}"))
+        nav_row.append(InlineKeyboardButton(text="⬅️", callback_data=f"{prefix}:page:{page-1}"))
+    nav_row.append(InlineKeyboardButton(text="🏠 Главное меню", callback_data="home"))
     if page < total:
-        nav.append(InlineKeyboardButton(text="➡️", callback_data=f"{prefix}:page:{page+1}"))
-    rows.append(nav or [InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")])
-    rows.append([InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")])
+        nav_row.append(InlineKeyboardButton(text="➡️", callback_data=f"{prefix}:page:{page+1}"))
+    rows.append(nav_row)
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 def product_controls(product_id: int, qty: int) -> InlineKeyboardMarkup:
