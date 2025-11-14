@@ -1,87 +1,175 @@
 from typing import BinaryIO, Union
 
-import pandas as pd
 import re
 
-def _col(df, names):  # ищем первую подходящую колонку
-    for n in names:
-        if n in df.columns:
-            return n
-    return None
+import pandas as pd
+
 
 SourceType = Union[str, BinaryIO]
 
+_PRICE_RANGES = {
+    "85_90": "85-90",
+    "90_95": "90-95",
+    "95_100": "95-100",
+}
+
 
 def _reset_stream(source: SourceType) -> SourceType:
+    """Возвращает источник в начало, если он поток."""
+
     if hasattr(source, "seek"):
         source.seek(0)
     return source
 
 
-def parse_fabrics(source: SourceType) -> list[dict]:
-    source = _reset_stream(source)
-    df = pd.read_excel(source, header=4)  # у твоего файла хедер с 5-й строки
-    # авто-поиск столбцов цен по коридорам
-    price_cols = {}
-    for col in df.columns:
-        m = re.search(r"(85-90|90-95|95-100).*?(РОЛИК|отрез)", str(col), re.I)
-        if m:
-            rng = m.group(1).replace('-', '_')
-            kind = "roll" if m.group(2).lower().startswith("рол") else "piece"
-            price_cols[f"{kind}_{rng}"] = col
+def _normalize(name: object) -> str:
+    """Приводит имя колонки к нижнему регистру без лишних пробелов."""
 
-    items = []
-    for _, r in df.iterrows():
-        name = str(r.get(_col(df, ["Наименование коллекции","Коллекция"]))).strip()
-        if name in ("nan","None",""):
+    return " ".join(str(name).strip().lower().split())
+
+
+def _string_value(value: object) -> str | None:
+    """Возвращает строковое представление значения или None."""
+
+    if value is None or pd.isna(value):
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _number_value(value: object) -> float | None:
+    """Преобразует ячейку с ценой к числу."""
+
+    if value is None or pd.isna(value):
+        return None
+    pattern = r"[^0-9,\.\-]"
+    raw = re.sub(pattern, "", str(value))
+    if not raw:
+        return None
+    if "," in raw and "." in raw:
+        text = raw.replace(",", "")
+    else:
+        text = raw.replace(",", ".")
+    try:
+        return float(text)
+    except (TypeError, ValueError):
+        return None
+
+
+def _read_fabric_frame(source: SourceType) -> tuple[pd.DataFrame, dict[str, str]]:
+    """Подбирает корректный заголовок и возвращает датафрейм с маппингом колонок."""
+
+    header_candidates = (0, 1, 2, 3, 4, 5)
+
+    for header in header_candidates:
+        current_source = _reset_stream(source)
+        df = pd.read_excel(current_source, header=header)
+        mapping = {_normalize(col): col for col in df.columns}
+        if "наименование коллекции" in mapping:
+            return df, mapping
+
+    raise ValueError("Не удалось найти заголовок с колонкой 'Наименование коллекции'")
+
+
+def _resolve_column(columns: dict[str, str], *aliases: str) -> str | None:
+    """Возвращает имя существующей колонки по набору псевдонимов."""
+
+    for alias in aliases:
+        normalized = _normalize(alias)
+        if normalized in columns:
+            return columns[normalized]
+    return None
+
+
+def parse_fabrics(source: SourceType) -> list[dict]:
+    """Разбирает XLSX с тканями и возвращает список товаров."""
+
+    df, columns = _read_fabric_frame(source)
+
+    price_columns: dict[tuple[str, str], str] = {}
+    for column in df.columns:
+        normalized = _normalize(column)
+        for range_key, range_label in _PRICE_RANGES.items():
+            if range_label in normalized:
+                if "рол" in normalized:
+                    price_columns[(range_key, "roll")] = column
+                elif "отр" in normalized:
+                    price_columns[(range_key, "piece")] = column
+
+    items: list[dict] = []
+    name_column = columns.get("наименование коллекции")
+
+    for _, row in df.iterrows():
+        name = _string_value(row.get(name_column)) if name_column else None
+        if not name:
             continue
-        rec = {
+
+        country = _string_value(row.get(columns.get("страна")))
+        fabric_type = _string_value(row.get(columns.get("тип ткани")))
+        segment = _string_value(row.get(columns.get("сегмент")))
+        special_flag = _string_value(row.get(columns.get("спеццена")))
+
+        record: dict[str, object] = {
             "section": "fabrics",
             "category": "Ткани",
             "name": name,
-            "country": r.get(_col(df, ["Страна"])),
-            "fabric_type": r.get(_col(df, ["Тип ткани"])),
-            "segment": r.get(_col(df, ["сегмент","Сегмент"])),
-            "special": (str(r.get(_col(df, ["спеццена","Статус"]))).strip().lower()
-                        if pd.notna(r.get(_col(df, ["спеццена","Статус"]))) else None),
-            "in_stock": 0
+            "country": country,
+            "fabric_type": fabric_type,
+            "segment": segment,
+            "special": special_flag,
+            "in_stock": 0,
         }
-        # нормализуем special
-        if isinstance(rec["special"], str):
-            if "распрод" in rec["special"]: rec["special"] = "sale"
-            elif "новин" in rec["special"]: rec["special"] = "new"
-            else: rec["special"] = None
-        # цены по коридорам
-        for key, col in price_cols.items():
-            v = r.get(col)
-            if pd.notna(v):
-                rec[f"price_{key}"] = float(str(v).replace(" ", "").replace("р","").replace(",", "."))
-        items.append(rec)
+
+        for range_key in _PRICE_RANGES:
+            for price_kind in ("piece", "roll"):
+                column_name = price_columns.get((range_key, price_kind))
+                field_name = f"price_{price_kind}_{range_key}"
+                record[field_name] = (
+                    _number_value(row.get(column_name)) if column_name else None
+                )
+
+        items.append(record)
+
     return items
+
 
 def parse_hardware(source: SourceType) -> list[dict]:
-    source = _reset_stream(source)
-    df = pd.read_excel(source, header=10)  # по скрину заголовки около 11 строки
-    items = []
-    for _, r in df.iterrows():
-        name = r.get(_col(df, ["Наименование"]))
-        art = r.get(_col(df, ["Артикул"]))
-        if pd.isna(name) and pd.isna(art):
-            continue
-        items.append({
-            "section": "hardware",
-            "category": str(r.get(_col(df, ["Коллекция"])) or "Фурнитура"),
-            "name": str(name),
-            "article": str(art) if pd.notna(art) else None,
-            "country": str(r.get(_col(df, ["Бренд (Страна)"])) or ""),
-            "price_rrc": _num(r.get(_col(df, ["РРЦ"]))),
-            "price_opt": _num(r.get(_col(df, ["Оптовая"]))),
-            "in_stock": None,
-        })
-    return items
+    """Разбирает XLSX с фурнитурой."""
 
-def _num(v):
-    if pd.isna(v): return None
-    s = str(v).replace(" ", "").replace("RUB","").replace(",", ".")
-    try: return float(s)
-    except: return None
+    df_source = _reset_stream(source)
+    df = pd.read_excel(df_source, header=10)
+    columns = {_normalize(col): col for col in df.columns}
+
+    name_col = _resolve_column(columns, "Наименование")
+    article_col = _resolve_column(columns, "Артикул")
+    category_col = _resolve_column(columns, "Коллекция")
+    country_col = _resolve_column(columns, "Бренд (Страна)", "Страна")
+    rrc_col = _resolve_column(columns, "РРЦ")
+    opt_col = _resolve_column(columns, "Оптовая", "Опт")
+
+    items: list[dict] = []
+
+    for _, row in df.iterrows():
+        name = _string_value(row.get(name_col)) if name_col else None
+        article = _string_value(row.get(article_col)) if article_col else None
+
+        if not name and not article:
+            continue
+
+        category = _string_value(row.get(category_col)) if category_col else None
+        country = _string_value(row.get(country_col)) if country_col else None
+
+        items.append(
+            {
+                "section": "hardware",
+                "category": category or "Фурнитура",
+                "name": name or (article or ""),
+                "article": article,
+                "country": country,
+                "price_rrc": _number_value(row.get(rrc_col)) if rrc_col else None,
+                "price_opt": _number_value(row.get(opt_col)) if opt_col else None,
+                "in_stock": None,
+            }
+        )
+
+    return items

@@ -23,7 +23,7 @@ CREATE_SQL = [
       -- фурнитура:
       price_rrc REAL,
       price_opt REAL,
-      special TEXT,                      -- 'sale' | 'new' | NULL
+      special TEXT,                      -- дополнительная отметка (распродажа, новинка и т.д.)
       in_stock INTEGER,
       image_url TEXT
     );

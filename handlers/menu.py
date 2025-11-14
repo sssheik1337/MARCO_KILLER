@@ -39,6 +39,17 @@ def _format_money(value: float | None) -> str:
     return f"{value:.2f} ₽"
 
 
+def _as_float(value: object) -> float | None:
+    """Аккуратно приводит значение к числу с плавающей точкой."""
+
+    if value in (None, "", "—"):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _resolve_cart_price(product: dict, rng: str) -> float | None:
     """Определяет цену товара для расчёта корзины."""
 
@@ -384,25 +395,47 @@ async def product_card(cb: CallbackQuery):
     # цены
     course_line = None
     if p["section"] == "fabrics":
-        piece = p.get(f"price_piece_{rng}")
-        roll = p.get(f"price_roll_{rng}")
-        price_line = f"Отрез: {piece or '-'} · Ролик: {roll or '-'}"
+        piece = _format_money(_as_float(p.get(f"price_piece_{rng}")))
+        roll = _format_money(_as_float(p.get(f"price_roll_{rng}")))
+        price_line = f"Отрез: {piece} · Ролик: {roll}"
         course_line = f"💵 {lbl}"
     else:
-        price_line = f"РРЦ: {p.get('price_rrc') or '-'} · Опт: {p.get('price_opt') or '-'}"
+        rrc = _format_money(_as_float(p.get("price_rrc")))
+        opt = _format_money(_as_float(p.get("price_opt")))
+        price_line = f"РРЦ: {rrc} · Опт: {opt}"
 
     qty = cart.get_qty(cb.from_user.id, pid) or 1
 
+    def _line(label: str, value: object) -> str:
+        text = value if value not in (None, "") else "-"
+        return escape_user(f"{label}: {text}")
+
+    article_value = p.get("article") if p["section"] != "fabrics" else "-"
+
     lines = [
         f"*{escape_user(p.get('name'))}*",
-        f"Артикул: {escape_user(p.get('article'))}",
-        f"{escape_user(price_line)}",
+        _line("Артикул", article_value or "-"),
     ]
+
+    if p["section"] == "fabrics":
+        lines.extend(
+            [
+                _line("Страна", p.get("country")),
+                _line("Тип ткани", p.get("fabric_type")),
+                _line("Сегмент", p.get("segment")),
+            ]
+        )
+
+    lines.append(escape_user(price_line))
     if course_line:
         lines.append(escape_user(course_line))
-    lines.append(f"Наличие: {p.get('in_stock') or 0}")
+    lines.append(_line("Наличие", p.get("in_stock") or 0))
     if not course_line:
         lines.append(escape_user(lbl))
+
+    special_flag = p.get("special")
+    if special_flag:
+        lines.append(_line("Статус", special_flag))
 
     caption = "\n".join(lines)
 

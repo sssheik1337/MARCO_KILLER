@@ -13,7 +13,7 @@ class Product(BaseModel):
     segment: str | None = None
     price_piece: float | None = None
     price_roll: float | None = None
-    special: str | None = None  # "sale" | "new" | None
+    special: str | None = None  # произвольная отметка из прайс-листа
     in_stock: int | None = None
     image_url: str | None = None
 
