@@ -19,7 +19,11 @@ async def main() -> None:
     )
     dp = Dispatcher(storage=MemoryStorage())
 
-    await init_db()  # создаём таблицы, если их нет
+    try:
+        await init_db()  # создаём таблицы, если их нет
+    except Exception as exc:
+        logging.exception("Не удалось инициализировать базу данных: %s", exc)
+        return
 
     dp.include_router(start_handlers.router)
     dp.include_router(menu_handlers.router)
