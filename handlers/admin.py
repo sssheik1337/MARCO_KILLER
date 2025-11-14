@@ -14,6 +14,15 @@ router = Router()
 router.message.middleware(AdminOnly())
 router.callback_query.middleware(AdminOnly())
 
+
+_EDITABLE_SETTINGS = {
+    "contacts": "Контакты",
+    "address": "Адрес/маршрут",
+    "worktime": "Режим работы",
+    "requisites": "Реквизиты",
+}
+
+
 def admin_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📇 Править контакты", callback_data="admin:edit:contacts"),
@@ -108,7 +117,10 @@ async def refresh_usd(cb: CallbackQuery):
 @router.callback_query(F.data.startswith("admin:edit:"))
 async def ask_text(cb: CallbackQuery):
     key = cb.data.split(":")[-1]
-    pretty = {"contacts":"Контакты","address":"Адрес/маршрут","worktime":"Режим работы","requisites":"Реквизиты"}[key]
+    pretty = _EDITABLE_SETTINGS.get(key)
+    if not pretty:
+        await cb.answer()
+        return
     await set_setting("edit_target", key)
     cur = await get_setting(key, "")
     prompt_lines = [
@@ -137,6 +149,9 @@ async def preview_text(cb: CallbackQuery):
     """Показывает текущую версию настройки с сохранением форматирования."""
 
     key = cb.data.split(":")[-1]
+    if key not in _EDITABLE_SETTINGS:
+        await cb.answer()
+        return
     stored = await get_setting(key, "")
     if not stored:
         await send_md_safe(cb.message, "Текст пока не задан.")
@@ -151,7 +166,7 @@ async def preview_text(cb: CallbackQuery):
 @router.message(F.content_type == ContentType.TEXT)
 async def save_text(msg: Message):
     target = await get_setting("edit_target","")
-    if not target: 
+    if target not in _EDITABLE_SETTINGS:
         return
     await set_setting(target, message_to_markdown(msg))
     await set_setting("edit_target","")
