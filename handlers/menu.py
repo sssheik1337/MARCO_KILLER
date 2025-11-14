@@ -288,22 +288,29 @@ async def product_card(cb: CallbackQuery):
     lbl = range_label(rng, usd)
 
     # цены
+    course_line = None
     if p["section"] == "fabrics":
         piece = p.get(f"price_piece_{rng}")
         roll = p.get(f"price_roll_{rng}")
         price_line = f"Отрез: {piece or '-'} · Ролик: {roll or '-'}"
+        course_line = f"💵 {lbl}"
     else:
         price_line = f"РРЦ: {p.get('price_rrc') or '-'} · Опт: {p.get('price_opt') or '-'}"
 
     qty = cart.get_qty(cb.from_user.id, pid) or 1
 
-    caption = (
-        f"*{_mdv2(p.get('name'))}*\n"
-        f"Артикул: {_mdv2(p.get('article'))}\n"
-        f"{_mdv2(price_line)}\n"
-        f"Наличие: {p.get('in_stock') or 0}\n"
-        f"{_mdv2(lbl)}"
-    )
+    lines = [
+        f"*{_mdv2(p.get('name'))}*",
+        f"Артикул: {_mdv2(p.get('article'))}",
+        f"{_mdv2(price_line)}",
+    ]
+    if course_line:
+        lines.append(_mdv2(course_line))
+    lines.append(f"Наличие: {p.get('in_stock') or 0}")
+    if not course_line:
+        lines.append(_mdv2(lbl))
+
+    caption = "\n".join(lines)
 
     if p.get("image_url"):
         await cb.message.answer_photo(
