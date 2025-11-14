@@ -1,4 +1,5 @@
 from typing import BinaryIO, Union
+from collections.abc import Iterable
 
 import logging
 import re
@@ -56,9 +57,38 @@ def _normalize(name: object) -> str:
 def _string_value(value: object) -> str | None:
     """Возвращает строковое представление значения или None."""
 
-    if value is None or pd.isna(value):
+    candidate = value
+
+    if isinstance(candidate, (pd.Series, pd.Index)):
+        iterable: Iterable = candidate.tolist()
+    elif isinstance(candidate, (list, tuple, set)):
+        iterable = list(candidate)
+    else:
+        iterable = None
+
+    if iterable is not None:
+        candidate = None
+        for item in iterable:
+            if item is None:
+                continue
+            try:
+                if pd.isna(item):
+                    continue
+            except TypeError:
+                pass
+            candidate = item
+            break
+
+    if candidate is None:
         return None
-    text = str(value).strip()
+
+    try:
+        if pd.isna(candidate):
+            return None
+    except TypeError:
+        pass
+
+    text = str(candidate).strip()
     return text or None
 
 
