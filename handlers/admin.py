@@ -1,4 +1,5 @@
 from aiogram import Router, F
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import CallbackQuery, Message, ContentType, InlineKeyboardMarkup, InlineKeyboardButton
 from middlewares.admin_filter import AdminOnly
 from data.db_utils import set_setting, get_setting
@@ -25,6 +26,18 @@ def admin_kb():
         [InlineKeyboardButton(text="🏠 В меню", callback_data="home")],
     ])
 
+
+def edit_prompt_kb(target: str) -> InlineKeyboardMarkup:
+    """Формирует клавиатуру с кнопкой предпросмотра текущего текста."""
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="👁 Предпросмотр", callback_data=f"admin:preview:{target}")],
+            [InlineKeyboardButton(text="🏠 В меню", callback_data="home")],
+        ]
+    )
+
+
 @router.callback_query(F.data == "admin:open")
 async def open_admin(cb: CallbackQuery):
     await safe_answer(
@@ -42,12 +55,50 @@ async def ask_text(cb: CallbackQuery):
     pretty = {"contacts":"Контакты","address":"Адрес/маршрут","worktime":"Режим работы","requisites":"Реквизиты"}[key]
     await set_setting("edit_target", key)
     cur = await get_setting(key, "")
+    prompt = (
+        f"Пришлите новый текст для «{pretty}». Поддерживается MarkdownV2.\n"
+        "Используйте кнопку «👁 Предпросмотр», чтобы оценить форматирование.\n"
+        f"Текущая версия:\n{cur or '—'}"
+    )
     await safe_answer(
         cb.message,
-        f"Пришлите новый текст для «{pretty}». Поддерживается MarkdownV2.\nТекущая версия:\n{cur or '—'}",
+        prompt,
+        reply_markup=edit_prompt_kb(key),
         parse_mode="MarkdownV2",
     )
     await cb.answer()
+
+
+@router.callback_query(F.data.startswith("admin:preview:"))
+async def preview_text(cb: CallbackQuery):
+    """Показывает текущую версию настройки с сохранением форматирования."""
+
+    key = cb.data.split(":")[-1]
+    stored = await get_setting(key, "")
+    if not stored:
+        await safe_answer(
+            cb.message,
+            "Текст пока не задан.",
+            parse_mode="MarkdownV2",
+        )
+        await cb.answer()
+        return
+
+    try:
+        await safe_answer(
+            cb.message,
+            stored,
+            escape=False,
+            parse_mode="MarkdownV2",
+        )
+    except TelegramBadRequest as error:
+        await safe_answer(
+            cb.message,
+            f"Не удалось показать предпросмотр: {error.message}",
+            parse_mode="MarkdownV2",
+        )
+    await cb.answer()
+
 
 @router.message(F.content_type == ContentType.TEXT)
 async def save_text(msg: Message):
