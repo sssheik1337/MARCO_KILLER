@@ -15,7 +15,12 @@ from structure.keyboards import (
     empty_catalog_keyboard,
     cart_keyboard,
 )
-from structure.markdown import edit_md_safe, escape_user, send_md_safe
+from structure.markdown import (
+    edit_md_safe,
+    escape_user,
+    send_md_safe,
+    send_md_safe_to_chat,
+)
 from structure.states import SupportRequestState
 from services.pagination import slice_page
 from services import cart, view_filters, profiles
@@ -719,7 +724,8 @@ async def checkout_cart(cb: CallbackQuery):
     if admin_text and ADMINS:
         for admin_id in ADMINS:
             try:
-                await cb.message.bot.send_message(
+                await send_md_safe_to_chat(
+                    cb.message.bot,
                     admin_id,
                     admin_text,
                 )

@@ -5,7 +5,8 @@ from __future__ import annotations
 import re
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Iterable
+from typing import Awaitable, Callable, Iterable
+from aiogram import Bot
 from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import (
@@ -250,34 +251,17 @@ async def send_md_safe(
     экранируем текст или отправляем plain-версию.
     """
 
-    async def _answer(msg: Message, payload: str, parse_mode: ParseMode | None):
+    destination = target if isinstance(target, Message) else target.message
+
+    async def _sender(payload: str, parse_mode: ParseMode | None):
         kwargs: dict[str, object] = {"reply_markup": reply_markup}
         if parse_mode is not None:
             kwargs["parse_mode"] = parse_mode
         if disable_web_page_preview is not None:
             kwargs["disable_web_page_preview"] = disable_web_page_preview
-        return await msg.answer(payload, **kwargs)
+        return await destination.answer(payload, **kwargs)
 
-    destination = target if isinstance(target, Message) else target.message
-
-    try:
-        return await _answer(destination, text, None)
-    except TelegramBadRequest:
-        pass
-
-    preserved = MarkdownV2Escaper.escape_preserving(text)
-    if preserved:
-        try:
-            return await _answer(destination, preserved, ParseMode.MARKDOWN_V2)
-        except TelegramBadRequest:
-            pass
-
-    try:
-        return await _answer(destination, escape_full(text), ParseMode.MARKDOWN_V2)
-    except TelegramBadRequest:
-        pass
-
-    return await _answer(destination, strip_markdown(text), None)
+    return await _send_with_fallback(_sender, text)
 
 
 async def edit_md_safe(
@@ -292,29 +276,58 @@ async def edit_md_safe(
     экранированный либо «обезжиренный» вариант.
     """
 
-    async def _edit(msg: Message, payload: str, parse_mode: ParseMode | None):
+    destination = target if isinstance(target, Message) else target.message
+
+    async def _sender(payload: str, parse_mode: ParseMode | None):
         kwargs: dict[str, object] = {"reply_markup": reply_markup}
         if parse_mode is not None:
             kwargs["parse_mode"] = parse_mode
-        return await msg.edit_text(payload, **kwargs)
+        return await destination.edit_text(payload, **kwargs)
 
-    destination = target if isinstance(target, Message) else target.message
+    return await _send_with_fallback(_sender, text)
+
+
+async def send_md_safe_to_chat(
+    bot: Bot,
+    chat_id: int,
+    text: str,
+    reply_markup: InlineKeyboardMarkup | ReplyKeyboardMarkup | ReplyKeyboardRemove | None = None,
+    *,
+    disable_web_page_preview: bool | None = None,
+):
+    """Отправляет MarkdownV2-сообщение в указанный чат с обработкой ошибок."""
+
+    async def _sender(payload: str, parse_mode: ParseMode | None):
+        kwargs: dict[str, object] = {"reply_markup": reply_markup}
+        if parse_mode is not None:
+            kwargs["parse_mode"] = parse_mode
+        if disable_web_page_preview is not None:
+            kwargs["disable_web_page_preview"] = disable_web_page_preview
+        return await bot.send_message(chat_id, payload, **kwargs)
+
+    return await _send_with_fallback(_sender, text)
+
+
+async def _send_with_fallback(
+    sender: Callable[[str, ParseMode | None], Awaitable[Message]], text: str
+) -> Message:
+    """Выполняет отправку с несколькими попытками для сохранения Markdown."""
 
     try:
-        return await _edit(destination, text, None)
+        return await sender(text, None)
     except TelegramBadRequest:
         pass
 
     preserved = MarkdownV2Escaper.escape_preserving(text)
     if preserved:
         try:
-            return await _edit(destination, preserved, ParseMode.MARKDOWN_V2)
+            return await sender(preserved, ParseMode.MARKDOWN_V2)
         except TelegramBadRequest:
             pass
 
     try:
-        return await _edit(destination, escape_full(text), ParseMode.MARKDOWN_V2)
+        return await sender(escape_full(text), ParseMode.MARKDOWN_V2)
     except TelegramBadRequest:
         pass
 
-    return await _edit(destination, strip_markdown(text), None)
+    return await sender(strip_markdown(text), None)
