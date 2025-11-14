@@ -2,7 +2,7 @@
 from aiogram import Router, F
 from aiogram.types import CallbackQuery
 from config import PAGE_SIZE, ADMINS
-from structure.keyboards import main_menu, pager, product_controls
+from structure.keyboards import main_menu, pager, product_controls, empty_catalog_keyboard
 from structure.markdown_utils import safe_answer
 from services.pagination import slice_page
 from services import cart
@@ -65,9 +65,11 @@ async def on_home(cb: CallbackQuery):
 async def catalog_root(cb: CallbackQuery):
     sections = await db_utils.fetch_sections()                # ['fabrics', 'hardware']
     if not sections:
+        is_admin = _is_admin(cb.from_user.id)
         await safe_answer(
             cb.message,
-            "Каталог пока пуст.",
+            "Каталог пуст: загрузите XLSX тканей и фурнитуры",
+            reply_markup=empty_catalog_keyboard(is_admin),
             parse_mode="MarkdownV2",
         )
         await cb.answer()

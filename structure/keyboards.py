@@ -19,6 +19,33 @@ def main_menu(is_admin: bool) -> InlineKeyboardMarkup:
         rows.append([InlineKeyboardButton(text="🛠 Админ-панель", callback_data="admin:open")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
+
+def empty_catalog_keyboard(is_admin: bool) -> InlineKeyboardMarkup:
+    """Клавиатура для пустого каталога до первичного импорта."""
+
+    if is_admin:
+        rows = [
+            [
+                InlineKeyboardButton(
+                    text="📤 Импорт тканей (XLSX)",
+                    callback_data="admin:import:fabrics",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="📤 Импорт фурнитуры (XLSX)",
+                    callback_data="admin:import:hardware",
+                )
+            ],
+            [InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")],
+        ]
+    else:
+        rows = [
+            [InlineKeyboardButton(text="Связаться", callback_data="menu:contacts")],
+            [InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")],
+        ]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
 def pager(prefix: str, items: list[tuple[str, str]], page: int, total: int) -> InlineKeyboardMarkup:
     rows = [[InlineKeyboardButton(text=title, callback_data=f"{prefix}:open:{item_id}")]
             for title, item_id in items]
