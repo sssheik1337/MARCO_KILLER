@@ -98,7 +98,43 @@ def _number_value(value: object) -> float | None:
 
 
 def _read_fabric_frame(source: SourceType) -> tuple[pd.DataFrame, dict[str, str]]:
-    """Подбирает корректный заголовок и возвращает датафрейм с маппингом колонок."""
+    """Возвращает датафрейм с колонками тканей и их сопоставление."""
+
+    current_source = _reset_stream(source)
+    try:
+        df_multi = pd.read_excel(current_source, header=[3, 4])
+    except ValueError:
+        df_multi = None
+
+    if df_multi is not None and isinstance(df_multi.columns, pd.MultiIndex):
+        combined_columns: list[str] = []
+        last_top = ""
+
+        for top, bottom in df_multi.columns:
+            top_text = "" if pd.isna(top) else str(top).strip()
+            bottom_text = "" if pd.isna(bottom) else str(bottom).strip()
+
+            if not top_text:
+                lower_bottom = bottom_text.lower()
+                if lower_bottom in {"ролик", "отрез"} and last_top:
+                    top_text = last_top
+                else:
+                    top_text = ""
+                    last_top = ""
+            else:
+                last_top = top_text
+
+            if top_text and bottom_text:
+                combined = f"{top_text}__{bottom_text}"
+            else:
+                combined = top_text or bottom_text
+
+            combined_columns.append(combined)
+
+        df_multi.columns = combined_columns
+        mapping_multi = {_normalize(col): col for col in combined_columns}
+        if "наименование коллекции" in mapping_multi:
+            return df_multi, mapping_multi
 
     header_candidates = (0, 1, 2, 3, 4, 5)
 
