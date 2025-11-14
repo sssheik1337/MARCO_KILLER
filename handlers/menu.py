@@ -315,8 +315,8 @@ async def open_section(cb: CallbackQuery):
         )
         await cb.answer()
         return
-    items = [(c, c) for c in cats]
-    page_items, page, total = slice_page(items, 1, PAGE_SIZE)
+    enumerated = [(name, str(idx)) for idx, name in enumerate(cats)]
+    page_items, page, total = slice_page(enumerated, 1, PAGE_SIZE)
     cat_prefix = "catstock" if only_available else "cat"
     await send_md_safe(
         cb.message,
@@ -335,8 +335,8 @@ async def open_category_page(cb: CallbackQuery):
     page = int(parts[-1])
     only_available = prefix == "catstock"
     cats = await db_utils.fetch_categories(section, only_available=only_available)
-    items = [(c, c) for c in cats]
-    page_items, page, total = slice_page(items, page, PAGE_SIZE)
+    enumerated = [(name, str(idx)) for idx, name in enumerate(cats)]
+    page_items, page, total = slice_page(enumerated, page, PAGE_SIZE)
     await cb.message.edit_reply_markup(
         reply_markup=pager(f"{prefix}:{section}", page_items, page, total)
     )
@@ -349,8 +349,25 @@ async def open_category(cb: CallbackQuery):
     parts = cb.data.split(":")
     prefix = parts[0]
     section = parts[1]
-    category = parts[-1]
+    category_idx_raw = parts[-1]
     only_available = prefix == "catstock"
+    try:
+        category_idx = int(category_idx_raw)
+    except ValueError:
+        logger.warning("Некорректный индекс категории: %s", category_idx_raw)
+        await cb.answer("Категория недоступна", show_alert=True)
+        return
+
+    cats = await db_utils.fetch_categories(section, only_available=only_available)
+    if category_idx < 0 or category_idx >= len(cats):
+        logger.warning(
+            "Категория с индексом %s не найдена для раздела %s", category_idx, section
+        )
+        await cb.answer("Категория недоступна", show_alert=True)
+        return
+
+    category = cats[category_idx]
+
     prods = await db_utils.fetch_products_by_category(
         section,
         category,
