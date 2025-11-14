@@ -131,13 +131,13 @@ def _render_cart_text(items: list[dict], total: float, has_priced: bool, label: 
         return "Корзина пуста"
 
     lines = [
-        f"{escape_user(item['name'] or '-')} × {item['qty']} = {escape_user(_format_money(item['line_total']))}"
+        f"{item['name'] or '-'} × {item['qty']} = {_format_money(item['line_total'])}"
         for item in items
     ]
     total_line = _format_money(total) if has_priced else "—"
-    lines.append(f"*Итого:* {escape_user(total_line)}")
+    lines.append(f"*Итого:* {total_line}")
     if label:
-        lines.append(escape_user(label))
+        lines.append(label)
     return "\n".join(lines)
 
 
@@ -166,13 +166,13 @@ def _render_cart_admin_text(
         header.append(f"Юзернейм: @{escape_user(from_user.username)}")
 
     body = [
-        f"- {escape_user(item['name'])} × {item['qty']} = {escape_user(_format_money(item['line_total']))} (ID: {item['id']})"
+        f"- {escape_user(item['name'])} × {item['qty']} = {_format_money(item['line_total'])} (ID: {item['id']})"
         for item in items
     ]
     total_line = _format_money(total) if has_priced else "—"
-    footer = [f"Итого: {escape_user(total_line)}"]
+    footer = [f"Итого: {total_line}"]
     if label:
-        footer.append(escape_user(label))
+        footer.append(label)
 
     return "\n".join(header + ["Позиции:"] + body + footer)
 
