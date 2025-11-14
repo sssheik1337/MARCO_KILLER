@@ -16,7 +16,7 @@ from structure.markdown_utils import safe_answer, safe_edit
 from structure.formatter import escape_md
 from structure.states import SupportRequestState
 from services.pagination import slice_page
-from services import cart
+from services import cart, view_filters
 from data import db_utils
 from services.exchange import current_range, range_label
 
@@ -243,15 +243,22 @@ async def on_home(cb: CallbackQuery):
 
 @router.callback_query(F.data == "menu:catalog")
 async def catalog_root(cb: CallbackQuery):
-    sections = await db_utils.fetch_sections()                # ['fabrics', 'hardware']
+    user_id = cb.from_user.id
+    only_available = view_filters.is_in_stock(user_id)
+    sections = await db_utils.fetch_sections(only_available=only_available)
     if not sections:
-        is_admin = _is_admin(cb.from_user.id)
-        await safe_answer(
-            cb.message,
-            "Каталог пуст: загрузите XLSX тканей и фурнитуры",
-            reply_markup=empty_catalog_keyboard(is_admin),
-            parse_mode="MarkdownV2",
-        )
+        if only_available:
+            await safe_answer(
+                cb.message,
+                "Сейчас нет товаров в наличии. Вы можете отключить фильтр «В наличии» в главном меню.",
+                reply_markup=main_menu(_is_admin(user_id)),
+            )
+        else:
+            await safe_answer(
+                cb.message,
+                "Каталог пуст: загрузите XLSX тканей и фурнитуры",
+                reply_markup=empty_catalog_keyboard(_is_admin(user_id)),
+            )
         await cb.answer()
         return
 
@@ -261,41 +268,36 @@ async def catalog_root(cb: CallbackQuery):
 
     rng, usd = await current_range()
     label = range_label(rng, usd)  # «Курс: 91.05 ₽ → 90–95»
+    if only_available:
+        label = f"{label}\n\nПоказываются только товары в наличии."
+
+    prefix = "secstock" if only_available else "sec"
 
     await safe_answer(
         cb.message,
         label,
-        reply_markup=pager("sec", page_items, page, total),
-        parse_mode="MarkdownV2",
+        reply_markup=pager(prefix, page_items, page, total),
     )
     await cb.answer()
 
 
 @router.callback_query(F.data == "menu:stock")
-async def catalog_in_stock(cb: CallbackQuery):
-    """Фильтр по товарам, которые есть в наличии."""
+async def toggle_in_stock_filter(cb: CallbackQuery):
+    """Переключает режим показа только товаров в наличии."""
 
-    sections = await db_utils.fetch_sections(only_available=True)
-    if not sections:
-        await safe_answer(
-            cb.message,
-            "Сейчас нет товаров в наличии.",
-            reply_markup=main_menu(_is_admin(cb.from_user.id)),
-            parse_mode="MarkdownV2",
-        )
-        await cb.answer()
-        return
-
-    labeled = _label_sections(sections)
-    page_items, page, total = slice_page(labeled, 1, PAGE_SIZE)
-
+    user_id = cb.from_user.id
+    enabled = view_filters.toggle_in_stock(user_id)
+    text = (
+        "Фильтр «В наличии» включён. Каталог и прайс теперь показывают только доступные позиции."
+        if enabled
+        else "Фильтр «В наличии» отключён. Каталог и прайс снова показывают весь ассортимент."
+    )
     await safe_answer(
         cb.message,
-        "Товары в наличии: выберите раздел.",
-        reply_markup=pager("secstock", page_items, page, total),
-        parse_mode="MarkdownV2",
+        text,
+        reply_markup=main_menu(_is_admin(user_id)),
     )
-    await cb.answer()
+    await cb.answer("Фильтр включён" if enabled else "Фильтр отключён")
 
 
 @router.callback_query(F.data.regexp(r"^sec(stock)?:page:"))
@@ -548,15 +550,22 @@ async def checkout_cart(cb: CallbackQuery):
 async def show_price(cb: CallbackQuery):
     """Прайс идёт по тому же пути, что и каталог: разделы → категории → товары."""
 
-    sections = await db_utils.fetch_sections()
+    user_id = cb.from_user.id
+    only_available = view_filters.is_in_stock(user_id)
+    sections = await db_utils.fetch_sections(only_available=only_available)
     if not sections:
-        is_admin = _is_admin(cb.from_user.id)
-        await safe_answer(
-            cb.message,
-            "Каталог пуст: загрузите XLSX тканей и фурнитуры",
-            reply_markup=empty_catalog_keyboard(is_admin),
-            parse_mode="MarkdownV2",
-        )
+        if only_available:
+            await safe_answer(
+                cb.message,
+                "Сейчас нет товаров в наличии. Вы можете отключить фильтр «В наличии» в главном меню.",
+                reply_markup=main_menu(_is_admin(user_id)),
+            )
+        else:
+            await safe_answer(
+                cb.message,
+                "Каталог пуст: загрузите XLSX тканей и фурнитуры",
+                reply_markup=empty_catalog_keyboard(_is_admin(user_id)),
+            )
         await cb.answer()
         return
 
@@ -565,12 +574,15 @@ async def show_price(cb: CallbackQuery):
 
     rng, usd = await current_range()
     label = range_label(rng, usd)
+    if only_available:
+        label = f"{label}\n\nПоказываются только товары в наличии."
+
+    prefix = "secstock" if only_available else "sec"
 
     await safe_answer(
         cb.message,
         label,
-        reply_markup=pager("sec", page_items, page, total),
-        parse_mode="MarkdownV2",
+        reply_markup=pager(prefix, page_items, page, total),
     )
     await cb.answer()
 
