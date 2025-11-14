@@ -664,9 +664,8 @@ async def _notify_admins(msg: Message, request_key: str, user_text: str) -> None
     )
     lines = [
         f"🔔 {escape_md(_REQUEST_TITLES[request_key])}",
-        f"Пользователь: [{escape_md(full_name)}](tg://user?id={user.id})",
+        f"Имя: {escape_md(full_name)}",
         username_line,
-        f"ID: {escape_md(str(user.id))}",
         "Сообщение:",
         escape_md(user_text),
     ]
