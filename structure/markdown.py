@@ -38,7 +38,7 @@ class MarkdownV2Escaper:
 
         if not chunk:
             return ""
-        return cls._ESCAPE_RE.sub(r"\\\1", chunk)
+        return cls._ESCAPE_RE.sub(lambda match: "\\" + match.group(1), chunk)
 
     @classmethod
     def escape_preserving(cls, text: str) -> str:
@@ -86,10 +86,27 @@ def strip_markdown(text: str) -> str:
 
     if not text:
         return ""
-    stripped = re.sub(r"\*\*(.*?)\*\*|\*(.*?)\*", r"\1\2", text)
-    stripped = re.sub(r"__(.*?)__|_(.*?)_", r"\1\2", stripped)
-    stripped = re.sub(r"`{1,3}(.*?)`{1,3}", r"\1", stripped, flags=re.S)
-    stripped = re.sub(r"\[(.*?)\]\((.*?)\)", r"\1: \2", stripped)
+    stripped = re.sub(
+        r"\*\*(.*?)\*\*|\*(.*?)\*",
+        lambda match: (match.group(1) or match.group(2) or ""),
+        text,
+    )
+    stripped = re.sub(
+        r"__(.*?)__|_(.*?)_",
+        lambda match: (match.group(1) or match.group(2) or ""),
+        stripped,
+    )
+    stripped = re.sub(
+        r"`{1,3}(.*?)`{1,3}",
+        lambda match: match.group(1) or "",
+        stripped,
+        flags=re.S,
+    )
+    stripped = re.sub(
+        r"\[(.*?)\]\((.*?)\)",
+        lambda match: f"{match.group(1)}: {match.group(2)}",
+        stripped,
+    )
     return stripped.replace("\\", "")
 
 
