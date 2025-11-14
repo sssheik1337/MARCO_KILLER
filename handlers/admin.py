@@ -9,7 +9,7 @@ from data.db_utils import aiosqlite
 from config import DB_PATH
 from pathlib import Path
 from structure.markdown_utils import safe_answer, safe_edit
-from structure.keyboards import usd_keyboard
+from structure.keyboards import usd_keyboard, import_result_keyboard
 from services.exchange import current_range, refresh_range
 
 router = Router()
@@ -206,7 +206,7 @@ async def import_xlsx(msg: Message):
     await set_setting("import_target","")
     await safe_answer(
         msg,
-        f"Импорт завершён: {len(items)} позиций",
-        reply_markup=admin_kb(),
+        f"Импортировано {len(items)} позиций",
+        reply_markup=import_result_keyboard(),
         parse_mode="MarkdownV2",
     )

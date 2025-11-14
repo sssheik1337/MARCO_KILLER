@@ -93,3 +93,14 @@ def usd_keyboard() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")],
         ]
     )
+
+
+def import_result_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура после успешного импорта с быстрым переходом в каталог."""
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📚 Открыть каталог", callback_data="menu:catalog")],
+            [InlineKeyboardButton(text="🏠 В меню", callback_data="home")],
+        ]
+    )
