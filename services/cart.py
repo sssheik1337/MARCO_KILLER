@@ -1,6 +1,10 @@
+"""Простейшее in-memory хранилище корзины по пользователю.
+
+При реальном запуске данные стоит хранить в БД.
+"""
+
 from collections import defaultdict
 
-# Простейшая in-memory корзина по пользователю. При реальном запуске лучше хранить в БД.
 CART: dict[int, dict[int, int]] = defaultdict(lambda: defaultdict(int))
 
 def get_qty(user_id: int, product_id: int) -> int:
@@ -19,5 +23,13 @@ def dec(user_id: int, product_id: int, step: int = 1) -> int:
 def clear(user_id: int) -> None:
     CART.pop(user_id, None)
 
+def items(user_id: int) -> dict[int, int]:
+    """Возвращает копию позиций корзины пользователя."""
+
+    return dict(CART[user_id])
+
+
 def as_lines(user_id: int) -> list[str]:
+    """Совместимость со старым API: простое представление позиций."""
+
     return [f"ID {pid} — {qty} шт." for pid, qty in CART[user_id].items()]

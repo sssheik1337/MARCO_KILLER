@@ -69,6 +69,21 @@ def product_controls(product_id: int, qty: int) -> InlineKeyboardMarkup:
     ])
 
 
+def cart_keyboard(has_items: bool) -> InlineKeyboardMarkup:
+    """Клавиатура управления корзиной."""
+
+    rows: list[list[InlineKeyboardButton]] = []
+    if has_items:
+        rows.append(
+            [
+                InlineKeyboardButton(text="🧹 Очистить", callback_data="cart:clear"),
+                InlineKeyboardButton(text="✅ Оформить", callback_data="cart:checkout"),
+            ]
+        )
+    rows.append([InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def usd_keyboard() -> InlineKeyboardMarkup:
     """Клавиатура управления экраном курса USD."""
 

@@ -5,8 +5,14 @@ from aiogram.enums import ParseMode
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 from config import PAGE_SIZE, ADMINS
-from structure.keyboards import main_menu, pager, product_controls, empty_catalog_keyboard
-from structure.markdown_utils import safe_answer
+from structure.keyboards import (
+    main_menu,
+    pager,
+    product_controls,
+    empty_catalog_keyboard,
+    cart_keyboard,
+)
+from structure.markdown_utils import safe_answer, safe_edit
 from structure.formatter import escape_md
 from structure.states import SupportRequestState
 from services.pagination import slice_page
@@ -50,6 +56,131 @@ def _mdv2(s: str | None) -> str:
         .replace(".", "\\.")
         .replace("!", "\\!")
     )
+
+
+# --- корзина: вспомогательные функции ---
+
+
+def _format_money(value: float | None) -> str:
+    """Форматирует стоимость для отображения пользователю."""
+
+    if value is None:
+        return "—"
+    return f"{value:.2f} ₽"
+
+
+def _resolve_cart_price(product: dict, rng: str) -> float | None:
+    """Определяет цену товара для расчёта корзины."""
+
+    section = product.get("section")
+    if section == "fabrics":
+        price = product.get(f"price_piece_{rng}")
+        if price is None:
+            price = product.get(f"price_roll_{rng}")
+    else:
+        price = product.get("price_opt")
+        if price is None:
+            price = product.get("price_rrc")
+    try:
+        return float(price) if price is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+async def _build_cart_summary(user_id: int) -> tuple[list[dict], float, bool, str]:
+    """Собирает информацию о корзине для отображения и отправки админам."""
+
+    items_raw = cart.items(user_id)
+    if not items_raw:
+        return [], 0.0, False, ""
+
+    rng, usd = await current_range()
+    label = range_label(rng, usd)
+
+    items: list[dict] = []
+    total = 0.0
+    has_priced = False
+
+    for pid, qty in items_raw.items():
+        product = await db_utils.fetch_product(pid)
+        if not product:
+            logger.warning("Товар %s не найден при построении корзины", pid)
+            continue
+
+        price = _resolve_cart_price(product, rng)
+        line_total = price * qty if price is not None else None
+        if line_total is not None:
+            total += line_total
+            has_priced = True
+
+        items.append(
+            {
+                "id": pid,
+                "name": product.get("name") or f"ID {pid}",
+                "qty": qty,
+                "line_total": line_total,
+            }
+        )
+
+    return items, total, has_priced, label
+
+
+def _render_cart_text(items: list[dict], total: float, has_priced: bool, label: str) -> str:
+    """Строит текст корзины для пользователя."""
+
+    if not items:
+        return "Корзина пуста"
+
+    lines = [
+        f"{_mdv2(item['name'])} × {item['qty']} = {_mdv2(_format_money(item['line_total']))}"
+        for item in items
+    ]
+    total_line = _format_money(total) if has_priced else "—"
+    lines.append(f"*Итого:* {_mdv2(total_line)}")
+    if label:
+        lines.append(_mdv2(label))
+    return "\n".join(lines)
+
+
+def _render_cart_admin_text(
+    source: CallbackQuery | Message,
+    items: list[dict],
+    total: float,
+    has_priced: bool,
+    label: str,
+) -> str:
+    """Формирует сообщение для администраторов о содержимом корзины."""
+
+    if not items:
+        return ""
+
+    from_user = source.from_user if source.from_user else None
+    if not from_user:
+        return ""
+
+    full_name = from_user.full_name or "Без имени"
+    username_line = (
+        f"Юзернейм: @{escape_md(from_user.username)}"
+        if from_user.username
+        else "Юзернейм: —"
+    )
+    header = [
+        "🧺 Новая заявка из корзины",
+        f"Пользователь: [{escape_md(full_name)}](tg://user?id={from_user.id})",
+        username_line,
+        f"ID: {escape_md(str(from_user.id))}",
+    ]
+
+    body = [
+        f"- {escape_md(item['name'])} × {item['qty']} = {escape_md(_format_money(item['line_total']))} (ID: {item['id']})"
+        for item in items
+    ]
+    total_line = _format_money(total) if has_priced else "—"
+    footer = [f"Итого: {escape_md(total_line)}"]
+    if label:
+        footer.append(escape_md(label))
+
+    return "\n".join(header + ["Позиции:"] + body + footer)
 
 
 # --- настройки обращений ---
@@ -358,14 +489,59 @@ async def prod_add(cb: CallbackQuery):
 
 @router.callback_query(F.data == "menu:cart")
 async def show_cart(cb: CallbackQuery):
-    lines = cart.as_lines(cb.from_user.id)
-    text = "\n".join(lines) if lines else "Корзина пуста"
+    items, total, has_priced, label = await _build_cart_summary(cb.from_user.id)
+    text = _render_cart_text(items, total, has_priced, label)
     await safe_answer(
         cb.message,
         text,
+        reply_markup=cart_keyboard(bool(items)),
         parse_mode="MarkdownV2",
     )
     await cb.answer()
+
+
+@router.callback_query(F.data == "cart:clear")
+async def clear_cart(cb: CallbackQuery):
+    cart.clear(cb.from_user.id)
+    await safe_edit(
+        cb.message,
+        "Корзина пуста",
+        reply_markup=cart_keyboard(False),
+        parse_mode="MarkdownV2",
+    )
+    await cb.answer("Корзина очищена")
+
+
+@router.callback_query(F.data == "cart:checkout")
+async def checkout_cart(cb: CallbackQuery):
+    items, total, has_priced, label = await _build_cart_summary(cb.from_user.id)
+    if not items:
+        await cb.answer("Корзина пуста", show_alert=True)
+        return
+
+    admin_text = _render_cart_admin_text(cb, items, total, has_priced, label)
+    if admin_text and ADMINS:
+        for admin_id in ADMINS:
+            try:
+                await cb.message.bot.send_message(
+                    admin_id,
+                    admin_text,
+                    parse_mode=ParseMode.MARKDOWN_V2,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Не удалось отправить корзину админу %s: %s", admin_id, exc
+                )
+
+    cart.clear(cb.from_user.id)
+
+    await safe_edit(
+        cb.message,
+        "Заявка по корзине отправлена. Корзина очищена.",
+        reply_markup=cart_keyboard(False),
+        parse_mode="MarkdownV2",
+    )
+    await cb.answer("Отправлено")
 
 
 @router.callback_query(F.data == "menu:price")
