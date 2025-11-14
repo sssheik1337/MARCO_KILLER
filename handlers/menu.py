@@ -18,7 +18,7 @@ from structure.keyboards import (
 from structure.markdown import edit_md_safe, escape_user, send_md_safe
 from structure.states import SupportRequestState
 from services.pagination import slice_page
-from services import cart, view_filters
+from services import cart, view_filters, profiles
 from data import db_utils
 from services.exchange import current_range, range_label
 
@@ -68,37 +68,70 @@ def _as_float(value: object) -> float | None:
         return None
 
 
-def _resolve_cart_price(product: dict, rng: str) -> float | None:
-    """Определяет цену товара для расчёта корзины."""
+def _resolve_cart_price(product: dict, rng: str) -> tuple[float | None, str | None, str | None]:
+    """Возвращает цену, валюту и тип цены для последующего форматирования."""
 
     section = product.get("section")
     if section == "fabrics":
-        price = product.get(f"price_piece_{rng}")
-        if price is None:
-            price = product.get(f"price_roll_{rng}")
-    else:
-        price = product.get("price_opt")
-        if price is None:
-            price = product.get("price_rrc")
-    try:
-        return float(price) if price is not None else None
-    except (TypeError, ValueError):
-        return None
+        piece = _as_float(product.get(f"price_piece_{rng}"))
+        roll = _as_float(product.get(f"price_roll_{rng}"))
+        if piece is not None:
+            return piece, None, "piece"
+        if roll is not None:
+            return roll, None, "roll"
+        return None, None, None
+
+    price = _as_float(product.get("price_opt"))
+    if price is None:
+        price = _as_float(product.get("price_rrc"))
+    currency = (product.get("currency") or None)
+    if isinstance(currency, str):
+        currency = currency.strip() or None
+        if currency:
+            currency = currency.upper()
+    return price, currency, None
 
 
-async def _build_cart_summary(user_id: int) -> tuple[list[dict], float, bool, str]:
+def _resolve_unit_label(product: dict, price_source: str | None) -> str:
+    """Определяет подпись количества для строки корзины."""
+
+    if product.get("section") == "fabrics":
+        if price_source == "roll":
+            return "ролик"
+        if price_source == "piece":
+            return "отрез"
+        return "шт"
+
+    unit = product.get("unit")
+    if isinstance(unit, str) and unit.strip():
+        return unit.strip()
+    return "шт"
+
+
+def _order_totals(totals: dict[str | None, float]) -> list[tuple[str | None, float]]:
+    """Сортирует суммы по валютам: сначала рубли, затем остальные по алфавиту."""
+
+    def _sort_key(item: tuple[str | None, float]) -> tuple[int, str | None]:
+        currency, _ = item
+        if currency is None or currency.upper() == "RUB":
+            return (0, None)
+        return (1, currency)
+
+    return sorted(totals.items(), key=_sort_key)
+
+
+async def _build_cart_summary(user_id: int) -> tuple[list[dict], dict[str | None, float], str]:
     """Собирает информацию о корзине для отображения и отправки админам."""
 
     items_raw = cart.items(user_id)
     if not items_raw:
-        return [], 0.0, False, ""
+        return [], {}, ""
 
     rng, usd = await current_range()
     label = range_label(rng, usd)
 
     items: list[dict] = []
-    total = 0.0
-    has_priced = False
+    totals: dict[str | None, float] = defaultdict(float)
 
     for pid, qty in items_raw.items():
         product = await db_utils.fetch_product(pid)
@@ -106,35 +139,48 @@ async def _build_cart_summary(user_id: int) -> tuple[list[dict], float, bool, st
             logger.warning("Товар %s не найден при построении корзины", pid)
             continue
 
-        price = _resolve_cart_price(product, rng)
+        price, currency, price_source = _resolve_cart_price(product, rng)
         line_total = price * qty if price is not None else None
         if line_total is not None:
-            total += line_total
-            has_priced = True
+            totals[currency] += line_total
+
+        unit_label = _resolve_unit_label(product, price_source)
 
         items.append(
             {
                 "id": pid,
                 "name": product.get("name") or f"ID {pid}",
+                "article": product.get("article"),
+                "collection": product.get("collection"),
                 "qty": qty,
+                "unit": unit_label,
+                "unit_price": price,
+                "currency": currency,
                 "line_total": line_total,
             }
         )
 
-    return items, total, has_priced, label
+    return items, dict(totals), label
 
 
-def _render_cart_text(items: list[dict], total: float, has_priced: bool, label: str) -> str:
+def _render_cart_text(items: list[dict], totals: dict[str | None, float], label: str) -> str:
     """Строит текст корзины для пользователя."""
 
     if not items:
         return "Корзина пуста"
 
     lines = [
-        f"{item['name'] or '-'} × {item['qty']} = {_format_money(item['line_total'])}"
+        f"{escape_user(item['name']) or '-'} × {item['qty']} = "
+        f"{_format_money_with_currency(item['line_total'], item['currency'])}"
         for item in items
     ]
-    total_line = _format_money(total) if has_priced else "—"
+    if totals:
+        ordered = _order_totals(totals)
+        total_line = ", ".join(
+            _format_money_with_currency(amount, currency) for currency, amount in ordered
+        )
+    else:
+        total_line = "—"
     lines.append(f"*Итого:* {total_line}")
     if label:
         lines.append(label)
@@ -144,8 +190,7 @@ def _render_cart_text(items: list[dict], total: float, has_priced: bool, label: 
 def _render_cart_admin_text(
     source: CallbackQuery | Message,
     items: list[dict],
-    total: float,
-    has_priced: bool,
+    totals: dict[str | None, float],
     label: str,
 ) -> str:
     """Формирует сообщение для администраторов о содержимом корзины."""
@@ -160,21 +205,46 @@ def _render_cart_admin_text(
     full_name = from_user.full_name or "Без имени"
     header = [
         "🧺 Новая заявка из корзины",
-        f"Имя: {escape_user(full_name)}",
+        f"Пользователь: {escape_user(full_name)}",
     ]
     if from_user.username:
-        header.append(f"Юзернейм: @{escape_user(from_user.username)}")
+        header[-1] += f" (@{escape_user(from_user.username)})"
 
-    body = [
-        f"- {escape_user(item['name'])} × {item['qty']} = {_format_money(item['line_total'])} (ID: {item['id']})"
-        for item in items
-    ]
-    total_line = _format_money(total) if has_priced else "—"
+    phone = profiles.get_phone(from_user.id)
+    if phone:
+        header.append(f"Телефон: {escape_user(phone)}")
+
+    body: list[str] = []
+    for index, item in enumerate(items, start=1):
+        details: list[str] = []
+        if item.get("article"):
+            details.append(f"Артикул {escape_user(str(item['article']))}")
+        if item.get("collection"):
+            details.append(f"Коллекция {escape_user(str(item['collection']))}")
+        details_text = f" ({'; '.join(details)})" if details else ""
+
+        unit_label = escape_user(item.get("unit") or "шт")
+        unit_price_text = _format_money_with_currency(item.get("unit_price"), item.get("currency"))
+        line_total_text = _format_money_with_currency(item.get("line_total"), item.get("currency"))
+
+        body.append(
+            f"{index}) {escape_user(item['name'])}{details_text} — "
+            f"{item['qty']} {unit_label} × {unit_price_text} = {line_total_text}"
+        )
+
+    if totals:
+        ordered = _order_totals(totals)
+        total_line = ", ".join(
+            _format_money_with_currency(amount, currency) for currency, amount in ordered
+        )
+    else:
+        total_line = "—"
+
     footer = [f"Итого: {total_line}"]
     if label:
         footer.append(label)
 
-    return "\n".join(header + ["Позиции:"] + body + footer)
+    return "\n".join(header + ["", "Позиции:"] + body + ["", *footer])
 
 
 # --- настройки обращений ---
@@ -617,8 +687,8 @@ async def prod_noop(cb: CallbackQuery):
 
 @router.callback_query(F.data == "menu:cart")
 async def show_cart(cb: CallbackQuery):
-    items, total, has_priced, label = await _build_cart_summary(cb.from_user.id)
-    text = _render_cart_text(items, total, has_priced, label)
+    items, totals, label = await _build_cart_summary(cb.from_user.id)
+    text = _render_cart_text(items, totals, label)
     await send_md_safe(
         cb.message,
         text,
@@ -640,12 +710,12 @@ async def clear_cart(cb: CallbackQuery):
 
 @router.callback_query(F.data == "cart:checkout")
 async def checkout_cart(cb: CallbackQuery):
-    items, total, has_priced, label = await _build_cart_summary(cb.from_user.id)
+    items, totals, label = await _build_cart_summary(cb.from_user.id)
     if not items:
         await cb.answer("Корзина пуста", show_alert=True)
         return
 
-    admin_text = _render_cart_admin_text(cb, items, total, has_priced, label)
+    admin_text = _render_cart_admin_text(cb, items, totals, label)
     if admin_text and ADMINS:
         for admin_id in ADMINS:
             try:
@@ -662,7 +732,7 @@ async def checkout_cart(cb: CallbackQuery):
 
     await edit_md_safe(
         cb.message,
-        "Заявка по корзине отправлена. Корзина очищена.",
+        "Ваша заявка по корзине отправлена, менеджер свяжется с вами. Корзина очищена.",
         reply_markup=cart_keyboard(False),
     )
     await cb.answer("Отправлено")
@@ -839,6 +909,8 @@ def _extract_user_input(msg: Message) -> str:
     if msg.contact:
         parts: list[str] = []
         if msg.contact.phone_number:
+            if msg.from_user:
+                profiles.set_phone(msg.from_user.id, msg.contact.phone_number)
             parts.append(f"Телефон: {msg.contact.phone_number}")
         name_bits = [msg.contact.first_name or "", msg.contact.last_name or ""]
         name = " ".join(part for part in name_bits if part).strip()
