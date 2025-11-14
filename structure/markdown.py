@@ -38,7 +38,9 @@ class MarkdownV2Escaper:
 
         if not chunk:
             return ""
-        return cls._ESCAPE_RE.sub(lambda match: "\\" + match.group(1), chunk)
+
+        escaped = chunk.replace("\\", "\\\\")
+        return cls._ESCAPE_RE.sub(lambda match: "\\" + match.group(1), escaped)
 
     @classmethod
     def escape_preserving(cls, text: str) -> str:
@@ -77,8 +79,7 @@ def escape_full(text: str) -> str:
 
     if not text:
         return ""
-    safe = text.replace("\\", "\\\\")
-    return MarkdownV2Escaper.escape_plain(safe)
+    return MarkdownV2Escaper.escape_plain(text)
 
 
 def strip_markdown(text: str) -> str:
