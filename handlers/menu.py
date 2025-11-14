@@ -39,6 +39,17 @@ def _format_money(value: float | None) -> str:
     return f"{value:.2f} ₽"
 
 
+def _format_money_with_currency(value: float | None, currency: str | None) -> str:
+    """Форматирует стоимость с учётом переданного обозначения валюты."""
+
+    if value is None:
+        return "—"
+    code = (currency or "").strip()
+    if not code or code.upper() == "RUB":
+        return f"{value:.2f} ₽"
+    return f"{value:.2f} {code}"
+
+
 def _as_float(value: object) -> float | None:
     """Аккуратно приводит значение к числу с плавающей точкой."""
 
@@ -400,8 +411,9 @@ async def product_card(cb: CallbackQuery):
         price_line = f"Отрез: {piece} · Ролик: {roll}"
         course_line = f"💵 {lbl}"
     else:
-        rrc = _format_money(_as_float(p.get("price_rrc")))
-        opt = _format_money(_as_float(p.get("price_opt")))
+        currency = p.get("currency") or ""
+        rrc = _format_money_with_currency(_as_float(p.get("price_rrc")), currency)
+        opt = _format_money_with_currency(_as_float(p.get("price_opt")), currency)
         price_line = f"РРЦ: {rrc} · Опт: {opt}"
 
     qty = cart.get_qty(cb.from_user.id, pid) or 1
@@ -425,6 +437,15 @@ async def product_card(cb: CallbackQuery):
                 _line("Сегмент", p.get("segment")),
             ]
         )
+    else:
+        lines.extend(
+            [
+                _line("Коллекция", p.get("collection")),
+                _line("Бренд/страна", p.get("brand_country")),
+                _line("Кратность", p.get("multiplicity")),
+                _line("Ед.", p.get("unit")),
+            ]
+        )
 
     lines.append(escape_user(price_line))
     if course_line:
@@ -433,7 +454,7 @@ async def product_card(cb: CallbackQuery):
     if not course_line:
         lines.append(escape_user(lbl))
 
-    special_flag = p.get("special")
+    special_flag = p.get("special") if p["section"] == "fabrics" else p.get("status")
     if special_flag:
         lines.append(_line("Статус", special_flag))
 

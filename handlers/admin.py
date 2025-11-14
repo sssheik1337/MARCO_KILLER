@@ -4,7 +4,7 @@ from aiogram.types import CallbackQuery, Message, ContentType, InlineKeyboardMar
 from middlewares.admin_filter import AdminOnly
 from data.db_utils import set_setting, get_setting
 from data.importer import parse_fabrics, parse_hardware
-from data.db_utils import aiosqlite
+import aiosqlite
 from config import DB_PATH
 from structure.markdown import send_md_safe, edit_md_safe, message_to_markdown
 from structure.keyboards import usd_keyboard, import_result_keyboard
@@ -207,12 +207,14 @@ async def import_xlsx(msg: Message):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("DELETE FROM products WHERE section=?", (target,))
         sql = ("INSERT INTO products(section,category,subcategory,name,article,country,fabric_type,segment,"
+               "collection,brand_country,multiplicity,unit,currency,status,"
                "price_piece_85_90,price_roll_85_90,price_piece_90_95,price_roll_90_95,price_piece_95_100,price_roll_95_100,"
                "price_rrc,price_opt,special,in_stock,image_url) "
-               "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+               "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
         await db.executemany(sql, [(
             i.get("section"), i.get("category"), i.get("subcategory"), i.get("name"), i.get("article"),
             i.get("country"), i.get("fabric_type"), i.get("segment"),
+            i.get("collection"), i.get("brand_country"), i.get("multiplicity"), i.get("unit"), i.get("currency"), i.get("status"),
             i.get("price_piece_85_90"), i.get("price_roll_85_90"),
             i.get("price_piece_90_95"), i.get("price_roll_90_95"),
             i.get("price_piece_95_100"), i.get("price_roll_95_100"),

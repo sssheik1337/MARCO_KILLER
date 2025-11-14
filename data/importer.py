@@ -140,32 +140,47 @@ def parse_hardware(source: SourceType) -> list[dict]:
     df = pd.read_excel(df_source, header=10)
     columns = {_normalize(col): col for col in df.columns}
 
-    name_col = _resolve_column(columns, "Наименование")
     article_col = _resolve_column(columns, "Артикул")
-    category_col = _resolve_column(columns, "Коллекция")
-    country_col = _resolve_column(columns, "Бренд (Страна)", "Страна")
+    name_col = _resolve_column(columns, "Наименование")
+    collection_col = _resolve_column(columns, "Коллекция")
+    status_col = _resolve_column(columns, "Статус")
+    multiplicity_col = _resolve_column(columns, "Кратность")
+    brand_col = _resolve_column(columns, "Бренд (Страна)", "Бренд")
+    unit_col = _resolve_column(columns, "Ед.", "Ед")
+    currency_col = _resolve_column(columns, "Валюта")
     rrc_col = _resolve_column(columns, "РРЦ")
     opt_col = _resolve_column(columns, "Оптовая", "Опт")
 
     items: list[dict] = []
 
     for _, row in df.iterrows():
-        name = _string_value(row.get(name_col)) if name_col else None
         article = _string_value(row.get(article_col)) if article_col else None
-
-        if not name and not article:
+        if not article:
             continue
 
-        category = _string_value(row.get(category_col)) if category_col else None
-        country = _string_value(row.get(country_col)) if country_col else None
+        name = _string_value(row.get(name_col)) if name_col else None
+        collection = _string_value(row.get(collection_col)) if collection_col else None
+        status = _string_value(row.get(status_col)) if status_col else None
+        multiplicity = _string_value(row.get(multiplicity_col)) if multiplicity_col else None
+        brand_country = _string_value(row.get(brand_col)) if brand_col else None
+        unit = _string_value(row.get(unit_col)) if unit_col else None
+        currency = _string_value(row.get(currency_col)) if currency_col else None
+        if currency:
+            currency = currency.upper()
 
         items.append(
             {
                 "section": "hardware",
-                "category": category or "Фурнитура",
-                "name": name or (article or ""),
+                "category": collection or "Фурнитура",
+                "subcategory": None,
+                "name": name or article,
                 "article": article,
-                "country": country,
+                "collection": collection,
+                "brand_country": brand_country,
+                "multiplicity": multiplicity,
+                "unit": unit,
+                "currency": currency,
+                "status": status,
                 "price_rrc": _number_value(row.get(rrc_col)) if rrc_col else None,
                 "price_opt": _number_value(row.get(opt_col)) if opt_col else None,
                 "in_stock": None,

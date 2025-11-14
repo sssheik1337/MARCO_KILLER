@@ -13,6 +13,12 @@ CREATE_SQL = [
       country TEXT,
       fabric_type TEXT,
       segment TEXT,
+      collection TEXT,
+      brand_country TEXT,
+      multiplicity TEXT,
+      unit TEXT,
+      currency TEXT,
+      status TEXT,
       -- ткани: цены по коридорам (могут быть NULL для фурнитуры)
       price_piece_85_90 REAL,
       price_roll_85_90  REAL,
@@ -41,7 +47,29 @@ async def init_db() -> None:
     async with aiosqlite.connect(DB_PATH) as db:
         for sql in CREATE_SQL:
             await db.execute(sql)
+        await _ensure_product_columns(db)
         await db.commit()
+
+
+async def _ensure_product_columns(db: aiosqlite.Connection) -> None:
+    """Добавляет отсутствующие колонки в таблицу products."""
+
+    required = {
+        "collection": "TEXT",
+        "brand_country": "TEXT",
+        "multiplicity": "TEXT",
+        "unit": "TEXT",
+        "currency": "TEXT",
+        "status": "TEXT",
+    }
+
+    cur = await db.execute("PRAGMA table_info(products)")
+    existing = {row[1] for row in await cur.fetchall()}
+
+    for column, definition in required.items():
+        if column in existing:
+            continue
+        await db.execute(f"ALTER TABLE products ADD COLUMN {column} {definition}")
 
 async def get_setting(key: str, default: str="") -> str:
     async with aiosqlite.connect(DB_PATH) as db:
