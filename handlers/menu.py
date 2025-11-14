@@ -1,6 +1,10 @@
-# handlers/menu.py
+"""Обработчики пользовательского меню."""
 import logging
+from collections import defaultdict
+from typing import Any
+
 from aiogram import Router, F
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 from config import PAGE_SIZE, ADMINS
@@ -20,6 +24,9 @@ from services.exchange import current_range, range_label
 
 router = Router()
 logger = logging.getLogger(__name__)
+
+# Контекст карточек товаров: message_id → данные для возврата в список
+_PRODUCT_CONTEXT: dict[int, dict[int, dict[str, Any]]] = defaultdict(dict)
 
 
 # --- утилиты ---
@@ -410,11 +417,17 @@ async def product_list_page(cb: CallbackQuery):
     await cb.answer()
 
 
-@router.callback_query(F.data.regexp(r"^prodlist(stock)?:[^:]+:[^:]+:open:"))
+@router.callback_query(F.data.regexp(r"^prodlist(stock)?:.+:open:"))
 async def product_card(cb: CallbackQuery):
-    # формат: prodlist{stock}:{section}:{category}:open:{product_id}
+    """Показывает карточку товара и запоминает, как вернуться назад."""
+
     parts = cb.data.split(":")
     pid = int(parts[-1])
+    prefix = parts[0]
+    section = parts[1] if len(parts) > 1 else ""
+    category = ":".join(parts[2:-2]) if len(parts) > 3 else ""
+    only_available = prefix == "prodliststock"
+
     p = await db_utils.fetch_product(pid)
 
     rng, usd = await current_range()            # ('90_95', 91.12) или (последний, None)
@@ -433,7 +446,7 @@ async def product_card(cb: CallbackQuery):
         opt = _format_money_with_currency(_as_float(p.get("price_opt")), currency)
         price_line = f"РРЦ: {rrc} · Опт: {opt}"
 
-    qty = cart.get_qty(cb.from_user.id, pid) or 1
+    qty = cart.ensure_selection(cb.from_user.id, pid)
 
     def _line(label: str, value: object) -> str:
         text = value if value not in (None, "") else "-"
@@ -477,17 +490,39 @@ async def product_card(cb: CallbackQuery):
 
     caption = "\n".join(lines)
 
+    products = await db_utils.fetch_products_by_category(
+        section,
+        category,
+        only_available=only_available,
+    )
+    product_ids = [prod_id for prod_id, _ in products]
+    try:
+        index = product_ids.index(pid)
+    except ValueError:
+        index = 0
+    page = index // PAGE_SIZE + 1 if product_ids else 1
+
     if p.get("image_url"):
-        await cb.message.answer_photo(
+        msg = await cb.message.answer_photo(
             p["image_url"], caption=caption,
             reply_markup=product_controls(pid, qty)
         )
     else:
-        await send_md_safe(
+        msg = await send_md_safe(
             cb.message,
             caption,
             reply_markup=product_controls(pid, qty),
         )
+
+    _PRODUCT_CONTEXT[cb.from_user.id][msg.message_id] = {
+        "section": section,
+        "category": category,
+        "only_available": only_available,
+        "prefix": prefix,
+        "page": page,
+        "product_id": pid,
+    }
+
     await cb.answer()
 
 
@@ -495,27 +530,87 @@ async def product_card(cb: CallbackQuery):
 
 @router.callback_query(F.data.startswith("prod:inc:"))
 async def prod_inc(cb: CallbackQuery):
+    """Увеличивает выбранное количество и обновляет клавиатуру."""
+
     pid = int(cb.data.split(":")[-1])
-    q = cart.inc(cb.from_user.id, pid)
-    await cb.message.edit_reply_markup(reply_markup=product_controls(pid, q))
+    _, new_qty = cart.adjust_selection(cb.from_user.id, pid, 1)
+    try:
+        await cb.message.edit_reply_markup(reply_markup=product_controls(pid, new_qty))
+    except TelegramBadRequest:
+        logger.debug("Не удалось обновить клавиатуру для товара %s", pid)
     await cb.answer("Добавлено")
 
 
 @router.callback_query(F.data.startswith("prod:dec:"))
 async def prod_dec(cb: CallbackQuery):
+    """Уменьшает выбранное количество с нижней границей в единицу."""
+
     pid = int(cb.data.split(":")[-1])
-    q = cart.dec(cb.from_user.id, pid)
-    q = q or 1
-    await cb.message.edit_reply_markup(reply_markup=product_controls(pid, q))
+    previous, new_qty = cart.adjust_selection(cb.from_user.id, pid, -1)
+    if new_qty == previous:
+        await cb.answer("Минимум 1")
+        return
+
+    try:
+        await cb.message.edit_reply_markup(reply_markup=product_controls(pid, new_qty))
+    except TelegramBadRequest:
+        logger.debug("Не удалось обновить клавиатуру для товара %s", pid)
     await cb.answer("Убрано")
 
 
 @router.callback_query(F.data.startswith("prod:add:"))
 async def prod_add(cb: CallbackQuery):
+    """Сохраняет выбранное количество товара в корзине."""
+
     pid = int(cb.data.split(":")[-1])
-    q = max(1, cart.get_qty(cb.from_user.id, pid))
-    cart.inc(cb.from_user.id, pid, 0)  # зафиксировать текущее значение
-    await cb.answer(f"В корзине: {q}")
+    qty = cart.ensure_selection(cb.from_user.id, pid)
+    cart.set_qty(cb.from_user.id, pid, qty)
+    await cb.answer(f"В корзине: {qty}")
+
+
+# --- карточка: возврат и заглушки ---
+
+@router.callback_query(F.data == "back")
+async def prod_back(cb: CallbackQuery):
+    """Возвращает пользователя к списку товаров и удаляет карточку."""
+
+    user_id = cb.from_user.id
+    context_map = _PRODUCT_CONTEXT.get(user_id)
+    context = context_map.pop(cb.message.message_id, None) if context_map else None
+    if context_map is not None and not context_map:
+        _PRODUCT_CONTEXT.pop(user_id, None)
+
+    if context:
+        product_id = context.get("product_id")
+        if product_id is not None:
+            cart.clear_selection(user_id, product_id)
+        products = await db_utils.fetch_products_by_category(
+            context["section"],
+            context["category"],
+            only_available=context["only_available"],
+        )
+        items = [(name, str(pid)) for pid, name in products]
+        page_items, page, total = slice_page(items, context["page"], PAGE_SIZE)
+        reply_markup = pager(
+            f"{context['prefix']}:{context['section']}:{context['category']}",
+            page_items,
+            page,
+            total,
+        )
+        title = context["category"] or "Товары"
+        await send_md_safe(cb.message, title, reply_markup=reply_markup)
+    try:
+        await cb.message.delete()
+    except TelegramBadRequest:
+        logger.debug("Не удалось удалить карточку товара: %s", cb.data)
+    await cb.answer()
+
+
+@router.callback_query(F.data == "noop")
+async def prod_noop(cb: CallbackQuery):
+    """Заглушка для неактивной кнопки количества."""
+
+    await cb.answer()
 
 
 # --- корзина и прайс ---
