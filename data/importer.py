@@ -3,6 +3,7 @@ from typing import BinaryIO, Union
 import logging
 import re
 
+from openpyxl import load_workbook
 import pandas as pd
 
 
@@ -24,6 +25,26 @@ def _reset_stream(source: SourceType) -> SourceType:
     if hasattr(source, "seek"):
         source.seek(0)
     return source
+
+
+def _load_sheet_rows(source: SourceType) -> list[list[object]]:
+    """Читает строки первого листа XLSX с вычисленными значениями."""
+
+    current_source = _reset_stream(source)
+    workbook = load_workbook(current_source, data_only=True)
+    try:
+        sheet = workbook.active
+        rows: list[list[object]] = []
+        max_columns = sheet.max_column or 0
+        for row in sheet.iter_rows(values_only=True):
+            values = list(row)
+            if max_columns and len(values) < max_columns:
+                values.extend([None] * (max_columns - len(values)))
+            rows.append(values)
+    finally:
+        workbook.close()
+
+    return rows
 
 
 def _normalize(name: object) -> str:
@@ -101,53 +122,97 @@ def _number_value(value: object) -> float | None:
     return number
 
 
+def _build_multiheader_dataframe(rows: list[list[object]]) -> tuple[pd.DataFrame, dict[str, str]]:
+    """Формирует датафрейм с учётом двухуровневой шапки цен."""
+
+    top_index = 3
+    bottom_index = 4
+    if len(rows) <= bottom_index:
+        raise ValueError("Недостаточно строк для многоуровневой шапки")
+
+    top_row = rows[top_index]
+    bottom_row = rows[bottom_index]
+    combined_columns: list[str] = []
+    last_top = ""
+
+    max_len = max(len(top_row), len(bottom_row))
+
+    for index in range(max_len):
+        top_cell = top_row[index] if index < len(top_row) else None
+        bottom_cell = bottom_row[index] if index < len(bottom_row) else None
+        top_text = "" if top_cell is None else str(top_cell).strip()
+        bottom_text = "" if bottom_cell is None else str(bottom_cell).strip()
+
+        if not top_text:
+            lower_bottom = bottom_text.lower()
+            if lower_bottom in {"ролик", "отрез"} and last_top:
+                top_text = last_top
+        else:
+            last_top = top_text
+
+        if top_text and bottom_text:
+            combined = f"{top_text}__{bottom_text}"
+        else:
+            combined = top_text or bottom_text
+
+        combined_columns.append(combined)
+
+    data_rows = rows[bottom_index + 1 :]
+    if not data_rows:
+        raise ValueError("Нет данных после шапки таблицы")
+
+    df = pd.DataFrame(data_rows, columns=combined_columns)
+    df = df.dropna(how="all")
+    mapping = {_normalize(col): col for col in combined_columns}
+
+    if "наименование коллекции" not in mapping:
+        raise ValueError("Многоуровневая шапка не содержит колонку коллекции")
+
+    return df, mapping
+
+
+def _build_single_header_dataframe(
+    rows: list[list[object]], header_index: int
+) -> tuple[pd.DataFrame, dict[str, str]]:
+    """Формирует датафрейм с одиночной строкой заголовков."""
+
+    if header_index >= len(rows):
+        raise ValueError("Указанная строка заголовков отсутствует")
+
+    header_row = rows[header_index]
+    data_rows = rows[header_index + 1 :]
+    if not data_rows:
+        raise ValueError("Нет данных после строки заголовков")
+
+    df = pd.DataFrame(data_rows, columns=header_row)
+    df = df.dropna(how="all")
+    mapping = {_normalize(col): col for col in df.columns}
+
+    if "наименование коллекции" not in mapping:
+        raise ValueError("Строка заголовков не содержит колонку коллекции")
+
+    return df, mapping
+
+
 def _read_fabric_frame(source: SourceType) -> tuple[pd.DataFrame, dict[str, str]]:
     """Возвращает датафрейм с колонками тканей и их сопоставление."""
 
-    current_source = _reset_stream(source)
+    rows = _load_sheet_rows(source)
+    if not rows:
+        raise ValueError("Файл не содержит данных")
+
     try:
-        df_multi = pd.read_excel(current_source, header=[3, 4])
+        return _build_multiheader_dataframe(rows)
     except ValueError:
-        df_multi = None
-
-    if df_multi is not None and isinstance(df_multi.columns, pd.MultiIndex):
-        combined_columns: list[str] = []
-        last_top = ""
-
-        for top, bottom in df_multi.columns:
-            top_text = "" if pd.isna(top) else str(top).strip()
-            bottom_text = "" if pd.isna(bottom) else str(bottom).strip()
-
-            if not top_text:
-                lower_bottom = bottom_text.lower()
-                if lower_bottom in {"ролик", "отрез"} and last_top:
-                    top_text = last_top
-                else:
-                    top_text = ""
-                    last_top = ""
-            else:
-                last_top = top_text
-
-            if top_text and bottom_text:
-                combined = f"{top_text}__{bottom_text}"
-            else:
-                combined = top_text or bottom_text
-
-            combined_columns.append(combined)
-
-        df_multi.columns = combined_columns
-        mapping_multi = {_normalize(col): col for col in combined_columns}
-        if "наименование коллекции" in mapping_multi:
-            return df_multi, mapping_multi
+        pass
 
     header_candidates = (0, 1, 2, 3, 4, 5)
 
     for header in header_candidates:
-        current_source = _reset_stream(source)
-        df = pd.read_excel(current_source, header=header)
-        mapping = {_normalize(col): col for col in df.columns}
-        if "наименование коллекции" in mapping:
-            return df, mapping
+        try:
+            return _build_single_header_dataframe(rows, header)
+        except ValueError:
+            continue
 
     raise ValueError("Не удалось найти заголовок с колонкой 'Наименование коллекции'")
 
