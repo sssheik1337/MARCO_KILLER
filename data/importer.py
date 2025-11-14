@@ -93,11 +93,44 @@ def _string_value(value: object) -> str | None:
 
 
 def _number_value(value: object) -> float | None:
-    """Преобразует ячейку с ценой к числу."""
+    """Преобразует ячейку с ценой к числу, обрабатывая коллекции и серии."""
 
-    if value is None or pd.isna(value):
+    candidate = value
+
+    if isinstance(candidate, (pd.Series, pd.Index)):
+        iterable: Iterable = candidate.tolist()
+    elif isinstance(candidate, (list, tuple, set)):
+        iterable = list(candidate)
+    else:
+        iterable = None
+
+    if iterable is not None:
+        candidate = None
+        for item in iterable:
+            if item is None:
+                continue
+            try:
+                if pd.isna(item):
+                    continue
+            except TypeError:
+                pass
+            candidate = item
+            break
+
+    if candidate is None:
         return None
-    text = str(value).strip()
+
+    try:
+        if pd.isna(candidate):
+            return None
+    except TypeError:
+        pass
+
+    if isinstance(candidate, (int, float)) and not isinstance(candidate, bool):
+        number = float(candidate)
+        return number if number > 0 else None
+
+    text = str(candidate).strip()
     if not text:
         return None
 
@@ -146,10 +179,7 @@ def _number_value(value: object) -> float | None:
     if negative:
         number = -number
 
-    if number <= 0:
-        return None
-
-    return number
+    return number if number > 0 else None
 
 
 def _build_multiheader_dataframe(rows: list[list[object]]) -> tuple[pd.DataFrame, dict[str, str]]:
