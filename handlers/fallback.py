@@ -1,14 +1,11 @@
 """Обработчики по умолчанию для нераспознанных событий."""
 import logging
-
 from aiogram import Router
-from aiogram.enums import ParseMode
 from aiogram.types import CallbackQuery, Message
 
 from config import ADMINS
 from structure.keyboards import main_menu
-from structure.markdown_utils import safe_send
-from structure.formatter import escape_md
+from structure.markdown import escape_user, send_md_safe
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -30,7 +27,7 @@ async def catch_all_message(message: Message) -> None:
         "Получено необработанное сообщение от %s: %s", user_id or "неизвестно", description
     )
     response_text = "Кнопка недоступна, попробуйте ещё раз"
-    await safe_send(
+    await send_md_safe(
         message,
         response_text,
         reply_markup=main_menu(_is_admin(user_id)),
@@ -50,7 +47,7 @@ async def catch_all_callback(callback: CallbackQuery) -> None:
     response_text = "Кнопка недоступна, попробуйте ещё раз"
     await callback.answer()
     if callback.message:
-        await safe_send(
+        await send_md_safe(
             callback.message,
             response_text,
             reply_markup=main_menu(_is_admin(user_id)),
@@ -58,7 +55,6 @@ async def catch_all_callback(callback: CallbackQuery) -> None:
     elif user_id:
         await callback.bot.send_message(
             user_id,
-            escape_md(response_text),
+            escape_user(response_text),
             reply_markup=main_menu(_is_admin(user_id)),
-            parse_mode=ParseMode.MARKDOWN_V2,
         )

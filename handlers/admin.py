@@ -4,11 +4,9 @@ from aiogram.types import CallbackQuery, Message, ContentType, InlineKeyboardMar
 from middlewares.admin_filter import AdminOnly
 from data.db_utils import set_setting, get_setting
 from data.importer import parse_fabrics, parse_hardware
-from data.db_utils import init_db
 from data.db_utils import aiosqlite
 from config import DB_PATH
-from pathlib import Path
-from structure.markdown_utils import safe_send, safe_edit
+from structure.markdown import send_md_safe, edit_md_safe
 from structure.keyboards import usd_keyboard, import_result_keyboard
 from services.exchange import current_range, refresh_range
 
@@ -42,11 +40,10 @@ def edit_prompt_kb(target: str) -> InlineKeyboardMarkup:
 
 @router.callback_query(F.data == "admin:open")
 async def open_admin(cb: CallbackQuery):
-    await safe_send(
+    await send_md_safe(
         cb.message,
         "Админ-панель:",
         reply_markup=admin_kb(),
-        parse_mode="MarkdownV2",
     )
     await cb.answer()
 
@@ -70,11 +67,10 @@ def _format_usd_message(rng: str, usd: float | None) -> str:
 async def show_usd(cb: CallbackQuery):
     rng, usd = await current_range()
     text = _format_usd_message(rng, usd)
-    await safe_send(
+    await send_md_safe(
         cb.message,
         text,
         reply_markup=usd_keyboard(),
-        parse_mode="MarkdownV2",
     )
     await cb.answer()
 
@@ -95,11 +91,10 @@ async def refresh_usd(cb: CallbackQuery):
         return
 
     try:
-        await safe_edit(
+        await edit_md_safe(
             cb.message,
             text,
             reply_markup=keyboard,
-            parse_mode="MarkdownV2",
         )
     except TelegramBadRequest as error:
         if "message is not modified" in str(error).lower():
@@ -125,15 +120,15 @@ async def ask_text(cb: CallbackQuery):
     else:
         prompt_lines.append("Текущая версия: —")
 
-    await safe_send(
+    await send_md_safe(
         cb.message,
         "\n".join(prompt_lines),
         reply_markup=edit_prompt_kb(key),
     )
 
     if cur:
-        await safe_send(cb.message, "Текущая версия:")
-        await cb.message.answer(cur)
+        await send_md_safe(cb.message, "Текущая версия:")
+        await send_md_safe(cb.message, cur)
     await cb.answer()
 
 
@@ -144,12 +139,12 @@ async def preview_text(cb: CallbackQuery):
     key = cb.data.split(":")[-1]
     stored = await get_setting(key, "")
     if not stored:
-        await safe_send(cb.message, "Текст пока не задан.")
+        await send_md_safe(cb.message, "Текст пока не задан.")
         await cb.answer()
         return
 
-    await safe_send(cb.message, "Предпросмотр:")
-    await cb.message.answer(stored)
+    await send_md_safe(cb.message, "Предпросмотр:")
+    await send_md_safe(cb.message, stored)
     await cb.answer()
 
 
@@ -160,7 +155,7 @@ async def save_text(msg: Message):
         return
     await set_setting(target, msg.text)
     await set_setting("edit_target","")
-    await safe_send(
+    await send_md_safe(
         msg,
         "Готово ✅",
         reply_markup=admin_kb(),
@@ -170,7 +165,7 @@ async def save_text(msg: Message):
 @router.callback_query(F.data == "admin:import:fabrics")
 async def imp_fabrics(cb: CallbackQuery): 
     await set_setting("import_target","fabrics")
-    await safe_send(
+    await send_md_safe(
         cb.message,
         "Пришлите XLSX с тканями.",
     )
@@ -178,7 +173,7 @@ async def imp_fabrics(cb: CallbackQuery):
 @router.callback_query(F.data == "admin:import:hardware")
 async def imp_hw(cb: CallbackQuery): 
     await set_setting("import_target","hardware")
-    await safe_send(
+    await send_md_safe(
         cb.message,
         "Пришлите XLSX с фурнитурой.",
     )
@@ -211,9 +206,8 @@ async def import_xlsx(msg: Message):
         ) for i in items])
         await db.commit()
     await set_setting("import_target","")
-    await safe_send(
+    await send_md_safe(
         msg,
         f"Импортировано {len(items)} позиций",
         reply_markup=import_result_keyboard(),
-        parse_mode="MarkdownV2",
     )

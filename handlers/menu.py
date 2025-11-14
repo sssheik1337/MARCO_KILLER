@@ -1,7 +1,6 @@
 # handlers/menu.py
 import logging
 from aiogram import Router, F
-from aiogram.enums import ParseMode
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 from config import PAGE_SIZE, ADMINS
@@ -12,8 +11,7 @@ from structure.keyboards import (
     empty_catalog_keyboard,
     cart_keyboard,
 )
-from structure.markdown_utils import safe_send, safe_edit
-from structure.formatter import escape_md
+from structure.markdown import edit_md_safe, escape_user, send_md_safe
 from structure.states import SupportRequestState
 from services.pagination import slice_page
 from services import cart, view_filters
@@ -28,34 +26,6 @@ logger = logging.getLogger(__name__)
 
 def _is_admin(user_id: int) -> bool:
     return user_id in ADMINS
-
-
-def _mdv2(s: str | None) -> str:
-    """Минимальный экранировщик для MarkdownV2 (достаточно для наших полей)."""
-    if not s:
-        return "-"
-    return (
-        str(s)
-        .replace("\\", "\\\\")
-        .replace("_", "\\_")
-        .replace("*", "\\*")
-        .replace("[", "\\[")
-        .replace("]", "\\]")
-        .replace("(", "\\(")
-        .replace(")", "\\)")
-        .replace("~", "\\~")
-        .replace("`", "\\`")
-        .replace(">", "\\>")
-        .replace("#", "\\#")
-        .replace("+", "\\+")
-        .replace("-", "\\-")
-        .replace("=", "\\=")
-        .replace("|", "\\|")
-        .replace("{", "\\{")
-        .replace("}", "\\}")
-        .replace(".", "\\.")
-        .replace("!", "\\!")
-    )
 
 
 # --- корзина: вспомогательные функции ---
@@ -132,13 +102,13 @@ def _render_cart_text(items: list[dict], total: float, has_priced: bool, label: 
         return "Корзина пуста"
 
     lines = [
-        f"{_mdv2(item['name'])} × {item['qty']} = {_mdv2(_format_money(item['line_total']))}"
+        f"{escape_user(item['name'] or '-')} × {item['qty']} = {escape_user(_format_money(item['line_total']))}"
         for item in items
     ]
     total_line = _format_money(total) if has_priced else "—"
-    lines.append(f"*Итого:* {_mdv2(total_line)}")
+    lines.append(f"*Итого:* {escape_user(total_line)}")
     if label:
-        lines.append(_mdv2(label))
+        lines.append(escape_user(label))
     return "\n".join(lines)
 
 
@@ -161,19 +131,19 @@ def _render_cart_admin_text(
     full_name = from_user.full_name or "Без имени"
     header = [
         "🧺 Новая заявка из корзины",
-        f"Имя: {escape_md(full_name)}",
+        f"Имя: {escape_user(full_name)}",
     ]
     if from_user.username:
-        header.append(f"Юзернейм: @{escape_md(from_user.username)}")
+        header.append(f"Юзернейм: @{escape_user(from_user.username)}")
 
     body = [
-        f"- {escape_md(item['name'])} × {item['qty']} = {escape_md(_format_money(item['line_total']))} (ID: {item['id']})"
+        f"- {escape_user(item['name'])} × {item['qty']} = {escape_user(_format_money(item['line_total']))} (ID: {item['id']})"
         for item in items
     ]
     total_line = _format_money(total) if has_priced else "—"
-    footer = [f"Итого: {escape_md(total_line)}"]
+    footer = [f"Итого: {escape_user(total_line)}"]
     if label:
-        footer.append(escape_md(label))
+        footer.append(escape_user(label))
 
     return "\n".join(header + ["Позиции:"] + body + footer)
 
@@ -225,11 +195,10 @@ def _label_sections(sections: list[str]) -> list[tuple[str, str]]:
 
 @router.callback_query(F.data == "home")
 async def on_home(cb: CallbackQuery):
-    await safe_send(
+    await send_md_safe(
         cb.message,
         "Главное меню:",
         reply_markup=main_menu(_is_admin(cb.from_user.id)),
-        parse_mode="MarkdownV2",
     )
     await cb.answer()
 
@@ -243,13 +212,13 @@ async def catalog_root(cb: CallbackQuery):
     sections = await db_utils.fetch_sections(only_available=only_available)
     if not sections:
         if only_available:
-            await safe_send(
+            await send_md_safe(
                 cb.message,
                 "Сейчас нет товаров в наличии. Вы можете отключить фильтр «В наличии» в главном меню.",
                 reply_markup=main_menu(_is_admin(user_id)),
             )
         else:
-            await safe_send(
+            await send_md_safe(
                 cb.message,
                 "Каталог пуст: загрузите XLSX тканей и фурнитуры",
                 reply_markup=empty_catalog_keyboard(_is_admin(user_id)),
@@ -268,7 +237,7 @@ async def catalog_root(cb: CallbackQuery):
 
     prefix = "secstock" if only_available else "sec"
 
-    await safe_send(
+    await send_md_safe(
         cb.message,
         label,
         reply_markup=pager(prefix, page_items, page, total),
@@ -287,7 +256,7 @@ async def toggle_in_stock_filter(cb: CallbackQuery):
         if enabled
         else "Фильтр «В наличии» отключён. Каталог и прайс снова показывают весь ассортимент."
     )
-    await safe_send(
+    await send_md_safe(
         cb.message,
         text,
         reply_markup=main_menu(_is_admin(user_id)),
@@ -318,21 +287,19 @@ async def open_section(cb: CallbackQuery):
     only_available = prefix == "secstock"
     cats = await db_utils.fetch_categories(section, only_available=only_available)
     if not cats:
-        await safe_send(
+        await send_md_safe(
             cb.message,
             "Здесь пока пусто.",
-            parse_mode="MarkdownV2",
         )
         await cb.answer()
         return
     items = [(c, c) for c in cats]
     page_items, page, total = slice_page(items, 1, PAGE_SIZE)
     cat_prefix = "catstock" if only_available else "cat"
-    await safe_send(
+    await send_md_safe(
         cb.message,
         "Категории:",
         reply_markup=pager(f"{cat_prefix}:{section}", page_items, page, total),
-        parse_mode="MarkdownV2",
     )
     await cb.answer()
 
@@ -370,13 +337,12 @@ async def open_category(cb: CallbackQuery):
     items = [(name, str(pid)) for pid, name in prods]
     page_items, page, total = slice_page(items, 1, PAGE_SIZE)
     prod_prefix = "prodliststock" if only_available else "prodlist"
-    await safe_send(
+    await send_md_safe(
         cb.message,
         category,
         reply_markup=pager(
             f"{prod_prefix}:{section}:{category}", page_items, page, total
         ),
-        parse_mode="MarkdownV2",
     )
     await cb.answer()
 
@@ -428,28 +394,27 @@ async def product_card(cb: CallbackQuery):
     qty = cart.get_qty(cb.from_user.id, pid) or 1
 
     lines = [
-        f"*{_mdv2(p.get('name'))}*",
-        f"Артикул: {_mdv2(p.get('article'))}",
-        f"{_mdv2(price_line)}",
+        f"*{escape_user(p.get('name'))}*",
+        f"Артикул: {escape_user(p.get('article'))}",
+        f"{escape_user(price_line)}",
     ]
     if course_line:
-        lines.append(_mdv2(course_line))
+        lines.append(escape_user(course_line))
     lines.append(f"Наличие: {p.get('in_stock') or 0}")
     if not course_line:
-        lines.append(_mdv2(lbl))
+        lines.append(escape_user(lbl))
 
     caption = "\n".join(lines)
 
     if p.get("image_url"):
         await cb.message.answer_photo(
-            p["image_url"], caption=caption, parse_mode="MarkdownV2",
+            p["image_url"], caption=caption,
             reply_markup=product_controls(pid, qty)
         )
     else:
-        await safe_send(
+        await send_md_safe(
             cb.message,
             caption,
-            parse_mode="MarkdownV2",
             reply_markup=product_controls(pid, qty),
         )
     await cb.answer()
@@ -488,11 +453,10 @@ async def prod_add(cb: CallbackQuery):
 async def show_cart(cb: CallbackQuery):
     items, total, has_priced, label = await _build_cart_summary(cb.from_user.id)
     text = _render_cart_text(items, total, has_priced, label)
-    await safe_send(
+    await send_md_safe(
         cb.message,
         text,
         reply_markup=cart_keyboard(bool(items)),
-        parse_mode="MarkdownV2",
     )
     await cb.answer()
 
@@ -500,11 +464,10 @@ async def show_cart(cb: CallbackQuery):
 @router.callback_query(F.data == "cart:clear")
 async def clear_cart(cb: CallbackQuery):
     cart.clear(cb.from_user.id)
-    await safe_edit(
+    await edit_md_safe(
         cb.message,
         "Корзина пуста",
         reply_markup=cart_keyboard(False),
-        parse_mode="MarkdownV2",
     )
     await cb.answer("Корзина очищена")
 
@@ -523,7 +486,6 @@ async def checkout_cart(cb: CallbackQuery):
                 await cb.message.bot.send_message(
                     admin_id,
                     admin_text,
-                    parse_mode=ParseMode.MARKDOWN_V2,
                 )
             except Exception as exc:
                 logger.warning(
@@ -532,11 +494,10 @@ async def checkout_cart(cb: CallbackQuery):
 
     cart.clear(cb.from_user.id)
 
-    await safe_edit(
+    await edit_md_safe(
         cb.message,
         "Заявка по корзине отправлена. Корзина очищена.",
         reply_markup=cart_keyboard(False),
-        parse_mode="MarkdownV2",
     )
     await cb.answer("Отправлено")
 
@@ -550,13 +511,13 @@ async def show_price(cb: CallbackQuery):
     sections = await db_utils.fetch_sections(only_available=only_available)
     if not sections:
         if only_available:
-            await safe_send(
+            await send_md_safe(
                 cb.message,
                 "Сейчас нет товаров в наличии. Вы можете отключить фильтр «В наличии» в главном меню.",
                 reply_markup=main_menu(_is_admin(user_id)),
             )
         else:
-            await safe_send(
+            await send_md_safe(
                 cb.message,
                 "Каталог пуст: загрузите XLSX тканей и фурнитуры",
                 reply_markup=empty_catalog_keyboard(_is_admin(user_id)),
@@ -574,7 +535,7 @@ async def show_price(cb: CallbackQuery):
 
     prefix = "secstock" if only_available else "sec"
 
-    await safe_send(
+    await send_md_safe(
         cb.message,
         label,
         reply_markup=pager(prefix, page_items, page, total),
@@ -590,9 +551,9 @@ async def _send_setting_text(target: Message, user_id: int, key: str, empty_text
     stored = await db_utils.get_setting(key, "")
     reply_markup = main_menu(_is_admin(user_id))
     if stored:
-        await target.answer(stored, reply_markup=reply_markup)
+        await send_md_safe(target, stored, reply_markup=reply_markup)
     else:
-        await safe_send(
+        await send_md_safe(
             target,
             empty_text,
             reply_markup=reply_markup,
@@ -661,10 +622,9 @@ async def _start_request(cb: CallbackQuery, state: FSMContext, request_key: str)
 
     await state.set_state(SupportRequestState.waiting_text)
     await state.update_data(request_type=request_key)
-    await safe_send(
+    await send_md_safe(
         cb.message,
         _REQUEST_PROMPTS[request_key],
-        parse_mode="MarkdownV2",
     )
     await cb.answer()
 
@@ -681,15 +641,15 @@ async def _notify_admins(msg: Message, request_key: str, user_text: str) -> None
 
     full_name = user.full_name or "Без имени"
     lines = [
-        f"🔔 {escape_md(_REQUEST_TITLES[request_key])}",
-        f"Имя: {escape_md(full_name)}",
+        f"🔔 {escape_user(_REQUEST_TITLES[request_key])}",
+        f"Имя: {escape_user(full_name)}",
     ]
     if user.username:
-        lines.append(f"Юзернейм: @{escape_md(user.username)}")
+        lines.append(f"Юзернейм: @{escape_user(user.username)}")
     lines.extend(
         [
             "Сообщение:",
-            escape_md(user_text),
+            escape_user(user_text),
         ]
     )
     admin_message = "\n".join(lines)
@@ -699,7 +659,6 @@ async def _notify_admins(msg: Message, request_key: str, user_text: str) -> None
             await msg.bot.send_message(
                 admin_id,
                 admin_message,
-                parse_mode=ParseMode.MARKDOWN_V2,
             )
         except Exception as exc:
             logger.warning("Не удалось уведомить администратора %s: %s", admin_id, exc)
@@ -745,21 +704,19 @@ async def handle_support_request(msg: Message, state: FSMContext):
 
     user_text = _extract_user_input(msg)
     if not user_text:
-        await safe_send(
+        await send_md_safe(
             msg,
             "Пожалуйста, отправьте текстовое сообщение или контакт.",
-            parse_mode="MarkdownV2",
         )
         return
 
     await _notify_admins(msg, request_key, user_text)
 
     user_id = msg.from_user.id if msg.from_user else 0
-    await safe_send(
+    await send_md_safe(
         msg,
         _REQUEST_CONFIRMATIONS[request_key],
         reply_markup=main_menu(_is_admin(user_id)),
-        parse_mode="MarkdownV2",
     )
 
     await state.clear()
