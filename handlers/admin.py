@@ -6,7 +6,7 @@ from data.db_utils import set_setting, get_setting
 from data.importer import parse_fabrics, parse_hardware
 from data.db_utils import aiosqlite
 from config import DB_PATH
-from structure.markdown import send_md_safe, edit_md_safe
+from structure.markdown import send_md_safe, edit_md_safe, message_to_markdown
 from structure.keyboards import usd_keyboard, import_result_keyboard
 from services.exchange import current_range, refresh_range
 
@@ -153,7 +153,7 @@ async def save_text(msg: Message):
     target = await get_setting("edit_target","")
     if not target: 
         return
-    await set_setting(target, msg.text)
+    await set_setting(target, message_to_markdown(msg))
     await set_setting("edit_target","")
     await send_md_safe(
         msg,

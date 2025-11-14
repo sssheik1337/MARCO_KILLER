@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import re
+from collections import defaultdict
+from dataclasses import dataclass
+from typing import Iterable
 from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import (
     CallbackQuery,
     InlineKeyboardMarkup,
     Message,
+    MessageEntity,
     ReplyKeyboardMarkup,
     ReplyKeyboardRemove,
 )
@@ -63,6 +67,126 @@ class MarkdownV2Escaper:
             result.append(cls.escape_plain(text[last_index:]))
 
         return "".join(result)
+
+
+@dataclass(frozen=True)
+class _EntityWrapper:
+    """Содержит данные о маркерах Markdown для сущности Telegram."""
+
+    start: int
+    end: int
+    start_token: str
+    end_token: str
+    length: int
+    disable_escape: bool
+
+
+def _entity_tokens(entity: MessageEntity, text: str) -> _EntityWrapper | None:
+    """Подбирает маркеры MarkdownV2 для сущности Telegram."""
+
+    start = entity.offset
+    end = entity.offset + entity.length
+    length = entity.length
+    entity_type = entity.type
+
+    if entity_type == "bold":
+        return _EntityWrapper(start, end, "*", "*", length, False)
+    if entity_type == "italic":
+        return _EntityWrapper(start, end, "_", "_", length, False)
+    if entity_type == "underline":
+        return _EntityWrapper(start, end, "__", "__", length, False)
+    if entity_type == "strikethrough":
+        return _EntityWrapper(start, end, "~", "~", length, False)
+    if entity_type == "spoiler":
+        return _EntityWrapper(start, end, "||", "||", length, False)
+    if entity_type == "code":
+        return _EntityWrapper(start, end, "`", "`", length, True)
+    if entity_type == "pre":
+        language = entity.language or ""
+        prefix = f"```{language}\n" if language else "```"
+        snippet = text[start:end]
+        suffix = "\n```" if not snippet.endswith("\n") else "```"
+        return _EntityWrapper(start, end, prefix, suffix, length, True)
+    if entity_type == "text_link" and entity.url:
+        return _EntityWrapper(start, end, "[", f"]({entity.url})", length, False)
+    if entity_type == "text_mention" and entity.user:
+        return _EntityWrapper(
+            start,
+            end,
+            "[",
+            f"](tg://user?id={entity.user.id})",
+            length,
+            False,
+        )
+    return None
+
+
+def _collect_wrappers(
+    entities: Iterable[MessageEntity], text: str
+) -> tuple[dict[int, list[_EntityWrapper]], dict[int, list[_EntityWrapper]]]:
+    """Формирует словари открывающих и закрывающих маркеров."""
+
+    starts: dict[int, list[_EntityWrapper]] = defaultdict(list)
+    ends: dict[int, list[_EntityWrapper]] = defaultdict(list)
+
+    for entity in entities:
+        wrapper = _entity_tokens(entity, text)
+        if not wrapper:
+            continue
+        starts[wrapper.start].append(wrapper)
+        ends[wrapper.end].append(wrapper)
+
+    return starts, ends
+
+
+def message_to_markdown(message: Message) -> str:
+    """Конвертирует текст сообщения и его сущности в строку MarkdownV2."""
+
+    text = message.text or message.caption or ""
+    if not text:
+        return ""
+
+    entities: Iterable[MessageEntity] = message.entities or message.caption_entities or []
+    start_map, end_map = _collect_wrappers(entities, text)
+
+    if not start_map and not end_map:
+        return MarkdownV2Escaper.escape_plain(text)
+
+    positions = sorted({0, len(text), *start_map.keys(), *end_map.keys()})
+    result: list[str] = []
+    active_code_blocks = 0
+
+    for index, pos in enumerate(positions):
+        for wrapper in sorted(
+            end_map.get(pos, []),
+            key=lambda item: (item.length, item.start_token),
+        ):
+            if wrapper.disable_escape:
+                active_code_blocks = max(0, active_code_blocks - 1)
+            result.append(wrapper.end_token)
+
+        for wrapper in sorted(
+            start_map.get(pos, []),
+            key=lambda item: (-item.length, item.start_token),
+        ):
+            result.append(wrapper.start_token)
+            if wrapper.disable_escape:
+                active_code_blocks += 1
+
+        if index == len(positions) - 1:
+            continue
+
+        next_pos = positions[index + 1]
+        if next_pos <= pos:
+            continue
+
+        segment = text[pos:next_pos]
+        if active_code_blocks > 0:
+            result.append(segment)
+        else:
+            result.append(MarkdownV2Escaper.escape_plain(segment))
+
+    return "".join(result)
 
 
 def escape_user(text: str | None) -> str:
