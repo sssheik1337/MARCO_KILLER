@@ -251,13 +251,29 @@ async def show_cart(cb: CallbackQuery):
 
 @router.callback_query(F.data == "menu:price")
 async def show_price(cb: CallbackQuery):
-    """Прайс: показываем разделы, дальше — те же списки товаров, что и в каталоге."""
+    """Прайс идёт по тому же пути, что и каталог: разделы → категории → товары."""
+
     sections = await db_utils.fetch_sections()
+    if not sections:
+        is_admin = _is_admin(cb.from_user.id)
+        await safe_answer(
+            cb.message,
+            "Каталог пуст: загрузите XLSX тканей и фурнитуры",
+            reply_markup=empty_catalog_keyboard(is_admin),
+            parse_mode="MarkdownV2",
+        )
+        await cb.answer()
+        return
+
     labeled = [("🧵 Ткани" if s == "fabrics" else "🔩 Фурнитура", s) for s in sections]
     page_items, page, total = slice_page(labeled, 1, PAGE_SIZE)
+
+    rng, usd = await current_range()
+    label = range_label(rng, usd)
+
     await safe_answer(
         cb.message,
-        "Выберите раздел:",
+        label,
         reply_markup=pager("sec", page_items, page, total),
         parse_mode="MarkdownV2",
     )
