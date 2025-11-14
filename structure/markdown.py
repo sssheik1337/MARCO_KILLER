@@ -14,14 +14,62 @@ from aiogram.types import (
 )
 
 
+class MarkdownV2Escaper:
+    """Утилиты экранирования MarkdownV2 с сохранением корректной разметки."""
+
+    _SPECIAL_CHARS = r"\\_*[]()~`>#+-=|{}.!+"
+    _ESCAPE_RE = re.compile(f"([{re.escape(_SPECIAL_CHARS)}])")
+    _MARKDOWN_FRAGMENT_RE = re.compile(
+        r"("  # группа для полезной разметки
+        r"```[\s\S]*?```"  # блок кода
+        r"|`[^`]*`"  # инлайн-код
+        r"|\[[^\]\n]*?\]\([^\)\n]*?\)"  # ссылка
+        r"|\*{1,2}[^*\r\n]+?\*{1,2}"  # курсив или жирный через *
+        r"|_{1,2}[^_\r\n]+?_{1,2}"  # курсив или подчёркивание через _
+        r"|~[^~\r\n]+?~"  # зачёркивание
+        r"|\|\|[\s\S]*?\|\|"  # спойлер
+        r")",
+        re.DOTALL,
+    )
+
+    @classmethod
+    def escape_plain(cls, chunk: str) -> str:
+        """Экранирует обычный текст, не содержащий Markdown-разметки."""
+
+        if not chunk:
+            return ""
+        return cls._ESCAPE_RE.sub(r"\\\1", chunk)
+
+    @classmethod
+    def escape_preserving(cls, text: str) -> str:
+        """Экранирует текст вне Markdown-фрагментов, сохраняя форматирование."""
+
+        if not text:
+            return ""
+
+        result: list[str] = []
+        last_index = 0
+
+        for match in cls._MARKDOWN_FRAGMENT_RE.finditer(text):
+            start, end = match.span()
+            if start > last_index:
+                result.append(cls.escape_plain(text[last_index:start]))
+            result.append(match.group(0))
+            last_index = end
+
+        if last_index < len(text):
+            result.append(cls.escape_plain(text[last_index:]))
+
+        return "".join(result)
+
+
 def escape_user(text: str | None) -> str:
     """Экранирует произвольный пользовательский ввод под MarkdownV2."""
 
     if not text:
         return ""
     normalized = str(text).replace("\r", "").replace("\t", "    ")
-    normalized = normalized.replace("\\", "\\\\")
-    return re.sub(r"([_\*\[\]\(\)~`>#+\-=|{}\.!])", r"\\\\\\1", normalized)
+    return MarkdownV2Escaper.escape_preserving(normalized)
 
 
 def escape_full(text: str) -> str:
