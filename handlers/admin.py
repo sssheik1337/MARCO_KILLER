@@ -1,3 +1,5 @@
+import logging
+
 from aiogram import Router, F
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import CallbackQuery, Message, ContentType, InlineKeyboardMarkup, InlineKeyboardButton
@@ -6,7 +8,7 @@ from data.db_utils import set_setting, get_setting
 from data.importer import parse_fabrics, parse_hardware
 import aiosqlite
 from config import DB_PATH
-from structure.markdown import send_md_safe, edit_md_safe, message_to_markdown
+from structure.markdown import send_md_safe, edit_md_safe, message_to_markdown, escape_user
 from structure.keyboards import usd_keyboard, import_result_keyboard
 from services.exchange import current_range, refresh_range
 
@@ -196,35 +198,90 @@ async def imp_hw(cb: CallbackQuery):
 @router.message(F.content_type == ContentType.DOCUMENT)
 async def import_xlsx(msg: Message):
     target = await get_setting("import_target","")
-    if not target: return
+    if not target:
+        return
+
     f = await msg.bot.get_file(msg.document.file_id)
     stream = await msg.bot.download_file(f.file_path)
-    if target == "fabrics":
-        items = parse_fabrics(stream)
-    else:
-        items = parse_hardware(stream)
-    # полная замена раздела
+    section_title = {"fabrics": "«ткани»", "hardware": "«фурнитура»"}
+
+    try:
+        if target == "fabrics":
+            items = parse_fabrics(stream)
+        elif target == "hardware":
+            items = parse_hardware(stream)
+        else:
+            await send_md_safe(msg, "Неизвестный раздел импорта.")
+            return
+    except Exception as exc:
+        logging.exception("Ошибка разбора файла для раздела %s", target)
+        await send_md_safe(
+            msg,
+            f"Не удалось обработать файл: {escape_user(str(exc))}",
+        )
+        return
+
+    sql = (
+        "INSERT INTO products("
+        "section,category,subcategory,name,article,country,fabric_type,segment,"
+        "collection,brand_country,multiplicity,unit,currency,status,"
+        "price_piece_85_90,price_roll_85_90,price_piece_90_95,price_roll_90_95,price_piece_95_100,price_roll_95_100,"
+        "price_rrc,price_opt,special,in_stock,image_url) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+    )
+
+    payload = [
+        (
+            item.get("section"),
+            item.get("category"),
+            item.get("subcategory"),
+            item.get("name"),
+            item.get("article"),
+            item.get("country"),
+            item.get("fabric_type"),
+            item.get("segment"),
+            item.get("collection"),
+            item.get("brand_country"),
+            item.get("multiplicity"),
+            item.get("unit"),
+            item.get("currency"),
+            item.get("status"),
+            item.get("price_piece_85_90"),
+            item.get("price_roll_85_90"),
+            item.get("price_piece_90_95"),
+            item.get("price_roll_90_95"),
+            item.get("price_piece_95_100"),
+            item.get("price_roll_95_100"),
+            item.get("price_rrc"),
+            item.get("price_opt"),
+            item.get("special"),
+            item.get("in_stock"),
+            item.get("image_url"),
+        )
+        for item in items
+    ]
+
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("DELETE FROM products WHERE section=?", (target,))
-        sql = ("INSERT INTO products(section,category,subcategory,name,article,country,fabric_type,segment,"
-               "collection,brand_country,multiplicity,unit,currency,status,"
-               "price_piece_85_90,price_roll_85_90,price_piece_90_95,price_roll_90_95,price_piece_95_100,price_roll_95_100,"
-               "price_rrc,price_opt,special,in_stock,image_url) "
-               "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-        await db.executemany(sql, [(
-            i.get("section"), i.get("category"), i.get("subcategory"), i.get("name"), i.get("article"),
-            i.get("country"), i.get("fabric_type"), i.get("segment"),
-            i.get("collection"), i.get("brand_country"), i.get("multiplicity"), i.get("unit"), i.get("currency"), i.get("status"),
-            i.get("price_piece_85_90"), i.get("price_roll_85_90"),
-            i.get("price_piece_90_95"), i.get("price_roll_90_95"),
-            i.get("price_piece_95_100"), i.get("price_roll_95_100"),
-            i.get("price_rrc"), i.get("price_opt"), i.get("special"),
-            i.get("in_stock"), i.get("image_url")
-        ) for i in items])
-        await db.commit()
+        try:
+            await db.execute("BEGIN")
+            await db.execute("DELETE FROM products WHERE section=?", (target,))
+            if payload:
+                await db.executemany(sql, payload)
+        except Exception as exc:
+            if db.in_transaction:
+                await db.rollback()
+            logging.exception("Ошибка импорта раздела %s", target)
+            await send_md_safe(
+                msg,
+                f"Импорт прерван из-за ошибки: {escape_user(str(exc))}",
+            )
+            return
+        else:
+            await db.commit()
+
     await set_setting("import_target","")
     await send_md_safe(
         msg,
-        f"Импортировано {len(items)} позиций",
+        f"Импортировано {len(payload)} позиций для раздела {section_title.get(target, target)}",
         reply_markup=import_result_keyboard(),
     )
