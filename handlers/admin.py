@@ -8,7 +8,7 @@ from data.db_utils import init_db
 from data.db_utils import aiosqlite
 from config import DB_PATH
 from pathlib import Path
-from structure.markdown_utils import safe_answer, safe_edit
+from structure.markdown_utils import safe_send, safe_edit
 from structure.keyboards import usd_keyboard, import_result_keyboard
 from services.exchange import current_range, refresh_range
 
@@ -42,7 +42,7 @@ def edit_prompt_kb(target: str) -> InlineKeyboardMarkup:
 
 @router.callback_query(F.data == "admin:open")
 async def open_admin(cb: CallbackQuery):
-    await safe_answer(
+    await safe_send(
         cb.message,
         "Админ-панель:",
         reply_markup=admin_kb(),
@@ -70,7 +70,7 @@ def _format_usd_message(rng: str, usd: float | None) -> str:
 async def show_usd(cb: CallbackQuery):
     rng, usd = await current_range()
     text = _format_usd_message(rng, usd)
-    await safe_answer(
+    await safe_send(
         cb.message,
         text,
         reply_markup=usd_keyboard(),
@@ -103,7 +103,7 @@ async def ask_text(cb: CallbackQuery):
         "Используйте кнопку «👁 Предпросмотр», чтобы оценить форматирование.\n"
         f"Текущая версия:\n{cur or '—'}"
     )
-    await safe_answer(
+    await safe_send(
         cb.message,
         prompt,
         reply_markup=edit_prompt_kb(key),
@@ -119,7 +119,7 @@ async def preview_text(cb: CallbackQuery):
     key = cb.data.split(":")[-1]
     stored = await get_setting(key, "")
     if not stored:
-        await safe_answer(
+        await safe_send(
             cb.message,
             "Текст пока не задан.",
             parse_mode="MarkdownV2",
@@ -128,14 +128,13 @@ async def preview_text(cb: CallbackQuery):
         return
 
     try:
-        await safe_answer(
+        await safe_send(
             cb.message,
             stored,
-            escape=False,
             parse_mode="MarkdownV2",
         )
     except TelegramBadRequest as error:
-        await safe_answer(
+        await safe_send(
             cb.message,
             f"Не удалось показать предпросмотр: {error.message}",
             parse_mode="MarkdownV2",
@@ -150,7 +149,7 @@ async def save_text(msg: Message):
         return
     await set_setting(target, msg.text)
     await set_setting("edit_target","")
-    await safe_answer(
+    await safe_send(
         msg,
         "Готово ✅",
         reply_markup=admin_kb(),
@@ -161,7 +160,7 @@ async def save_text(msg: Message):
 @router.callback_query(F.data == "admin:import:fabrics")
 async def imp_fabrics(cb: CallbackQuery): 
     await set_setting("import_target","fabrics")
-    await safe_answer(
+    await safe_send(
         cb.message,
         "Пришлите XLSX с тканями.",
         parse_mode="MarkdownV2",
@@ -170,7 +169,7 @@ async def imp_fabrics(cb: CallbackQuery):
 @router.callback_query(F.data == "admin:import:hardware")
 async def imp_hw(cb: CallbackQuery): 
     await set_setting("import_target","hardware")
-    await safe_answer(
+    await safe_send(
         cb.message,
         "Пришлите XLSX с фурнитурой.",
         parse_mode="MarkdownV2",
@@ -204,7 +203,7 @@ async def import_xlsx(msg: Message):
         ) for i in items])
         await db.commit()
     await set_setting("import_target","")
-    await safe_answer(
+    await safe_send(
         msg,
         f"Импортировано {len(items)} позиций",
         reply_markup=import_result_keyboard(),

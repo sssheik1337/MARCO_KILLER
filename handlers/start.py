@@ -4,7 +4,7 @@ from aiogram.types import Message
 from aiogram.fsm.context import FSMContext
 from config import ADMINS
 from structure.keyboards import main_menu
-from structure.markdown_utils import safe_answer
+from structure.markdown_utils import safe_send
 from structure.states import CityState
 
 router = Router()
@@ -16,7 +16,7 @@ async def cmd_start(msg: Message, state: FSMContext):
     await state.clear()
     await state.set_state(CityState.choosing)
     is_admin = bool(msg.from_user and msg.from_user.id in ADMINS)
-    await safe_answer(
+    await safe_send(
         msg,
         "Добро пожаловать! Выберите город для каталога:",
         reply_markup=main_menu(is_admin),

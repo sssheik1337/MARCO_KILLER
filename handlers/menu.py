@@ -12,7 +12,7 @@ from structure.keyboards import (
     empty_catalog_keyboard,
     cart_keyboard,
 )
-from structure.markdown_utils import safe_answer, safe_edit
+from structure.markdown_utils import safe_send, safe_edit
 from structure.formatter import escape_md
 from structure.states import SupportRequestState
 from services.pagination import slice_page
@@ -230,7 +230,7 @@ def _label_sections(sections: list[str]) -> list[tuple[str, str]]:
 
 @router.callback_query(F.data == "home")
 async def on_home(cb: CallbackQuery):
-    await safe_answer(
+    await safe_send(
         cb.message,
         "Главное меню:",
         reply_markup=main_menu(_is_admin(cb.from_user.id)),
@@ -248,13 +248,13 @@ async def catalog_root(cb: CallbackQuery):
     sections = await db_utils.fetch_sections(only_available=only_available)
     if not sections:
         if only_available:
-            await safe_answer(
+            await safe_send(
                 cb.message,
                 "Сейчас нет товаров в наличии. Вы можете отключить фильтр «В наличии» в главном меню.",
                 reply_markup=main_menu(_is_admin(user_id)),
             )
         else:
-            await safe_answer(
+            await safe_send(
                 cb.message,
                 "Каталог пуст: загрузите XLSX тканей и фурнитуры",
                 reply_markup=empty_catalog_keyboard(_is_admin(user_id)),
@@ -273,7 +273,7 @@ async def catalog_root(cb: CallbackQuery):
 
     prefix = "secstock" if only_available else "sec"
 
-    await safe_answer(
+    await safe_send(
         cb.message,
         label,
         reply_markup=pager(prefix, page_items, page, total),
@@ -292,7 +292,7 @@ async def toggle_in_stock_filter(cb: CallbackQuery):
         if enabled
         else "Фильтр «В наличии» отключён. Каталог и прайс снова показывают весь ассортимент."
     )
-    await safe_answer(
+    await safe_send(
         cb.message,
         text,
         reply_markup=main_menu(_is_admin(user_id)),
@@ -323,7 +323,7 @@ async def open_section(cb: CallbackQuery):
     only_available = prefix == "secstock"
     cats = await db_utils.fetch_categories(section, only_available=only_available)
     if not cats:
-        await safe_answer(
+        await safe_send(
             cb.message,
             "Здесь пока пусто.",
             parse_mode="MarkdownV2",
@@ -333,7 +333,7 @@ async def open_section(cb: CallbackQuery):
     items = [(c, c) for c in cats]
     page_items, page, total = slice_page(items, 1, PAGE_SIZE)
     cat_prefix = "catstock" if only_available else "cat"
-    await safe_answer(
+    await safe_send(
         cb.message,
         "Категории:",
         reply_markup=pager(f"{cat_prefix}:{section}", page_items, page, total),
@@ -375,7 +375,7 @@ async def open_category(cb: CallbackQuery):
     items = [(name, str(pid)) for pid, name in prods]
     page_items, page, total = slice_page(items, 1, PAGE_SIZE)
     prod_prefix = "prodliststock" if only_available else "prodlist"
-    await safe_answer(
+    await safe_send(
         cb.message,
         category,
         reply_markup=pager(
@@ -451,7 +451,7 @@ async def product_card(cb: CallbackQuery):
             reply_markup=product_controls(pid, qty)
         )
     else:
-        await safe_answer(
+        await safe_send(
             cb.message,
             caption,
             parse_mode="MarkdownV2",
@@ -493,7 +493,7 @@ async def prod_add(cb: CallbackQuery):
 async def show_cart(cb: CallbackQuery):
     items, total, has_priced, label = await _build_cart_summary(cb.from_user.id)
     text = _render_cart_text(items, total, has_priced, label)
-    await safe_answer(
+    await safe_send(
         cb.message,
         text,
         reply_markup=cart_keyboard(bool(items)),
@@ -555,13 +555,13 @@ async def show_price(cb: CallbackQuery):
     sections = await db_utils.fetch_sections(only_available=only_available)
     if not sections:
         if only_available:
-            await safe_answer(
+            await safe_send(
                 cb.message,
                 "Сейчас нет товаров в наличии. Вы можете отключить фильтр «В наличии» в главном меню.",
                 reply_markup=main_menu(_is_admin(user_id)),
             )
         else:
-            await safe_answer(
+            await safe_send(
                 cb.message,
                 "Каталог пуст: загрузите XLSX тканей и фурнитуры",
                 reply_markup=empty_catalog_keyboard(_is_admin(user_id)),
@@ -579,7 +579,7 @@ async def show_price(cb: CallbackQuery):
 
     prefix = "secstock" if only_available else "sec"
 
-    await safe_answer(
+    await safe_send(
         cb.message,
         label,
         reply_markup=pager(prefix, page_items, page, total),
@@ -594,7 +594,7 @@ async def _send_setting_message(cb: CallbackQuery, key: str, empty_text: str) ->
 
     stored = await db_utils.get_setting(key, "")
     text = stored or empty_text
-    await safe_answer(
+    await safe_send(
         cb.message,
         text,
         reply_markup=main_menu(_is_admin(cb.from_user.id)),
@@ -638,7 +638,7 @@ async def _start_request(cb: CallbackQuery, state: FSMContext, request_key: str)
 
     await state.set_state(SupportRequestState.waiting_text)
     await state.update_data(request_type=request_key)
-    await safe_answer(
+    await safe_send(
         cb.message,
         _REQUEST_PROMPTS[request_key],
         parse_mode="MarkdownV2",
@@ -723,7 +723,7 @@ async def handle_support_request(msg: Message, state: FSMContext):
 
     user_text = _extract_user_input(msg)
     if not user_text:
-        await safe_answer(
+        await safe_send(
             msg,
             "Пожалуйста, отправьте текстовое сообщение или контакт.",
             parse_mode="MarkdownV2",
@@ -733,7 +733,7 @@ async def handle_support_request(msg: Message, state: FSMContext):
     await _notify_admins(msg, request_key, user_text)
 
     user_id = msg.from_user.id if msg.from_user else 0
-    await safe_answer(
+    await safe_send(
         msg,
         _REQUEST_CONFIRMATIONS[request_key],
         reply_markup=main_menu(_is_admin(user_id)),

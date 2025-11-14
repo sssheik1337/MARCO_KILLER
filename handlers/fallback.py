@@ -7,7 +7,7 @@ from aiogram.types import CallbackQuery, Message
 
 from config import ADMINS
 from structure.keyboards import main_menu
-from structure.markdown_utils import safe_answer
+from structure.markdown_utils import safe_send
 from structure.formatter import escape_md
 
 router = Router()
@@ -30,7 +30,7 @@ async def catch_all_message(message: Message) -> None:
         "Получено необработанное сообщение от %s: %s", user_id or "неизвестно", description
     )
     response_text = "Кнопка недоступна, попробуйте ещё раз"
-    await safe_answer(
+    await safe_send(
         message,
         response_text,
         reply_markup=main_menu(_is_admin(user_id)),
@@ -50,7 +50,7 @@ async def catch_all_callback(callback: CallbackQuery) -> None:
     response_text = "Кнопка недоступна, попробуйте ещё раз"
     await callback.answer()
     if callback.message:
-        await safe_answer(
+        await safe_send(
             callback.message,
             response_text,
             reply_markup=main_menu(_is_admin(user_id)),
