@@ -5,7 +5,8 @@ import re
 
 def _col(df, names):  # ищем первую подходящую колонку
     for n in names:
-        if n in df.columns: return n
+        if n in df.columns:
+            return n
     return None
 
 SourceType = Union[str, BinaryIO]
@@ -17,8 +18,9 @@ def _reset_stream(source: SourceType) -> SourceType:
     return source
 
 
-def parse_fabrics(xlsx_path: SourceType) -> list[dict]:
-    df = pd.read_excel(_reset_stream(xlsx_path), header=4)  # у твоего файла хедер с 5-й строки
+def parse_fabrics(source: SourceType) -> list[dict]:
+    source = _reset_stream(source)
+    df = pd.read_excel(source, header=4)  # у твоего файла хедер с 5-й строки
     # авто-поиск столбцов цен по коридорам
     price_cols = {}
     for col in df.columns:
@@ -57,8 +59,9 @@ def parse_fabrics(xlsx_path: SourceType) -> list[dict]:
         items.append(rec)
     return items
 
-def parse_hardware(xlsx_path: SourceType) -> list[dict]:
-    df = pd.read_excel(_reset_stream(xlsx_path), header=10)  # по скрину заголовки около 11 строки
+def parse_hardware(source: SourceType) -> list[dict]:
+    source = _reset_stream(source)
+    df = pd.read_excel(source, header=10)  # по скрину заголовки около 11 строки
     items = []
     for _, r in df.iterrows():
         name = r.get(_col(df, ["Наименование"]))
