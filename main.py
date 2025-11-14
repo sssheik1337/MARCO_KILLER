@@ -8,6 +8,7 @@ from config import BOT_TOKEN, LOG_LEVEL
 from handlers import start as start_handlers
 from handlers import menu as menu_handlers
 from handlers import admin as admin_handlers
+from handlers import fallback as fallback_handlers
 from data.db_utils import init_db
 
 async def main() -> None:
@@ -23,6 +24,7 @@ async def main() -> None:
     dp.include_router(start_handlers.router)
     dp.include_router(menu_handlers.router)
     dp.include_router(admin_handlers.router)
+    dp.include_router(fallback_handlers.router)
 
     await dp.start_polling(bot)
 
