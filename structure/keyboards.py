@@ -23,6 +23,8 @@ def main_menu(is_admin: bool) -> InlineKeyboardMarkup:
 def empty_catalog_keyboard(is_admin: bool) -> InlineKeyboardMarkup:
     """Клавиатура для пустого каталога до первичного импорта."""
 
+    home_button = InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")
+
     if is_admin:
         rows = [
             [
@@ -37,12 +39,14 @@ def empty_catalog_keyboard(is_admin: bool) -> InlineKeyboardMarkup:
                     callback_data="admin:import:hardware",
                 )
             ],
-            [InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")],
+            [home_button],
         ]
     else:
         rows = [
-            [InlineKeyboardButton(text="Связаться", callback_data="menu:contacts")],
-            [InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")],
+            [
+                InlineKeyboardButton(text="Связаться", callback_data="menu:contacts"),
+                home_button,
+            ]
         ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
