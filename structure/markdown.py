@@ -78,7 +78,7 @@ def escape_full(text: str) -> str:
     if not text:
         return ""
     safe = text.replace("\\", "\\\\")
-    return re.sub(r"([_\*\[\]\(\)~`>#+\-=|{}\.!])", r"\\\\\\1", safe)
+    return MarkdownV2Escaper.escape_plain(safe)
 
 
 def strip_markdown(text: str) -> str:
@@ -101,6 +101,12 @@ async def send_md_safe(
     disable_web_page_preview: bool | None = None,
 ):
     """Отправляет MarkdownV2-сообщение с защитой от ошибок разметки."""
+    """
+    Сначала пытаемся отправить текст «как есть». Если Telegram сообщает об ошибке
+    парсинга, повторяем попытку с выборочным экранированием MarkdownV2, которое
+    сохраняет исходные конструкции форматирования. В крайнем случае полностью
+    экранируем текст или отправляем plain-версию.
+    """
 
     async def _answer(msg: Message, payload: str, parse_mode: ParseMode | None):
         kwargs: dict[str, object] = {"reply_markup": reply_markup}
@@ -117,6 +123,13 @@ async def send_md_safe(
     except TelegramBadRequest:
         pass
 
+    preserved = MarkdownV2Escaper.escape_preserving(text)
+    if preserved:
+        try:
+            return await _answer(destination, preserved, ParseMode.MARKDOWN_V2)
+        except TelegramBadRequest:
+            pass
+
     try:
         return await _answer(destination, escape_full(text), ParseMode.MARKDOWN_V2)
     except TelegramBadRequest:
@@ -131,6 +144,11 @@ async def edit_md_safe(
     reply_markup: InlineKeyboardMarkup | ReplyKeyboardMarkup | ReplyKeyboardRemove | None = None,
 ):
     """Редактирует сообщение с MarkdownV2, перехватывая ошибки разметки."""
+    """
+    Логика аналогична отправке: сперва используется оригинальный текст, затем
+    версия с выборочным экранированием и, при необходимости, полностью
+    экранированный либо «обезжиренный» вариант.
+    """
 
     async def _edit(msg: Message, payload: str, parse_mode: ParseMode | None):
         kwargs: dict[str, object] = {"reply_markup": reply_markup}
@@ -144,6 +162,13 @@ async def edit_md_safe(
         return await _edit(destination, text, None)
     except TelegramBadRequest:
         pass
+
+    preserved = MarkdownV2Escaper.escape_preserving(text)
+    if preserved:
+        try:
+            return await _edit(destination, preserved, ParseMode.MARKDOWN_V2)
+        except TelegramBadRequest:
+            pass
 
     try:
         return await _edit(destination, escape_full(text), ParseMode.MARKDOWN_V2)
