@@ -116,17 +116,24 @@ async def ask_text(cb: CallbackQuery):
     pretty = {"contacts":"Контакты","address":"Адрес/маршрут","worktime":"Режим работы","requisites":"Реквизиты"}[key]
     await set_setting("edit_target", key)
     cur = await get_setting(key, "")
-    prompt = (
-        f"Пришлите новый текст для «{pretty}». Поддерживается MarkdownV2.\n"
-        "Используйте кнопку «👁 Предпросмотр», чтобы оценить форматирование.\n"
-        f"Текущая версия:\n{cur or '—'}"
-    )
+    prompt_lines = [
+        f"Пришлите новый текст для «{pretty}». Поддерживается MarkdownV2.",
+        "Используйте кнопку «👁 Предпросмотр», чтобы оценить форматирование.",
+    ]
+    if cur:
+        prompt_lines.append("Текущая версия показана ниже.")
+    else:
+        prompt_lines.append("Текущая версия: —")
+
     await safe_send(
         cb.message,
-        prompt,
+        "\n".join(prompt_lines),
         reply_markup=edit_prompt_kb(key),
-        parse_mode="MarkdownV2",
     )
+
+    if cur:
+        await safe_send(cb.message, "Текущая версия:")
+        await safe_send(cb.message, cur)
     await cb.answer()
 
 
@@ -137,26 +144,12 @@ async def preview_text(cb: CallbackQuery):
     key = cb.data.split(":")[-1]
     stored = await get_setting(key, "")
     if not stored:
-        await safe_send(
-            cb.message,
-            "Текст пока не задан.",
-            parse_mode="MarkdownV2",
-        )
+        await safe_send(cb.message, "Текст пока не задан.")
         await cb.answer()
         return
 
-    try:
-        await safe_send(
-            cb.message,
-            stored,
-            parse_mode="MarkdownV2",
-        )
-    except TelegramBadRequest as error:
-        await safe_send(
-            cb.message,
-            f"Не удалось показать предпросмотр: {error.message}",
-            parse_mode="MarkdownV2",
-        )
+    await safe_send(cb.message, "Предпросмотр:")
+    await safe_send(cb.message, stored)
     await cb.answer()
 
 
@@ -171,7 +164,6 @@ async def save_text(msg: Message):
         msg,
         "Готово ✅",
         reply_markup=admin_kb(),
-        parse_mode="MarkdownV2",
     )
 
 # импорты
@@ -181,7 +173,6 @@ async def imp_fabrics(cb: CallbackQuery):
     await safe_send(
         cb.message,
         "Пришлите XLSX с тканями.",
-        parse_mode="MarkdownV2",
     )
 
 @router.callback_query(F.data == "admin:import:hardware")
@@ -190,7 +181,6 @@ async def imp_hw(cb: CallbackQuery):
     await safe_send(
         cb.message,
         "Пришлите XLSX с фурнитурой.",
-        parse_mode="MarkdownV2",
     )
 
 @router.message(F.content_type == ContentType.DOCUMENT)

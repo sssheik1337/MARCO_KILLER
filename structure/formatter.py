@@ -28,6 +28,40 @@ _MARKDOWN_SPECIALS = {
 _CODE_PATTERN = re.compile(r"(```[\s\S]*?```|`[^`\n]*`)")
 
 
+def _is_line_start(text: str, index: int) -> bool:
+    """Проверяет, что позиция находится в начале строки (игнорируя пробелы)."""
+
+    if index <= 0:
+        return True
+
+    probe = index - 1
+    while probe >= 0:
+        previous = text[probe]
+        if previous == "\n":
+            return True
+        if previous not in {" ", "\t"}:
+            return False
+        probe -= 1
+    return True
+
+
+def _collect_ordered_prefix(text: str, index: int) -> Optional[int]:
+    """Находит конец нумерованного маркера "1." в начале строки."""
+
+    if not text[index].isdigit() or not _is_line_start(text, index):
+        return None
+
+    probe = index
+    length = len(text)
+    while probe < length and text[probe].isdigit():
+        probe += 1
+
+    if probe < length - 1 and text[probe] == "." and text[probe + 1] == " ":
+        return probe
+
+    return None
+
+
 def _escape_plain(text: str) -> str:
     """Экранирует спецсимволы MarkdownV2 в произвольной строке."""
 
@@ -122,7 +156,40 @@ def _escape_markup_segment(text: str) -> str:
             index = closing + 1
             continue
 
-        if char in {"*", "_"}:
+        if char in {"-", "+", "*"} and _is_line_start(text, index):
+            next_char = text[index + 1] if index + 1 < length else ""
+            if next_char == " ":
+                flush_buffer()
+                result.append(char)
+                index += 1
+                continue
+
+        ordered_prefix_end = _collect_ordered_prefix(text, index)
+        if ordered_prefix_end is not None:
+            flush_buffer()
+            result.append(text[index : ordered_prefix_end + 1])
+            index = ordered_prefix_end + 1
+            continue
+
+        if char == "#" and _is_line_start(text, index):
+            probe = index
+            while probe < length and text[probe] == "#":
+                probe += 1
+            if probe < length and text[probe] == " ":
+                flush_buffer()
+                result.append(text[index:probe])
+                index = probe
+                continue
+
+        if char == ">" and _is_line_start(text, index):
+            next_char = text[index + 1] if index + 1 < length else ""
+            if next_char == " ":
+                flush_buffer()
+                result.append(char)
+                index += 1
+                continue
+
+        if char in {"*", "_", "~"}:
             closing = _find_delimiter(text, index + 1, char)
             if closing is None:
                 buffer.append(char)
