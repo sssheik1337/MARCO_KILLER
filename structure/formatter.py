@@ -71,6 +71,17 @@ def _escape_plain(text: str) -> str:
     return "".join(f"\\{char}" if char in _MARKDOWN_SPECIALS else char for char in text)
 
 
+def _is_escaped(text: str, position: int) -> bool:
+    """Определяет, экранирован ли символ в заданной позиции."""
+
+    backslashes = 0
+    probe = position - 1
+    while probe >= 0 and text[probe] == "\\":
+        backslashes += 1
+        probe -= 1
+    return backslashes % 2 == 1
+
+
 def _find_delimiter(text: str, start: int, delimiter: str) -> Optional[int]:
     """Находит позицию закрывающего разделителя, учитывая экранирование."""
 
@@ -81,9 +92,25 @@ def _find_delimiter(text: str, start: int, delimiter: str) -> Optional[int]:
         if char == "\\":
             index += 2
             continue
-        if char == delimiter:
+        if char == delimiter and not _is_escaped(text, index):
             return index
         index += 1
+    return None
+
+
+def _find_sequence(text: str, start: int, token: str) -> Optional[int]:
+    """Находит позицию закрывающей последовательности (например, '__' или '||')."""
+
+    index = start
+    length = len(text)
+    token_len = len(token)
+    while index < length:
+        position = text.find(token, index)
+        if position == -1:
+            return None
+        if not _is_escaped(text, position):
+            return position
+        index = position + token_len
     return None
 
 
@@ -188,6 +215,34 @@ def _escape_markup_segment(text: str) -> str:
                 result.append(char)
                 index += 1
                 continue
+
+        if text.startswith("||", index):
+            closing = _find_sequence(text, index + 2, "||")
+            if closing is None:
+                buffer.append(char)
+                index += 1
+                continue
+            flush_buffer()
+            inner = text[index + 2 : closing]
+            result.append("||")
+            result.append(_escape_markup_segment(inner))
+            result.append("||")
+            index = closing + 2
+            continue
+
+        if text.startswith("__", index):
+            closing = _find_sequence(text, index + 2, "__")
+            if closing is None:
+                buffer.append(char)
+                index += 1
+                continue
+            flush_buffer()
+            inner = text[index + 2 : closing]
+            result.append("__")
+            result.append(_escape_markup_segment(inner))
+            result.append("__")
+            index = closing + 2
+            continue
 
         if char in {"*", "_", "~"}:
             closing = _find_delimiter(text, index + 1, char)
