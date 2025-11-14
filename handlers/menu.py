@@ -159,17 +159,12 @@ def _render_cart_admin_text(
         return ""
 
     full_name = from_user.full_name or "Без имени"
-    username_line = (
-        f"Юзернейм: @{escape_md(from_user.username)}"
-        if from_user.username
-        else "Юзернейм: —"
-    )
     header = [
         "🧺 Новая заявка из корзины",
-        f"Пользователь: [{escape_md(full_name)}](tg://user?id={from_user.id})",
-        username_line,
-        f"ID: {escape_md(str(from_user.id))}",
+        f"Имя: {escape_md(full_name)}",
     ]
+    if from_user.username:
+        header.append(f"Юзернейм: @{escape_md(from_user.username)}")
 
     body = [
         f"- {escape_md(item['name'])} × {item['qty']} = {escape_md(_format_money(item['line_total']))} (ID: {item['id']})"
@@ -589,45 +584,70 @@ async def show_price(cb: CallbackQuery):
 
 # --- информационные страницы ---
 
-async def _send_setting_message(cb: CallbackQuery, key: str, empty_text: str) -> None:
-    """Выводит текст из настроек или запасной вариант."""
+async def _send_setting_text(target: Message, user_id: int, key: str, empty_text: str) -> None:
+    """Отправляет пользователю текст из настроек или запасной вариант."""
 
     stored = await db_utils.get_setting(key, "")
     text = stored or empty_text
     await safe_send(
-        cb.message,
+        target,
         text,
-        reply_markup=main_menu(_is_admin(cb.from_user.id)),
-        parse_mode="MarkdownV2",
+        reply_markup=main_menu(_is_admin(user_id)),
     )
-    await cb.answer()
+
+
+_INFO_COMMANDS = {
+    "📇 Контакты": ("contacts", "Контакты пока не заполнены."),
+    "🗺️ Как проехать": ("address", "Адрес пока не указан."),
+    "📄 Реквизиты": ("requisites", "Реквизиты пока не добавлены."),
+}
 
 
 @router.callback_query(F.data == "menu:contacts")
 async def show_contacts(cb: CallbackQuery):
-    await _send_setting_message(
-        cb,
-        "contacts",
-        "Контакты пока не заполнены.",
-    )
+    if cb.message:
+        await _send_setting_text(
+            cb.message,
+            cb.from_user.id,
+            "contacts",
+            "Контакты пока не заполнены.",
+        )
+    await cb.answer()
 
 
 @router.callback_query(F.data == "menu:route")
 async def show_route(cb: CallbackQuery):
-    await _send_setting_message(
-        cb,
-        "address",
-        "Адрес пока не указан.",
-    )
+    if cb.message:
+        await _send_setting_text(
+            cb.message,
+            cb.from_user.id,
+            "address",
+            "Адрес пока не указан.",
+        )
+    await cb.answer()
 
 
 @router.callback_query(F.data == "menu:requisites")
 async def show_requisites(cb: CallbackQuery):
-    await _send_setting_message(
-        cb,
-        "requisites",
-        "Реквизиты пока не добавлены.",
-    )
+    if cb.message:
+        await _send_setting_text(
+            cb.message,
+            cb.from_user.id,
+            "requisites",
+            "Реквизиты пока не добавлены.",
+        )
+    await cb.answer()
+
+
+@router.message(F.text.in_(tuple(_INFO_COMMANDS.keys())))
+async def show_info_message(msg: Message):
+    """Обрабатывает текстовые запросы на контакты, адрес и реквизиты."""
+
+    if not msg.from_user:
+        return
+
+    key, fallback = _INFO_COMMANDS[msg.text]
+    await _send_setting_text(msg, msg.from_user.id, key, fallback)
 
 
 
@@ -657,18 +677,18 @@ async def _notify_admins(msg: Message, request_key: str, user_text: str) -> None
         return
 
     full_name = user.full_name or "Без имени"
-    username_line = (
-        f"Юзернейм: @{escape_md(user.username)}"
-        if user.username
-        else "Юзернейм: —"
-    )
     lines = [
         f"🔔 {escape_md(_REQUEST_TITLES[request_key])}",
         f"Имя: {escape_md(full_name)}",
-        username_line,
-        "Сообщение:",
-        escape_md(user_text),
     ]
+    if user.username:
+        lines.append(f"Юзернейм: @{escape_md(user.username)}")
+    lines.extend(
+        [
+            "Сообщение:",
+            escape_md(user_text),
+        ]
+    )
     admin_message = "\n".join(lines)
 
     for admin_id in ADMINS:
