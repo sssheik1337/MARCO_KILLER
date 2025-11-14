@@ -164,7 +164,9 @@ def parse_fabrics(source: SourceType) -> list[dict]:
     df, columns = _read_fabric_frame(source)
 
     price_columns: dict[tuple[str, str], str] = {}
-    for column in df.columns:
+    pending: dict[str, list[tuple[int, str]]] = {key: [] for key in _PRICE_RANGES}
+
+    for index, column in enumerate(df.columns):
         normalized = _normalize(column)
         for range_key, range_label in _PRICE_RANGES.items():
             if range_label in normalized:
@@ -172,6 +174,18 @@ def parse_fabrics(source: SourceType) -> list[dict]:
                     price_columns[(range_key, "roll")] = column
                 elif "отр" in normalized:
                     price_columns[(range_key, "piece")] = column
+                else:
+                    pending[range_key].append((index, column))
+
+    for range_key, candidates in pending.items():
+        if (range_key, "roll") in price_columns and (range_key, "piece") in price_columns:
+            continue
+
+        ordered = [col for _, col in sorted(candidates, key=lambda item: item[0])]
+        if (range_key, "roll") not in price_columns and ordered:
+            price_columns[(range_key, "roll")] = ordered[0]
+        if (range_key, "piece") not in price_columns and len(ordered) > 1:
+            price_columns[(range_key, "piece")] = ordered[1]
 
     items: list[dict] = []
     name_column = columns.get("наименование коллекции")
