@@ -262,6 +262,15 @@ def parse_fabrics(source: SourceType) -> list[dict]:
 
     df, columns = _read_fabric_frame(source)
 
+    name_column = columns.get("наименование коллекции")
+
+    if logger.isEnabledFor(logging.INFO):
+        logger.info("Колонки таблицы тканей: %s", repr(list(df.columns)))
+        if name_column and name_column in df.columns:
+            bison_rows = df[df[name_column] == "BISON"]
+            if not bison_rows.empty:
+                logger.info("Строка ткани BISON: %s", bison_rows.iloc[0].to_dict())
+
     price_columns: dict[tuple[str, str], str] = {}
     pending: dict[str, list[tuple[int, str]]] = {key: [] for key in _PRICE_RANGES}
 
@@ -286,6 +295,55 @@ def parse_fabrics(source: SourceType) -> list[dict]:
         if (range_key, "piece") not in price_columns and len(ordered) > 1:
             price_columns[(range_key, "piece")] = ordered[1]
 
+    price_order = [
+        ("85_90", "roll"),
+        ("85_90", "piece"),
+        ("90_95", "roll"),
+        ("90_95", "piece"),
+        ("95_100", "roll"),
+        ("95_100", "piece"),
+    ]
+
+    if any(key not in price_columns for key in price_order):
+        column_list = list(df.columns)
+        segment_column = columns.get("сегмент")
+        special_column = columns.get("спеццена")
+
+        try:
+            segment_index = column_list.index(segment_column) if segment_column else None
+        except ValueError:
+            segment_index = None
+
+        try:
+            special_index = column_list.index(special_column) if special_column else None
+        except ValueError:
+            special_index = None
+
+        start_index = (segment_index + 1) if segment_index is not None else 0
+        if special_index is not None and special_index > start_index:
+            end_index = special_index
+        else:
+            end_index = len(column_list)
+
+        candidates = [col for col in column_list[start_index:end_index] if col is not None]
+
+        if len(candidates) < len(price_order):
+            tail_start = end_index
+            while len(candidates) < len(price_order) and tail_start < len(column_list):
+                candidate = column_list[tail_start]
+                tail_start += 1
+                if candidate is not None:
+                    candidates.append(candidate)
+
+        if len(candidates) >= len(price_order):
+            for key, column in zip(price_order, candidates[: len(price_order)]):
+                price_columns[key] = column
+        else:
+            logger.warning(
+                "Недостаточно колонок цен для позиционного сопоставления: %s",
+                candidates,
+            )
+
     if logger.isEnabledFor(logging.DEBUG):
         logger.debug(
             "Сопоставление колонок цен: %s",
@@ -296,7 +354,6 @@ def parse_fabrics(source: SourceType) -> list[dict]:
         )
 
     items: list[dict] = []
-    name_column = columns.get("наименование коллекции")
 
     for _, row in df.iterrows():
         name = _string_value(row.get(name_column)) if name_column else None
