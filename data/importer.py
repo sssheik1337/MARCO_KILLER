@@ -7,6 +7,8 @@ import re
 from openpyxl import load_workbook
 import pandas as pd
 
+from config import DEFAULT_CITY
+
 
 SourceType = Union[str, BinaryIO]
 
@@ -376,7 +378,7 @@ def _resolve_column(columns: dict[str, str], *aliases: str) -> str | None:
     return None
 
 
-def parse_fabrics(source: SourceType) -> list[dict]:
+def parse_fabrics(source: SourceType, city: str = DEFAULT_CITY) -> list[dict]:
     """Разбирает XLSX с тканями и возвращает список товаров."""
 
     df, columns = _read_fabric_frame(source)
@@ -480,6 +482,7 @@ def parse_fabrics(source: SourceType) -> list[dict]:
         special_flag = _string_value(row.get(columns.get("спеццена")))
 
         record: dict[str, object] = {
+            "city": city,
             "section": "fabrics",
             "category": "Ткани",
             "name": name,
@@ -503,7 +506,7 @@ def parse_fabrics(source: SourceType) -> list[dict]:
     return items
 
 
-def parse_stock(source: SourceType) -> list[dict]:
+def parse_stock(source: SourceType, city: str = DEFAULT_CITY) -> list[dict]:
     """Разбирает XLSX с остатками товаров."""
 
     df_source = _reset_stream(source)
@@ -532,6 +535,7 @@ def parse_stock(source: SourceType) -> list[dict]:
 
         items.append(
             {
+                "city": city,
                 "section": section or "Наличие",
                 "category": category or "Общий",
                 "name": name,
@@ -544,7 +548,7 @@ def parse_stock(source: SourceType) -> list[dict]:
     return items
 
 
-def parse_hardware(source: SourceType) -> list[dict]:
+def parse_hardware(source: SourceType, city: str = DEFAULT_CITY) -> list[dict]:
     """Разбирает XLSX с фурнитурой."""
 
     df_source = _reset_stream(source)
@@ -581,6 +585,7 @@ def parse_hardware(source: SourceType) -> list[dict]:
 
         items.append(
             {
+                "city": city,
                 "section": "hardware",
                 "category": collection or "Фурнитура",
                 "subcategory": None,

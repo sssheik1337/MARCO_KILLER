@@ -7,7 +7,7 @@ from middlewares.admin_filter import AdminOnly
 from data.db_utils import set_setting, get_setting
 from data.importer import parse_fabrics, parse_hardware, parse_stock
 import aiosqlite
-from config import DB_PATH
+from config import DB_PATH, DEFAULT_CITY
 from structure.markdown import send_md_safe, edit_md_safe, message_to_markdown, escape_user
 from structure.keyboards import usd_keyboard, import_result_keyboard
 from services.exchange import current_range, refresh_range
@@ -211,6 +211,8 @@ async def import_xlsx(msg: Message):
     if not target:
         return
 
+    city = DEFAULT_CITY
+
     f = await msg.bot.get_file(msg.document.file_id)
     stream = await msg.bot.download_file(f.file_path)
     section_title = {
@@ -221,11 +223,11 @@ async def import_xlsx(msg: Message):
 
     try:
         if target == "fabrics":
-            items = parse_fabrics(stream)
+            items = parse_fabrics(stream, city=city)
         elif target == "hardware":
-            items = parse_hardware(stream)
+            items = parse_hardware(stream, city=city)
         elif target == "stock":
-            items = parse_stock(stream)
+            items = parse_stock(stream, city=city)
         else:
             await send_md_safe(msg, "Неизвестный раздел импорта.")
             return
@@ -242,13 +244,14 @@ async def import_xlsx(msg: Message):
             await db.execute("BEGIN")
 
             if target == "stock":
-                await db.execute("DELETE FROM stock_items")
+                await db.execute("DELETE FROM stock_items WHERE city=?", (city,))
                 stock_sql = (
-                    "INSERT INTO stock_items(section,category,name,article,quantity,unit) "
-                    "VALUES(?,?,?,?,?,?)"
+                    "INSERT INTO stock_items(city,section,category,name,article,quantity,unit) "
+                    "VALUES(?,?,?,?,?,?,?)"
                 )
                 stock_payload = [
                     (
+                        item.get("city", city),
                         item.get("section"),
                         item.get("category"),
                         item.get("name"),
@@ -264,15 +267,16 @@ async def import_xlsx(msg: Message):
             else:
                 product_sql = (
                     "INSERT INTO products("  # noqa: ISC003
-                    "section,category,subcategory,name,article,country,fabric_type,segment,"
+                    "city,section,category,subcategory,name,article,country,fabric_type,segment,"
                     "collection,brand_country,multiplicity,unit,currency,status,"
                     "price_piece_85_90,price_roll_85_90,price_piece_90_95,price_roll_90_95,price_piece_95_100,price_roll_95_100,"
                     "price_rrc,price_opt,special,in_stock,image_url) "
-                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
                 )
 
                 payload = [
                     (
+                        item.get("city", city),
                         item.get("section"),
                         item.get("category"),
                         item.get("subcategory"),
@@ -302,7 +306,10 @@ async def import_xlsx(msg: Message):
                     for item in items
                 ]
 
-                await db.execute("DELETE FROM products WHERE section=?", (target,))
+                await db.execute(
+                    "DELETE FROM products WHERE section=? AND city=?",
+                    (target, city),
+                )
                 if payload:
                     await db.executemany(product_sql, payload)
                 import_count = len(payload)
@@ -316,10 +323,11 @@ async def import_xlsx(msg: Message):
             )
             return
         else:
+            row = None
             if target == "fabrics":
                 cursor = await db.execute(
-                    "SELECT * FROM products WHERE section=? AND name LIKE ?",
-                    ("fabrics", "%BISON%"),
+                    "SELECT * FROM products WHERE section=? AND city=? AND name LIKE ?",
+                    ("fabrics", city, "%BISON%"),
                 )
                 row = await cursor.fetchone()
                 if row is None:
@@ -327,13 +335,13 @@ async def import_xlsx(msg: Message):
                         "Не найдена коллекция BISON после импорта, выводим первую запись раздела тканей."
                     )
                     cursor = await db.execute(
-                        "SELECT * FROM products WHERE section=? LIMIT 1",
-                        ("fabrics",),
+                        "SELECT * FROM products WHERE section=? AND city=? LIMIT 1",
+                        ("fabrics", city),
                     )
-                    row = await cursor.fetchone()
-                if row is not None:
-                    columns = [desc[0] for desc in cursor.description]
-                    snapshot = {column: row[idx] for idx, column in enumerate(columns)}
+                row = await cursor.fetchone()
+            if row is not None:
+                columns = [desc[0] for desc in cursor.description]
+                snapshot = {column: row[idx] for idx, column in enumerate(columns)}
                     logging.info(
                         "Запись ткани после импорта: %s",
                         snapshot,
