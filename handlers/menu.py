@@ -391,7 +391,6 @@ async def catalog_root(cb: CallbackQuery):
 
 
 @router.callback_query(F.data == "menu:stock")
-@router.callback_query(F.data == "menu:price")
 async def stock_root(cb: CallbackQuery):
     if profiles.get_city(cb.from_user.id) is None:
         await _ask_city(cb.message, "stock")

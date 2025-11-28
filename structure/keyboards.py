@@ -3,11 +3,11 @@ from config import PAGE_SIZE
 from data import db_utils
 
 def main_menu(is_admin: bool, ready_catalog_url: str | None = None) -> InlineKeyboardMarkup:
-    rows = [
-        [
-            InlineKeyboardButton(text="📚 Каталог", callback_data="menu:catalog"),
-            InlineKeyboardButton(text="💵 Прайс", callback_data="menu:price"),
-        ],
+    """Формирует главное меню с актуальными разделами."""
+
+    rows: list[list[InlineKeyboardButton]] = [
+        [InlineKeyboardButton(text="📚 Каталог товаров", callback_data="menu:catalog")],
+        [InlineKeyboardButton(text="📦 Наличие", callback_data="menu:stock")],
     ]
 
     if ready_catalog_url:
@@ -22,26 +22,20 @@ def main_menu(is_admin: bool, ready_catalog_url: str | None = None) -> InlineKey
     rows.extend(
         [
             [
-                InlineKeyboardButton(text="🧺 Корзина", callback_data="menu:cart"),
-                InlineKeyboardButton(text="📦 Наличие", callback_data="menu:stock"),
-            ],
-            [
                 InlineKeyboardButton(text="📇 Контакты", callback_data="menu:contacts"),
                 InlineKeyboardButton(text="🗺️ Как проехать", callback_data="menu:route"),
             ],
             [InlineKeyboardButton(text="📄 Реквизиты", callback_data="menu:requisites")],
-            [
-                InlineKeyboardButton(text="📞 Заявка на звонок", callback_data="menu:callback"),
-                InlineKeyboardButton(text="❓ Задать вопрос", callback_data="menu:question"),
-            ],
-            [
-                InlineKeyboardButton(text="👨‍💼 Связь с руководителем", callback_data="menu:boss"),
-                InlineKeyboardButton(text="🐞 Сообщить об ошибке", callback_data="menu:bug"),
-            ],
+            [InlineKeyboardButton(text="📞 Оставить заявку на звонок", callback_data="menu:callback")],
+            [InlineKeyboardButton(text="❓ Задать вопрос", callback_data="menu:question")],
+            [InlineKeyboardButton(text="👨‍💼 Связь с руководителем", callback_data="menu:boss")],
+            [InlineKeyboardButton(text="🐞 Сообщить об ошибке", callback_data="menu:bug")],
         ]
     )
+
     if is_admin:
         rows.append([InlineKeyboardButton(text="🛠 Админ-панель", callback_data="admin:open")])
+
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
