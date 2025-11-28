@@ -15,6 +15,7 @@ from structure.keyboards import (
     stock_product_controls,
     empty_catalog_keyboard,
     cart_keyboard,
+    city_selector,
 )
 from structure.markdown import (
     edit_md_safe,
@@ -47,6 +48,12 @@ def _user_city(user_id: int) -> str:
     """Возвращает выбранный пользователем город или значение по умолчанию."""
 
     return profiles.get_city_or_default(user_id, DEFAULT_CITY)
+
+
+async def _ask_city(target: Message, action: str) -> None:
+    """Отправляет предложение выбрать город для указанного раздела."""
+
+    await send_md_safe(target, "Выберите город:", reply_markup=city_selector(action))
 
 
 # --- корзина: вспомогательные функции ---
@@ -394,6 +401,11 @@ def _format_quantity_value(qty: float | None, unit: str | None) -> str:
 
 @router.callback_query(F.data == "menu:catalog")
 async def catalog_root(cb: CallbackQuery):
+    if profiles.get_city(cb.from_user.id) is None:
+        await _ask_city(cb.message, "catalog")
+        await cb.answer()
+        return
+
     await _send_catalog_sections(cb.message, cb.from_user.id, 1)
     await cb.answer()
 
@@ -401,8 +413,26 @@ async def catalog_root(cb: CallbackQuery):
 @router.callback_query(F.data == "menu:stock")
 @router.callback_query(F.data == "menu:price")
 async def stock_root(cb: CallbackQuery):
+    if profiles.get_city(cb.from_user.id) is None:
+        await _ask_city(cb.message, "stock")
+        await cb.answer()
+        return
+
     await _send_stock_sections(cb.message, cb.from_user.id, 1)
     await cb.answer()
+
+
+@router.callback_query(F.data.regexp(r"^city:(catalog|stock):(msk|spb)$"))
+async def choose_city(cb: CallbackQuery):
+    """Сохраняет выбранный город и открывает нужный раздел."""
+
+    _, action, city = cb.data.split(":")
+    profiles.set_city(cb.from_user.id, city)
+    if action == "catalog":
+        await _send_catalog_sections(cb.message, cb.from_user.id, 1)
+    else:
+        await _send_stock_sections(cb.message, cb.from_user.id, 1)
+    await cb.answer("Город обновлён")
 
 
 @router.callback_query(F.data.regexp(rf"^{CAT_SEC_PREFIX}:page:"))

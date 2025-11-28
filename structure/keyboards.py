@@ -119,3 +119,24 @@ def import_result_keyboard() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="🏠 В меню", callback_data="home")],
         ]
     )
+
+
+def city_selector(action: str) -> InlineKeyboardMarkup:
+    """Клавиатура выбора города для указанного раздела."""
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="Москва",
+                    callback_data=f"city:{action}:msk",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="Санкт-Петербург",
+                    callback_data=f"city:{action}:spb",
+                )
+            ],
+        ]
+    )
