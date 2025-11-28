@@ -6,10 +6,10 @@ from typing import Any
 from aiogram import Router, F
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup
 from config import PAGE_SIZE, ADMINS, DEFAULT_CITY
 from structure.keyboards import (
-    main_menu,
+    main_menu_with_link,
     pager,
     product_controls,
     stock_product_controls,
@@ -42,6 +42,12 @@ _STOCK_CONTEXT: dict[int, dict[int, dict[str, Any]]] = defaultdict(dict)
 
 def _is_admin(user_id: int) -> bool:
     return user_id in ADMINS
+
+
+async def _main_menu(user_id: int) -> InlineKeyboardMarkup:
+    """Возвращает главное меню с учётом ссылки на каталог готовых изделий."""
+
+    return await main_menu_with_link(_is_admin(user_id))
 
 
 def _user_city(user_id: int) -> str:
@@ -316,10 +322,11 @@ def _label_sections(sections: list[str]) -> list[tuple[str, str]]:
 
 @router.callback_query(F.data == "home")
 async def on_home(cb: CallbackQuery):
+    menu_markup = await _main_menu(cb.from_user.id)
     await send_md_safe(
         cb.message,
         "Главное меню:",
-        reply_markup=main_menu(_is_admin(cb.from_user.id)),
+        reply_markup=menu_markup,
     )
     await cb.answer()
 
@@ -370,7 +377,7 @@ async def _send_stock_sections(target: Message, user_id: int, page: int = 1) -> 
         await send_md_safe(
             target,
             "Наличие пока не загружено: импортируйте XLSX с остатками.",
-            reply_markup=main_menu(_is_admin(user_id)),
+            reply_markup=await _main_menu(user_id),
         )
         return False
 
@@ -967,7 +974,7 @@ async def _send_setting_text(target: Message, user_id: int, key: str, empty_text
     """Отправляет пользователю текст из настроек или запасной вариант."""
 
     stored = await db_utils.get_setting(key, "")
-    reply_markup = main_menu(_is_admin(user_id))
+    reply_markup = await _main_menu(user_id)
     if stored:
         await send_md_safe(target, stored, reply_markup=reply_markup)
     else:
@@ -1136,7 +1143,7 @@ async def handle_support_request(msg: Message, state: FSMContext):
     await send_md_safe(
         msg,
         _REQUEST_CONFIRMATIONS[request_key],
-        reply_markup=main_menu(_is_admin(user_id)),
+        reply_markup=await _main_menu(user_id),
     )
 
     await state.clear()

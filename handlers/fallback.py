@@ -4,7 +4,7 @@ from aiogram import Router
 from aiogram.types import CallbackQuery, Message
 
 from config import ADMINS
-from structure.keyboards import main_menu
+from structure.keyboards import main_menu_with_link
 from structure.markdown import send_md_safe
 
 router = Router()
@@ -27,10 +27,11 @@ async def catch_all_message(message: Message) -> None:
         "Получено необработанное сообщение от %s: %s", user_id or "неизвестно", description
     )
     response_text = "Кнопка недоступна, попробуйте ещё раз"
+    markup = await main_menu_with_link(_is_admin(user_id))
     await send_md_safe(
         message,
         response_text,
-        reply_markup=main_menu(_is_admin(user_id)),
+        reply_markup=markup,
     )
 
 
@@ -47,14 +48,16 @@ async def catch_all_callback(callback: CallbackQuery) -> None:
     response_text = "Кнопка недоступна, попробуйте ещё раз"
     await callback.answer()
     if callback.message:
+        markup = await main_menu_with_link(_is_admin(user_id))
         await send_md_safe(
             callback.message,
             response_text,
-            reply_markup=main_menu(_is_admin(user_id)),
+            reply_markup=markup,
         )
     elif user_id:
+        markup = await main_menu_with_link(_is_admin(user_id))
         await callback.bot.send_message(
             user_id,
             response_text,
-            reply_markup=main_menu(_is_admin(user_id)),
+            reply_markup=markup,
         )

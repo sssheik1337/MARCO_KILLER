@@ -1,23 +1,55 @@
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from config import PAGE_SIZE
+from data import db_utils
 
-def main_menu(is_admin: bool) -> InlineKeyboardMarkup:
+def main_menu(is_admin: bool, ready_catalog_url: str | None = None) -> InlineKeyboardMarkup:
     rows = [
-        [InlineKeyboardButton(text="📚 Каталог", callback_data="menu:catalog"),
-         InlineKeyboardButton(text="💵 Прайс", callback_data="menu:price")],
-        [InlineKeyboardButton(text="🧺 Корзина", callback_data="menu:cart"),
-         InlineKeyboardButton(text="📦 Наличие", callback_data="menu:stock")],
-        [InlineKeyboardButton(text="📇 Контакты", callback_data="menu:contacts"),
-         InlineKeyboardButton(text="🗺️ Как проехать", callback_data="menu:route")],
-        [InlineKeyboardButton(text="📄 Реквизиты", callback_data="menu:requisites")],
-        [InlineKeyboardButton(text="📞 Заявка на звонок", callback_data="menu:callback"),
-         InlineKeyboardButton(text="❓ Задать вопрос", callback_data="menu:question")],
-        [InlineKeyboardButton(text="👨‍💼 Связь с руководителем", callback_data="menu:boss"),
-         InlineKeyboardButton(text="🐞 Сообщить об ошибке", callback_data="menu:bug")],
+        [
+            InlineKeyboardButton(text="📚 Каталог", callback_data="menu:catalog"),
+            InlineKeyboardButton(text="💵 Прайс", callback_data="menu:price"),
+        ],
     ]
+
+    if ready_catalog_url:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="Каталог готовых изделий 📷", url=ready_catalog_url
+                )
+            ]
+        )
+
+    rows.extend(
+        [
+            [
+                InlineKeyboardButton(text="🧺 Корзина", callback_data="menu:cart"),
+                InlineKeyboardButton(text="📦 Наличие", callback_data="menu:stock"),
+            ],
+            [
+                InlineKeyboardButton(text="📇 Контакты", callback_data="menu:contacts"),
+                InlineKeyboardButton(text="🗺️ Как проехать", callback_data="menu:route"),
+            ],
+            [InlineKeyboardButton(text="📄 Реквизиты", callback_data="menu:requisites")],
+            [
+                InlineKeyboardButton(text="📞 Заявка на звонок", callback_data="menu:callback"),
+                InlineKeyboardButton(text="❓ Задать вопрос", callback_data="menu:question"),
+            ],
+            [
+                InlineKeyboardButton(text="👨‍💼 Связь с руководителем", callback_data="menu:boss"),
+                InlineKeyboardButton(text="🐞 Сообщить об ошибке", callback_data="menu:bug"),
+            ],
+        ]
+    )
     if is_admin:
         rows.append([InlineKeyboardButton(text="🛠 Админ-панель", callback_data="admin:open")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def main_menu_with_link(is_admin: bool) -> InlineKeyboardMarkup:
+    """Возвращает главное меню с учётом ссылки на каталог готовых изделий."""
+
+    ready_link = await db_utils.get_setting("ready_catalog_url", "")
+    return main_menu(is_admin, ready_link or None)
 
 
 def empty_catalog_keyboard(is_admin: bool) -> InlineKeyboardMarkup:

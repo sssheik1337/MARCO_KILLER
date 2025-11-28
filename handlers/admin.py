@@ -22,6 +22,7 @@ _EDITABLE_SETTINGS = {
     "address": "Адрес/маршрут",
     "worktime": "Режим работы",
     "requisites": "Реквизиты",
+    "ready_catalog_url": "Ссылка на каталог готовых изделий",
 }
 
 
@@ -71,6 +72,7 @@ def admin_kb():
          InlineKeyboardButton(text="🗺️ Адрес/маршрут", callback_data="admin:edit:address")],
         [InlineKeyboardButton(text="🕘 Режим работы", callback_data="admin:edit:worktime"),
          InlineKeyboardButton(text="📄 Реквизиты", callback_data="admin:edit:requisites")],
+        [InlineKeyboardButton(text="Изменить ссылку на каталог готовых изделий", callback_data="admin:edit:ready_catalog_url")],
         [InlineKeyboardButton(text="📤 Ткани Москва (xlsx)", callback_data="admin:import:fabrics_msk"),
          InlineKeyboardButton(text="📤 Ткани СПБ (xlsx)", callback_data="admin:import:fabrics_spb")],
         [InlineKeyboardButton(text="📤 Фурнитура Москва (xlsx)", callback_data="admin:import:hardware_msk"),
@@ -169,14 +171,20 @@ async def ask_text(cb: CallbackQuery):
         return
     await set_setting("edit_target", key)
     cur = await get_setting(key, "")
-    prompt_lines = [
-        f"Пришлите новый текст для «{pretty}». Поддерживается MarkdownV2.",
-        "Используйте кнопку «👁 Предпросмотр», чтобы оценить форматирование.",
-    ]
-    if cur:
-        prompt_lines.append("Текущая версия показана ниже.")
+    if key == "ready_catalog_url":
+        prompt_lines = [
+            "Пришлите новую ссылку на каталог готовых изделий.",
+            "Текущая ссылка будет показана ниже, если она сохранена.",
+        ]
     else:
-        prompt_lines.append("Текущая версия: —")
+        prompt_lines = [
+            f"Пришлите новый текст для «{pretty}». Поддерживается MarkdownV2.",
+            "Используйте кнопку «👁 Предпросмотр», чтобы оценить форматирование.",
+        ]
+        if cur:
+            prompt_lines.append("Текущая версия показана ниже.")
+        else:
+            prompt_lines.append("Текущая версия: —")
 
     await send_md_safe(
         cb.message,
@@ -214,7 +222,10 @@ async def save_text(msg: Message):
     target = await get_setting("edit_target","")
     if target not in _EDITABLE_SETTINGS:
         return
-    await set_setting(target, message_to_markdown(msg))
+    if target == "ready_catalog_url":
+        await set_setting(target, (msg.text or msg.caption or "").strip())
+    else:
+        await set_setting(target, message_to_markdown(msg))
     await set_setting("edit_target","")
     await send_md_safe(
         msg,
