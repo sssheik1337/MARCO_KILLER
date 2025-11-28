@@ -46,7 +46,8 @@ CREATE_SQL = [
       name TEXT NOT NULL,
       article TEXT,
       quantity REAL,
-      unit TEXT
+      unit TEXT,
+      status TEXT
     );
     """,
     "CREATE INDEX IF NOT EXISTS idx_stock_section_cat ON stock_items(section, category);",
@@ -104,6 +105,7 @@ async def _ensure_stock_columns(db: aiosqlite.Connection) -> None:
 
     required = {
         "city": "TEXT DEFAULT 'msk'",
+        "status": "TEXT",
     }
 
     cur = await db.execute("PRAGMA table_info(stock_items)")

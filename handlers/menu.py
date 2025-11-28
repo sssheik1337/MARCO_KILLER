@@ -689,6 +689,7 @@ async def stock_product_card(cb: CallbackQuery):
 
     lines.append(_line("Артикул", item.get("article")))
     lines.append(_line("Категория", item.get("category")))
+    lines.append(_line("Статус", item.get("status")))
     qty_text = _format_quantity_value(
         _as_float(item.get("quantity")), item.get("unit") if isinstance(item.get("unit"), str) else None
     )

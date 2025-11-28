@@ -519,6 +519,7 @@ def parse_stock(source: SourceType, city: str = DEFAULT_CITY) -> list[dict]:
     article_col = _resolve_column(columns, "Артикул", "SKU", "Код")
     qty_col = _resolve_column(columns, "Наличие", "Остаток", "Количество", "Кол-во")
     unit_col = _resolve_column(columns, "Ед.", "Ед", "Единица", "единица")
+    status_col = _resolve_column(columns, "Статус", "Статус наличия", "Availability")
 
     items: list[dict] = []
 
@@ -532,6 +533,7 @@ def parse_stock(source: SourceType, city: str = DEFAULT_CITY) -> list[dict]:
         article = _string_value(row.get(article_col)) if article_col else None
         quantity = _quantity_value(row.get(qty_col)) if qty_col else None
         unit = _string_value(row.get(unit_col)) if unit_col else None
+        status = _string_value(row.get(status_col)) if status_col else None
 
         items.append(
             {
@@ -542,6 +544,7 @@ def parse_stock(source: SourceType, city: str = DEFAULT_CITY) -> list[dict]:
                 "article": article,
                 "quantity": quantity,
                 "unit": unit,
+                "status": status,
             }
         )
 
