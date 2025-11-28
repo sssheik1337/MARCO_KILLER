@@ -5,7 +5,7 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import CallbackQuery, Message, ContentType, InlineKeyboardMarkup, InlineKeyboardButton
 from middlewares.admin_filter import AdminOnly
 from data.db_utils import set_setting, get_setting
-from data.importer import parse_fabrics, parse_hardware
+from data.importer import parse_fabrics, parse_hardware, parse_stock
 import aiosqlite
 from config import DB_PATH
 from structure.markdown import send_md_safe, edit_md_safe, message_to_markdown, escape_user
@@ -33,6 +33,7 @@ def admin_kb():
          InlineKeyboardButton(text="📄 Реквизиты", callback_data="admin:edit:requisites")],
         [InlineKeyboardButton(text="📤 Импорт ТКАНИ (xlsx)", callback_data="admin:import:fabrics")],
         [InlineKeyboardButton(text="📤 Импорт ФУРНИТУРА (xlsx)", callback_data="admin:import:hardware")],
+        [InlineKeyboardButton(text="📦 Импорт НАЛИЧИЕ (xlsx)", callback_data="admin:import:stock")],
         [InlineKeyboardButton(text="💵 Курс USD: авто/ручной", callback_data="admin:usd")],
         [InlineKeyboardButton(text="🏠 В меню", callback_data="home")],
     ])
@@ -188,11 +189,20 @@ async def imp_fabrics(cb: CallbackQuery):
     )
 
 @router.callback_query(F.data == "admin:import:hardware")
-async def imp_hw(cb: CallbackQuery): 
+async def imp_hw(cb: CallbackQuery):
     await set_setting("import_target","hardware")
     await send_md_safe(
         cb.message,
         "Пришлите XLSX с фурнитурой.",
+    )
+
+
+@router.callback_query(F.data == "admin:import:stock")
+async def imp_stock(cb: CallbackQuery):
+    await set_setting("import_target", "stock")
+    await send_md_safe(
+        cb.message,
+        "Пришлите XLSX с остатками товаров.",
     )
 
 @router.message(F.content_type == ContentType.DOCUMENT)
@@ -203,13 +213,19 @@ async def import_xlsx(msg: Message):
 
     f = await msg.bot.get_file(msg.document.file_id)
     stream = await msg.bot.download_file(f.file_path)
-    section_title = {"fabrics": "«ткани»", "hardware": "«фурнитура»"}
+    section_title = {
+        "fabrics": "«ткани»",
+        "hardware": "«фурнитура»",
+        "stock": "«наличие»",
+    }
 
     try:
         if target == "fabrics":
             items = parse_fabrics(stream)
         elif target == "hardware":
             items = parse_hardware(stream)
+        elif target == "stock":
+            items = parse_stock(stream)
         else:
             await send_md_safe(msg, "Неизвестный раздел импорта.")
             return
@@ -221,52 +237,75 @@ async def import_xlsx(msg: Message):
         )
         return
 
-    sql = (
-        "INSERT INTO products("
-        "section,category,subcategory,name,article,country,fabric_type,segment,"
-        "collection,brand_country,multiplicity,unit,currency,status,"
-        "price_piece_85_90,price_roll_85_90,price_piece_90_95,price_roll_90_95,price_piece_95_100,price_roll_95_100,"
-        "price_rrc,price_opt,special,in_stock,image_url) "
-        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
-    )
-
-    payload = [
-        (
-            item.get("section"),
-            item.get("category"),
-            item.get("subcategory"),
-            item.get("name"),
-            item.get("article"),
-            item.get("country"),
-            item.get("fabric_type"),
-            item.get("segment"),
-            item.get("collection"),
-            item.get("brand_country"),
-            item.get("multiplicity"),
-            item.get("unit"),
-            item.get("currency"),
-            item.get("status"),
-            item.get("price_piece_85_90"),
-            item.get("price_roll_85_90"),
-            item.get("price_piece_90_95"),
-            item.get("price_roll_90_95"),
-            item.get("price_piece_95_100"),
-            item.get("price_roll_95_100"),
-            item.get("price_rrc"),
-            item.get("price_opt"),
-            item.get("special"),
-            item.get("in_stock"),
-            item.get("image_url"),
-        )
-        for item in items
-    ]
-
     async with aiosqlite.connect(DB_PATH) as db:
         try:
             await db.execute("BEGIN")
-            await db.execute("DELETE FROM products WHERE section=?", (target,))
-            if payload:
-                await db.executemany(sql, payload)
+
+            if target == "stock":
+                await db.execute("DELETE FROM stock_items")
+                stock_sql = (
+                    "INSERT INTO stock_items(section,category,name,article,quantity,unit) "
+                    "VALUES(?,?,?,?,?,?)"
+                )
+                stock_payload = [
+                    (
+                        item.get("section"),
+                        item.get("category"),
+                        item.get("name"),
+                        item.get("article"),
+                        item.get("quantity"),
+                        item.get("unit"),
+                    )
+                    for item in items
+                ]
+                if stock_payload:
+                    await db.executemany(stock_sql, stock_payload)
+                import_count = len(stock_payload)
+            else:
+                product_sql = (
+                    "INSERT INTO products("  # noqa: ISC003
+                    "section,category,subcategory,name,article,country,fabric_type,segment,"
+                    "collection,brand_country,multiplicity,unit,currency,status,"
+                    "price_piece_85_90,price_roll_85_90,price_piece_90_95,price_roll_90_95,price_piece_95_100,price_roll_95_100,"
+                    "price_rrc,price_opt,special,in_stock,image_url) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+                )
+
+                payload = [
+                    (
+                        item.get("section"),
+                        item.get("category"),
+                        item.get("subcategory"),
+                        item.get("name"),
+                        item.get("article"),
+                        item.get("country"),
+                        item.get("fabric_type"),
+                        item.get("segment"),
+                        item.get("collection"),
+                        item.get("brand_country"),
+                        item.get("multiplicity"),
+                        item.get("unit"),
+                        item.get("currency"),
+                        item.get("status"),
+                        item.get("price_piece_85_90"),
+                        item.get("price_roll_85_90"),
+                        item.get("price_piece_90_95"),
+                        item.get("price_roll_90_95"),
+                        item.get("price_piece_95_100"),
+                        item.get("price_roll_95_100"),
+                        item.get("price_rrc"),
+                        item.get("price_opt"),
+                        item.get("special"),
+                        item.get("in_stock"),
+                        item.get("image_url"),
+                    )
+                    for item in items
+                ]
+
+                await db.execute("DELETE FROM products WHERE section=?", (target,))
+                if payload:
+                    await db.executemany(product_sql, payload)
+                import_count = len(payload)
         except Exception as exc:
             if db.in_transaction:
                 await db.rollback()
@@ -308,6 +347,6 @@ async def import_xlsx(msg: Message):
     await set_setting("import_target","")
     await send_md_safe(
         msg,
-        f"Импортировано {len(payload)} позиций для раздела {section_title.get(target, target)}",
+        f"Импортировано {import_count} позиций для раздела {section_title.get(target, target)}",
         reply_markup=import_result_keyboard(),
     )

@@ -73,6 +73,17 @@ def product_controls(product_id: int, qty: int) -> InlineKeyboardMarkup:
     ])
 
 
+def stock_product_controls(product_id: int) -> InlineKeyboardMarkup:
+    """Клавиатура для карточки остатка без корзины."""
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="back")],
+            [InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")],
+        ]
+    )
+
+
 def cart_keyboard(has_items: bool) -> InlineKeyboardMarkup:
     """Клавиатура управления корзиной."""
 

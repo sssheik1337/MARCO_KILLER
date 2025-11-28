@@ -182,6 +182,95 @@ def _number_value(value: object) -> float | None:
     return number if number > 0 else None
 
 
+def _quantity_value(value: object) -> float | None:
+    """Возвращает числовое значение остатка, поддерживая коллекции и нули."""
+
+    candidate = value
+
+    if isinstance(candidate, (pd.Series, pd.Index)):
+        iterable: Iterable = candidate.tolist()
+    elif isinstance(candidate, (list, tuple, set)):
+        iterable = list(candidate)
+    else:
+        iterable = None
+
+    if iterable is not None:
+        candidate = None
+        for item in iterable:
+            if item is None:
+                continue
+            try:
+                if pd.isna(item):
+                    continue
+            except TypeError:
+                pass
+            candidate = item
+            break
+
+    if candidate is None:
+        return None
+
+    try:
+        if pd.isna(candidate):
+            return None
+    except TypeError:
+        pass
+
+    if isinstance(candidate, (int, float)) and not isinstance(candidate, bool):
+        return float(candidate)
+
+    text = str(candidate).strip()
+    if not text:
+        return None
+
+    normalized = text.replace("\xa0", " ")
+    cleaned = re.sub(r"[^0-9,\.\-]", "", normalized)
+    if cleaned == "":
+        return None
+
+    negative = cleaned.startswith("-")
+    if negative:
+        cleaned = cleaned[1:]
+
+    cleaned = cleaned.strip()
+    if not cleaned:
+        return None
+
+    last_comma = cleaned.rfind(",")
+    last_dot = cleaned.rfind(".")
+
+    number_text = cleaned
+    decimal_sep = None
+    thousands_sep = None
+
+    if last_comma != -1 or last_dot != -1:
+        if last_comma > last_dot:
+            decimal_sep = ","
+            thousands_sep = "." if last_dot != -1 else None
+        elif last_dot > last_comma:
+            decimal_sep = "."
+            thousands_sep = "," if last_comma != -1 else None
+        else:
+            decimal_sep = "," if last_comma != -1 else "."
+
+        if thousands_sep:
+            number_text = number_text.replace(thousands_sep, "")
+        if decimal_sep != ".":
+            number_text = number_text.replace(decimal_sep, ".")
+
+    number_text = number_text.replace(" ", "")
+
+    try:
+        number = float(number_text)
+    except (TypeError, ValueError):
+        return None
+
+    if negative:
+        number = -number
+
+    return number
+
+
 def _build_multiheader_dataframe(rows: list[list[object]]) -> tuple[pd.DataFrame, dict[str, str]]:
     """Формирует датафрейм с учётом двухуровневой шапки цен."""
 
@@ -410,6 +499,47 @@ def parse_fabrics(source: SourceType) -> list[dict]:
                 )
 
         items.append(record)
+
+    return items
+
+
+def parse_stock(source: SourceType) -> list[dict]:
+    """Разбирает XLSX с остатками товаров."""
+
+    df_source = _reset_stream(source)
+    df = pd.read_excel(df_source)
+    columns = {_normalize(col): col for col in df.columns}
+
+    section_col = _resolve_column(columns, "Раздел", "Section", "Раздел остатков")
+    category_col = _resolve_column(columns, "Категория", "Группа")
+    name_col = _resolve_column(columns, "Наименование", "Товар", "Название")
+    article_col = _resolve_column(columns, "Артикул", "SKU", "Код")
+    qty_col = _resolve_column(columns, "Наличие", "Остаток", "Количество", "Кол-во")
+    unit_col = _resolve_column(columns, "Ед.", "Ед", "Единица", "единица")
+
+    items: list[dict] = []
+
+    for _, row in df.iterrows():
+        name = _string_value(row.get(name_col)) if name_col else None
+        if not name:
+            continue
+
+        section = _string_value(row.get(section_col)) if section_col else None
+        category = _string_value(row.get(category_col)) if category_col else None
+        article = _string_value(row.get(article_col)) if article_col else None
+        quantity = _quantity_value(row.get(qty_col)) if qty_col else None
+        unit = _string_value(row.get(unit_col)) if unit_col else None
+
+        items.append(
+            {
+                "section": section or "Наличие",
+                "category": category or "Общий",
+                "name": name,
+                "article": article,
+                "quantity": quantity,
+                "unit": unit,
+            }
+        )
 
     return items
 

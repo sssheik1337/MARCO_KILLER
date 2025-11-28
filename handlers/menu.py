@@ -12,6 +12,7 @@ from structure.keyboards import (
     main_menu,
     pager,
     product_controls,
+    stock_product_controls,
     empty_catalog_keyboard,
     cart_keyboard,
 )
@@ -23,7 +24,7 @@ from structure.markdown import (
 )
 from structure.states import SupportRequestState
 from services.pagination import slice_page
-from services import cart, view_filters, profiles
+from services import cart, profiles
 from data import db_utils
 from services.exchange import current_range, range_label
 
@@ -32,6 +33,8 @@ logger = logging.getLogger(__name__)
 
 # Контекст карточек товаров: message_id → данные для возврата в список
 _PRODUCT_CONTEXT: dict[int, dict[int, dict[str, Any]]] = defaultdict(dict)
+# Контекст карточек наличия: message_id → данные для возврата
+_STOCK_CONTEXT: dict[int, dict[int, dict[str, Any]]] = defaultdict(dict)
 
 
 # --- утилиты ---
@@ -309,131 +312,140 @@ async def on_home(cb: CallbackQuery):
 
 
 # --- каталог: разделы → категории → товары ---
+CAT_SEC_PREFIX = "csec"
+CAT_CAT_PREFIX = "ccat"
+CAT_PROD_PREFIX = "cprodlist"
+
+STOCK_SEC_PREFIX = "ssec"
+STOCK_CAT_PREFIX = "scat"
+STOCK_PROD_PREFIX = "sprodlist"
+
+
+async def _send_catalog_sections(target: Message, user_id: int, page: int = 1) -> bool:
+    """Показывает разделы каталога и возвращает успех отображения."""
+
+    sections = await db_utils.fetch_sections()
+    if not sections:
+        await send_md_safe(
+            target,
+            "Каталог пуст: загрузите XLSX тканей и фурнитуры",
+            reply_markup=empty_catalog_keyboard(_is_admin(user_id)),
+        )
+        return False
+
+    labeled = _label_sections(sections)
+    page_items, page, total = slice_page(labeled, page, PAGE_SIZE)
+
+    rng, usd = await current_range()
+    label = range_label(rng, usd)
+
+    await send_md_safe(
+        target,
+        label,
+        reply_markup=pager(CAT_SEC_PREFIX, page_items, page, total),
+    )
+    return True
+
+
+async def _send_stock_sections(target: Message, user_id: int, page: int = 1) -> bool:
+    """Показывает разделы наличия."""
+
+    sections = await db_utils.fetch_stock_sections()
+    if not sections:
+        await send_md_safe(
+            target,
+            "Наличие пока не загружено: импортируйте XLSX с остатками.",
+            reply_markup=main_menu(_is_admin(user_id)),
+        )
+        return False
+
+    labeled = [(section.title(), section) for section in sections]
+    page_items, page, total = slice_page(labeled, page, PAGE_SIZE)
+
+    await send_md_safe(
+        target,
+        "Остатки по разделам:",
+        reply_markup=pager(STOCK_SEC_PREFIX, page_items, page, total),
+    )
+    return True
+
+
+def _format_quantity_value(qty: float | None, unit: str | None) -> str:
+    """Форматирует остаток для карточки наличия."""
+
+    if qty is None:
+        return "—"
+    if qty.is_integer():
+        base = f"{int(qty)}"
+    else:
+        base = f"{qty:.2f}"
+    if unit:
+        return f"{base} {unit}"
+    return base
+
 
 @router.callback_query(F.data == "menu:catalog")
 async def catalog_root(cb: CallbackQuery):
-    user_id = cb.from_user.id
-    only_available = view_filters.is_in_stock(user_id)
-    sections = await db_utils.fetch_sections(only_available=only_available)
-    if not sections:
-        if only_available:
-            await send_md_safe(
-                cb.message,
-                "Сейчас нет товаров в наличии. Вы можете отключить фильтр «В наличии» в главном меню.",
-                reply_markup=main_menu(_is_admin(user_id)),
-            )
-        else:
-            await send_md_safe(
-                cb.message,
-                "Каталог пуст: загрузите XLSX тканей и фурнитуры",
-                reply_markup=empty_catalog_keyboard(_is_admin(user_id)),
-            )
-        await cb.answer()
-        return
-
-    # пагинация разделов
-    labeled = _label_sections(sections)
-    page_items, page, total = slice_page(labeled, 1, PAGE_SIZE)
-
-    rng, usd = await current_range()
-    label = range_label(rng, usd)  # «Курс: 91.05 ₽ → 90–95»
-    if only_available:
-        label = f"{label}\n\nПоказываются только товары в наличии."
-
-    prefix = "secstock" if only_available else "sec"
-
-    await send_md_safe(
-        cb.message,
-        label,
-        reply_markup=pager(prefix, page_items, page, total),
-    )
+    await _send_catalog_sections(cb.message, cb.from_user.id, 1)
     await cb.answer()
 
 
 @router.callback_query(F.data == "menu:stock")
-async def toggle_in_stock_filter(cb: CallbackQuery):
-    """Переключает режим показа только товаров в наличии."""
-
-    user_id = cb.from_user.id
-    enabled = view_filters.toggle_in_stock(user_id)
-    text = (
-        "Фильтр «В наличии» включён. Каталог и прайс теперь показывают только доступные позиции."
-        if enabled
-        else "Фильтр «В наличии» отключён. Каталог и прайс снова показывают весь ассортимент."
-    )
-    await send_md_safe(
-        cb.message,
-        text,
-        reply_markup=main_menu(_is_admin(user_id)),
-    )
-    await cb.answer("Фильтр включён" if enabled else "Фильтр отключён")
+@router.callback_query(F.data == "menu:price")
+async def stock_root(cb: CallbackQuery):
+    await _send_stock_sections(cb.message, cb.from_user.id, 1)
+    await cb.answer()
 
 
-@router.callback_query(F.data.regexp(r"^sec(stock)?:page:"))
+@router.callback_query(F.data.regexp(rf"^{CAT_SEC_PREFIX}:page:"))
 async def catalog_sections_page(cb: CallbackQuery):
-    parts = cb.data.split(":")
-    prefix = parts[0]
-    page = int(parts[-1])
-    only_available = prefix == "secstock"
-    sections = await db_utils.fetch_sections(only_available=only_available)
+    page = int(cb.data.split(":")[-1])
+    sections = await db_utils.fetch_sections()
     labeled = _label_sections(sections)
     page_items, page, total = slice_page(labeled, page, PAGE_SIZE)
     await cb.message.edit_reply_markup(
-        reply_markup=pager(prefix, page_items, page, total)
+        reply_markup=pager(CAT_SEC_PREFIX, page_items, page, total)
     )
     await cb.answer()
 
 
-@router.callback_query(F.data.regexp(r"^sec(stock)?:open:"))
-async def open_section(cb: CallbackQuery):
-    parts = cb.data.split(":")
-    prefix = parts[0]
-    section = parts[-1]                          # 'fabrics' | 'hardware'
-    only_available = prefix == "secstock"
-    cats = await db_utils.fetch_categories(section, only_available=only_available)
+@router.callback_query(F.data.regexp(rf"^{CAT_SEC_PREFIX}:open:"))
+async def open_catalog_section(cb: CallbackQuery):
+    section = cb.data.split(":")[-1]
+    cats = await db_utils.fetch_categories(section)
     if not cats:
-        await send_md_safe(
-            cb.message,
-            "Здесь пока пусто.",
-        )
+        await send_md_safe(cb.message, "Здесь пока пусто.")
         await cb.answer()
         return
     enumerated = [(name, str(idx)) for idx, name in enumerate(cats)]
     page_items, page, total = slice_page(enumerated, 1, PAGE_SIZE)
-    cat_prefix = "catstock" if only_available else "cat"
     await send_md_safe(
         cb.message,
         "Категории:",
-        reply_markup=pager(f"{cat_prefix}:{section}", page_items, page, total),
+        reply_markup=pager(f"{CAT_CAT_PREFIX}:{section}", page_items, page, total),
     )
     await cb.answer()
 
 
-@router.callback_query(F.data.regexp(r"^cat(stock)?:[^:]+:page:"))
+@router.callback_query(F.data.regexp(rf"^{CAT_CAT_PREFIX}:[^:]+:page:"))
 async def open_category_page(cb: CallbackQuery):
-    # формат: cat{stock}:{section}:page:{N}
     parts = cb.data.split(":")
-    prefix = parts[0]
     section = parts[1]
     page = int(parts[-1])
-    only_available = prefix == "catstock"
-    cats = await db_utils.fetch_categories(section, only_available=only_available)
+    cats = await db_utils.fetch_categories(section)
     enumerated = [(name, str(idx)) for idx, name in enumerate(cats)]
     page_items, page, total = slice_page(enumerated, page, PAGE_SIZE)
     await cb.message.edit_reply_markup(
-        reply_markup=pager(f"{prefix}:{section}", page_items, page, total)
+        reply_markup=pager(f"{CAT_CAT_PREFIX}:{section}", page_items, page, total)
     )
     await cb.answer()
 
 
-@router.callback_query(F.data.regexp(r"^cat(stock)?:[^:]+:open:"))
+@router.callback_query(F.data.regexp(rf"^{CAT_CAT_PREFIX}:[^:]+:open:"))
 async def open_category(cb: CallbackQuery):
-    # формат: cat{stock}:{section}:open:{category}
     parts = cb.data.split(":")
-    prefix = parts[0]
     section = parts[1]
     category_idx_raw = parts[-1]
-    only_available = prefix == "catstock"
     try:
         category_idx = int(category_idx_raw)
     except ValueError:
@@ -441,7 +453,7 @@ async def open_category(cb: CallbackQuery):
         await cb.answer("Категория недоступна", show_alert=True)
         return
 
-    cats = await db_utils.fetch_categories(section, only_available=only_available)
+    cats = await db_utils.fetch_categories(section)
     if category_idx < 0 or category_idx >= len(cats):
         logger.warning(
             "Категория с индексом %s не найдена для раздела %s", category_idx, section
@@ -451,62 +463,48 @@ async def open_category(cb: CallbackQuery):
 
     category = cats[category_idx]
 
-    prods = await db_utils.fetch_products_by_category(
-        section,
-        category,
-        only_available=only_available,
-    )
+    prods = await db_utils.fetch_products_by_category(section, category)
     items = [(name, str(pid)) for pid, name in prods]
     page_items, page, total = slice_page(items, 1, PAGE_SIZE)
-    prod_prefix = "prodliststock" if only_available else "prodlist"
     await send_md_safe(
         cb.message,
         category,
         reply_markup=pager(
-            f"{prod_prefix}:{section}:{category}", page_items, page, total
+            f"{CAT_PROD_PREFIX}:{section}:{category}", page_items, page, total
         ),
     )
     await cb.answer()
 
 
-@router.callback_query(F.data.regexp(r"^prodlist(stock)?:[^:]+:[^:]+:page:"))
+@router.callback_query(F.data.regexp(rf"^{CAT_PROD_PREFIX}:[^:]+:[^:]+:page:"))
 async def product_list_page(cb: CallbackQuery):
-    # формат: prodlist{stock}:{section}:{category}:page:{N}
     parts = cb.data.split(":")
-    prefix = parts[0]
     section = parts[1]
     category = parts[2]
     page = int(parts[-1])
-    only_available = prefix == "prodliststock"
-    prods = await db_utils.fetch_products_by_category(
-        section,
-        category,
-        only_available=only_available,
-    )
+    prods = await db_utils.fetch_products_by_category(section, category)
     items = [(name, str(pid)) for pid, name in prods]
     page_items, page, total = slice_page(items, page, PAGE_SIZE)
     await cb.message.edit_reply_markup(
         reply_markup=pager(
-            f"{prefix}:{section}:{category}", page_items, page, total
+            f"{CAT_PROD_PREFIX}:{section}:{category}", page_items, page, total
         )
     )
     await cb.answer()
 
 
-@router.callback_query(F.data.regexp(r"^prodlist(stock)?:.+:open:"))
+@router.callback_query(F.data.regexp(rf"^{CAT_PROD_PREFIX}:.+:open:"))
 async def product_card(cb: CallbackQuery):
     """Показывает карточку товара и запоминает, как вернуться назад."""
 
     parts = cb.data.split(":")
     pid = int(parts[-1])
-    prefix = parts[0]
     section = parts[1] if len(parts) > 1 else ""
     category = ":".join(parts[2:-2]) if len(parts) > 3 else ""
-    only_available = prefix == "prodliststock"
 
     p = await db_utils.fetch_product(pid)
 
-    rng, usd = await current_range()            # ('90_95', 91.12) или (последний, None)
+    rng, usd = await current_range()
     range_key = rng.replace("-", "_")
     if range_key != rng and logger.isEnabledFor(logging.DEBUG):
         logger.debug("Нормализовал диапазон курса: %s → %s", rng, range_key)
@@ -515,9 +513,8 @@ async def product_card(cb: CallbackQuery):
     if logger.isEnabledFor(logging.DEBUG):
         logger.debug("Карточка товара %s, диапазон %s, данные: %s", pid, range_key, p)
 
-    # цены
     course_line = None
-    if p["section"] == "fabrics":
+    if p.get("section") == "fabrics":
         piece = _format_money(_as_float(p.get(f"price_piece_{range_key}")))
         roll = _format_money(_as_float(p.get(f"price_roll_{range_key}")))
         price_line = f"Отрез: {piece} · Ролик: {roll}"
@@ -534,14 +531,14 @@ async def product_card(cb: CallbackQuery):
         text = value if value not in (None, "") else "-"
         return escape_user(f"{label}: {text}")
 
-    article_value = p.get("article") if p["section"] != "fabrics" else "-"
+    article_value = p.get("article") if p.get("section") != "fabrics" else "-"
 
     lines = [
         f"*{escape_user(p.get('name'))}*",
         _line("Артикул", article_value or "-"),
     ]
 
-    if p["section"] == "fabrics":
+    if p.get("section") == "fabrics":
         lines.extend(
             [
                 _line("Страна", p.get("country")),
@@ -562,27 +559,26 @@ async def product_card(cb: CallbackQuery):
     lines.append(escape_user(price_line))
     if course_line:
         lines.append(escape_user(course_line))
-    lines.append(_line("Наличие", p.get("in_stock")))
+    if p.get("in_stock") is not None:
+        lines.append(_line("Наличие", p.get("in_stock")))
     if not course_line:
         lines.append(escape_user(lbl))
 
-    special_flag = p.get("special") if p["section"] == "fabrics" else p.get("status")
+    special_flag = p.get("special") if p.get("section") == "fabrics" else p.get("status")
     if special_flag:
         lines.append(_line("Статус", special_flag))
 
     caption = "\n".join(lines)
 
-    products = await db_utils.fetch_products_by_category(
-        section,
-        category,
-        only_available=only_available,
-    )
+    products = await db_utils.fetch_products_by_category(section, category)
     product_ids = [prod_id for prod_id, _ in products]
     try:
         index = product_ids.index(pid)
     except ValueError:
         index = 0
     page = index // PAGE_SIZE + 1 if product_ids else 1
+
+    list_prefix = f"{CAT_PROD_PREFIX}:{section}:{category}"
 
     if p.get("image_url"):
         msg = await cb.message.answer_photo(
@@ -599,8 +595,155 @@ async def product_card(cb: CallbackQuery):
     _PRODUCT_CONTEXT[cb.from_user.id][msg.message_id] = {
         "section": section,
         "category": category,
-        "only_available": only_available,
-        "prefix": prefix,
+        "prefix": list_prefix,
+        "page": page,
+        "product_id": pid,
+    }
+
+    await cb.answer()
+
+
+@router.callback_query(F.data.regexp(rf"^{STOCK_SEC_PREFIX}:page:"))
+async def stock_sections_page(cb: CallbackQuery):
+    page = int(cb.data.split(":")[-1])
+    sections = await db_utils.fetch_stock_sections()
+    labeled = [(section.title(), section) for section in sections]
+    page_items, page, total = slice_page(labeled, page, PAGE_SIZE)
+    await cb.message.edit_reply_markup(
+        reply_markup=pager(STOCK_SEC_PREFIX, page_items, page, total)
+    )
+    await cb.answer()
+
+
+@router.callback_query(F.data.regexp(rf"^{STOCK_SEC_PREFIX}:open:"))
+async def open_stock_section(cb: CallbackQuery):
+    section = cb.data.split(":")[-1]
+    cats = await db_utils.fetch_stock_categories(section)
+    if not cats:
+        await send_md_safe(cb.message, "Здесь пока нет остатков.")
+        await cb.answer()
+        return
+    enumerated = [(name, str(idx)) for idx, name in enumerate(cats)]
+    page_items, page, total = slice_page(enumerated, 1, PAGE_SIZE)
+    await send_md_safe(
+        cb.message,
+        "Категории остатков:",
+        reply_markup=pager(f"{STOCK_CAT_PREFIX}:{section}", page_items, page, total),
+    )
+    await cb.answer()
+
+
+@router.callback_query(F.data.regexp(rf"^{STOCK_CAT_PREFIX}:[^:]+:page:"))
+async def stock_category_page(cb: CallbackQuery):
+    parts = cb.data.split(":")
+    section = parts[1]
+    page = int(parts[-1])
+    cats = await db_utils.fetch_stock_categories(section)
+    enumerated = [(name, str(idx)) for idx, name in enumerate(cats)]
+    page_items, page, total = slice_page(enumerated, page, PAGE_SIZE)
+    await cb.message.edit_reply_markup(
+        reply_markup=pager(f"{STOCK_CAT_PREFIX}:{section}", page_items, page, total)
+    )
+    await cb.answer()
+
+
+@router.callback_query(F.data.regexp(rf"^{STOCK_CAT_PREFIX}:[^:]+:open:"))
+async def open_stock_category(cb: CallbackQuery):
+    parts = cb.data.split(":")
+    section = parts[1]
+    category_idx_raw = parts[-1]
+    try:
+        category_idx = int(category_idx_raw)
+    except ValueError:
+        logger.warning("Некорректный индекс категории в остатках: %s", category_idx_raw)
+        await cb.answer("Категория недоступна", show_alert=True)
+        return
+
+    cats = await db_utils.fetch_stock_categories(section)
+    if category_idx < 0 or category_idx >= len(cats):
+        logger.warning(
+            "Категория наличия с индексом %s не найдена для раздела %s", category_idx, section
+        )
+        await cb.answer("Категория недоступна", show_alert=True)
+        return
+
+    category = cats[category_idx]
+    prods = await db_utils.fetch_stock_products_by_category(section, category)
+    items = [(name, str(pid)) for pid, name in prods]
+    page_items, page, total = slice_page(items, 1, PAGE_SIZE)
+    await send_md_safe(
+        cb.message,
+        category,
+        reply_markup=pager(
+            f"{STOCK_PROD_PREFIX}:{section}:{category}", page_items, page, total
+        ),
+    )
+    await cb.answer()
+
+
+@router.callback_query(F.data.regexp(rf"^{STOCK_PROD_PREFIX}:[^:]+:[^:]+:page:"))
+async def stock_product_page(cb: CallbackQuery):
+    parts = cb.data.split(":")
+    section = parts[1]
+    category = parts[2]
+    page = int(parts[-1])
+    prods = await db_utils.fetch_stock_products_by_category(section, category)
+    items = [(name, str(pid)) for pid, name in prods]
+    page_items, page, total = slice_page(items, page, PAGE_SIZE)
+    await cb.message.edit_reply_markup(
+        reply_markup=pager(
+            f"{STOCK_PROD_PREFIX}:{section}:{category}", page_items, page, total
+        )
+    )
+    await cb.answer()
+
+
+@router.callback_query(F.data.regexp(rf"^{STOCK_PROD_PREFIX}:.+:open:"))
+async def stock_product_card(cb: CallbackQuery):
+    """Показывает карточку остатка и запоминает контекст возврата."""
+
+    parts = cb.data.split(":")
+    pid = int(parts[-1])
+    section = parts[1] if len(parts) > 1 else ""
+    category = ":".join(parts[2:-2]) if len(parts) > 3 else ""
+
+    item = await db_utils.fetch_stock_item(pid)
+
+    lines = [f"*{escape_user(item.get('name'))}*"]
+
+    def _line(label: str, value: object) -> str:
+        text = value if value not in (None, "") else "-"
+        return escape_user(f"{label}: {text}")
+
+    lines.append(_line("Артикул", item.get("article")))
+    lines.append(_line("Категория", item.get("category")))
+    qty_text = _format_quantity_value(
+        _as_float(item.get("quantity")), item.get("unit") if isinstance(item.get("unit"), str) else None
+    )
+    lines.append(_line("Наличие", qty_text))
+
+    caption = "\n".join(lines)
+
+    products = await db_utils.fetch_stock_products_by_category(section, category)
+    product_ids = [prod_id for prod_id, _ in products]
+    try:
+        index = product_ids.index(pid)
+    except ValueError:
+        index = 0
+    page = index // PAGE_SIZE + 1 if product_ids else 1
+
+    list_prefix = f"{STOCK_PROD_PREFIX}:{section}:{category}"
+
+    msg = await send_md_safe(
+        cb.message,
+        caption,
+        reply_markup=stock_product_controls(pid),
+    )
+
+    _STOCK_CONTEXT[cb.from_user.id][msg.message_id] = {
+        "section": section,
+        "category": category,
+        "prefix": list_prefix,
         "page": page,
         "product_id": pid,
     }
@@ -657,29 +800,39 @@ async def prod_back(cb: CallbackQuery):
     """Возвращает пользователя к списку товаров и удаляет карточку."""
 
     user_id = cb.from_user.id
+    context_source = "catalog"
     context_map = _PRODUCT_CONTEXT.get(user_id)
     context = context_map.pop(cb.message.message_id, None) if context_map else None
     if context_map is not None and not context_map:
         _PRODUCT_CONTEXT.pop(user_id, None)
 
+    if context is None:
+        context_source = "stock"
+        context_map = _STOCK_CONTEXT.get(user_id)
+        context = context_map.pop(cb.message.message_id, None) if context_map else None
+        if context_map is not None and not context_map:
+            _STOCK_CONTEXT.pop(user_id, None)
+
     if context:
-        product_id = context.get("product_id")
-        if product_id is not None:
-            cart.clear_selection(user_id, product_id)
-        products = await db_utils.fetch_products_by_category(
-            context["section"],
-            context["category"],
-            only_available=context["only_available"],
-        )
+        if context_source == "catalog":
+            product_id = context.get("product_id")
+            if product_id is not None:
+                cart.clear_selection(user_id, product_id)
+            products = await db_utils.fetch_products_by_category(
+                context["section"],
+                context["category"],
+            )
+        else:
+            products = await db_utils.fetch_stock_products_by_category(
+                context["section"], context["category"]
+            )
+
         items = [(name, str(pid)) for pid, name in products]
-        page_items, page, total = slice_page(items, context["page"], PAGE_SIZE)
-        reply_markup = pager(
-            f"{context['prefix']}:{context['section']}:{context['category']}",
-            page_items,
-            page,
-            total,
+        page_items, page, total = slice_page(
+            items, context.get("page", 1), PAGE_SIZE
         )
-        title = context["category"] or "Товары"
+        reply_markup = pager(context.get("prefix", ""), page_items, page, total)
+        title = context.get("category") or "Товары"
         await send_md_safe(cb.message, title, reply_markup=reply_markup)
     try:
         await cb.message.delete()
@@ -695,7 +848,7 @@ async def prod_noop(cb: CallbackQuery):
     await cb.answer()
 
 
-# --- корзина и прайс ---
+# --- корзина ---
 
 @router.callback_query(F.data == "menu:cart")
 async def show_cart(cb: CallbackQuery):
@@ -749,47 +902,6 @@ async def checkout_cart(cb: CallbackQuery):
         reply_markup=cart_keyboard(False),
     )
     await cb.answer("Отправлено")
-
-
-@router.callback_query(F.data == "menu:price")
-async def show_price(cb: CallbackQuery):
-    """Прайс идёт по тому же пути, что и каталог: разделы → категории → товары."""
-
-    user_id = cb.from_user.id
-    only_available = view_filters.is_in_stock(user_id)
-    sections = await db_utils.fetch_sections(only_available=only_available)
-    if not sections:
-        if only_available:
-            await send_md_safe(
-                cb.message,
-                "Сейчас нет товаров в наличии. Вы можете отключить фильтр «В наличии» в главном меню.",
-                reply_markup=main_menu(_is_admin(user_id)),
-            )
-        else:
-            await send_md_safe(
-                cb.message,
-                "Каталог пуст: загрузите XLSX тканей и фурнитуры",
-                reply_markup=empty_catalog_keyboard(_is_admin(user_id)),
-            )
-        await cb.answer()
-        return
-
-    labeled = _label_sections(sections)
-    page_items, page, total = slice_page(labeled, 1, PAGE_SIZE)
-
-    rng, usd = await current_range()
-    label = range_label(rng, usd)
-    if only_available:
-        label = f"{label}\n\nПоказываются только товары в наличии."
-
-    prefix = "secstock" if only_available else "sec"
-
-    await send_md_safe(
-        cb.message,
-        label,
-        reply_markup=pager(prefix, page_items, page, total),
-    )
-    await cb.answer()
 
 
 # --- информационные страницы ---

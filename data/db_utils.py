@@ -36,6 +36,18 @@ CREATE_SQL = [
     """,
     "CREATE INDEX IF NOT EXISTS idx_section_cat ON products(section, category);",
     """
+    CREATE TABLE IF NOT EXISTS stock_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      section TEXT NOT NULL,
+      category TEXT NOT NULL,
+      name TEXT NOT NULL,
+      article TEXT,
+      quantity REAL,
+      unit TEXT
+    );
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_stock_section_cat ON stock_items(section, category);",
+    """
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
       value TEXT
@@ -83,14 +95,11 @@ async def set_setting(key: str, value: str) -> None:
                          "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, value))
         await db.commit()
 
-async def fetch_sections(only_available: bool = False) -> list[str]:
+async def fetch_sections() -> list[str]:
     """Возвращает список разделов каталога."""
 
-    sql = "SELECT DISTINCT section FROM products"
+    sql = "SELECT DISTINCT section FROM products ORDER BY section"
     params: tuple = ()
-    if only_available:
-        sql += " WHERE COALESCE(in_stock, 0) > 0"
-    sql += " ORDER BY section"
 
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(sql, params)
@@ -98,14 +107,11 @@ async def fetch_sections(only_available: bool = False) -> list[str]:
     return [r[0] for r in rows]
 
 
-async def fetch_categories(section: str, only_available: bool = False) -> list[str]:
+async def fetch_categories(section: str) -> list[str]:
     """Возвращает категории для выбранного раздела."""
 
-    base_sql = "SELECT DISTINCT category FROM products WHERE section=?"
+    base_sql = "SELECT DISTINCT category FROM products WHERE section=? ORDER BY category"
     params: tuple = (section,)
-    if only_available:
-        base_sql += " AND COALESCE(in_stock, 0) > 0"
-    base_sql += " ORDER BY category"
 
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(base_sql, params)
@@ -116,15 +122,11 @@ async def fetch_categories(section: str, only_available: bool = False) -> list[s
 async def fetch_products_by_category(
     section: str,
     category: str,
-    only_available: bool = False,
 ) -> list[tuple[int, str]]:
     """Возвращает товары выбранной категории."""
 
-    sql = "SELECT id, name FROM products WHERE section=? AND category=?"
+    sql = "SELECT id, name FROM products WHERE section=? AND category=? ORDER BY name"
     params: tuple = (section, category)
-    if only_available:
-        sql += " AND COALESCE(in_stock, 0) > 0"
-    sql += " ORDER BY name"
 
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(sql, params)
@@ -135,5 +137,55 @@ async def fetch_product(pid: int) -> dict:
         cur = await db.execute("SELECT * FROM products WHERE id=?", (pid,))
         row = await cur.fetchone()
         if not row: return {}
+        cols = [c[0] for c in cur.description]
+        return dict(zip(cols, row))
+
+
+# --- наличие ---
+
+
+async def fetch_stock_sections() -> list[str]:
+    """Возвращает разделы из таблицы наличия."""
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT DISTINCT section FROM stock_items ORDER BY section"
+        )
+        rows = await cur.fetchall()
+    return [row[0] for row in rows]
+
+
+async def fetch_stock_categories(section: str) -> list[str]:
+    """Возвращает категории наличия для раздела."""
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT DISTINCT category FROM stock_items WHERE section=? ORDER BY category",
+            (section,),
+        )
+        rows = await cur.fetchall()
+    return [row[0] for row in rows]
+
+
+async def fetch_stock_products_by_category(section: str, category: str) -> list[tuple[int, str]]:
+    """Возвращает товары наличия указанной категории."""
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT id, name FROM stock_items WHERE section=? AND category=? ORDER BY name",
+            (section, category),
+        )
+        rows = await cur.fetchall()
+    return [(int(row[0]), row[1]) for row in rows]
+
+
+async def fetch_stock_item(pid: int) -> dict:
+    """Возвращает запись наличия по идентификатору."""
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute("SELECT * FROM stock_items WHERE id=?", (pid,))
+        row = await cur.fetchone()
+        if not row:
+            return {}
         cols = [c[0] for c in cur.description]
         return dict(zip(cols, row))
