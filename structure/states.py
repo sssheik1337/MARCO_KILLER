@@ -13,3 +13,9 @@ class SupportRequestState(StatesGroup):
     """Состояния для пользовательских обращений из главного меню."""
 
     waiting_text = State()
+
+
+class BroadcastState(StatesGroup):
+    """Состояния для рассылки по артикулу в админ-панели."""
+
+    waiting_article = State()

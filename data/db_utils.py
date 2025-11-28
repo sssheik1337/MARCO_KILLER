@@ -56,7 +56,16 @@ CREATE_SQL = [
       key TEXT PRIMARY KEY,
       value TEXT
     );
+    """,
     """
+    CREATE TABLE IF NOT EXISTS users (
+      user_id INTEGER PRIMARY KEY,
+      username TEXT,
+      full_name TEXT,
+      is_blocked INTEGER NOT NULL DEFAULT 0
+    );
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_users_blocked ON users(is_blocked);",
 ]
 
 async def init_db() -> None:
@@ -104,6 +113,69 @@ async def _ensure_stock_columns(db: aiosqlite.Connection) -> None:
         if column in existing:
             continue
         await db.execute(f"ALTER TABLE stock_items ADD COLUMN {column} {definition}")
+
+
+async def upsert_user(user_id: int, username: str | None, full_name: str | None) -> None:
+    """Сохраняет пользователя для рассылок и снимает отметку блокировки."""
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """
+            INSERT INTO users(user_id, username, full_name, is_blocked)
+            VALUES(?, ?, ?, 0)
+            ON CONFLICT(user_id) DO UPDATE SET
+                username=excluded.username,
+                full_name=excluded.full_name,
+                is_blocked=0
+            """,
+            (user_id, username, full_name),
+        )
+        await db.commit()
+
+
+async def mark_user_blocked(user_id: int) -> None:
+    """Отмечает пользователя как недоступного для дальнейших рассылок."""
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE users SET is_blocked=1 WHERE user_id=?", (user_id,))
+        await db.commit()
+
+
+async def fetch_active_users() -> list[int]:
+    """Возвращает идентификаторы пользователей, готовых к рассылке."""
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT user_id FROM users WHERE is_blocked=0 ORDER BY user_id"
+        )
+        rows = await cur.fetchall()
+    return [int(row[0]) for row in rows]
+
+
+async def find_product_by_code(code: str) -> dict | None:
+    """Ищет товар по артикулу или названию без ограничения города."""
+
+    normalized = (code or "").strip()
+    if not normalized:
+        return None
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            """
+            SELECT *
+            FROM products
+            WHERE lower(coalesce(article, '')) = lower(?)
+               OR lower(name) = lower(?)
+            ORDER BY city
+            LIMIT 1
+            """,
+            (normalized, normalized),
+        )
+        row = await cur.fetchone()
+        if not row:
+            return None
+        cols = [c[0] for c in cur.description]
+        return dict(zip(cols, row))
 
 async def get_setting(key: str, default: str="") -> str:
     async with aiosqlite.connect(DB_PATH) as db:

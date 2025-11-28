@@ -1,5 +1,7 @@
 """Обработчики по умолчанию для нераспознанных событий."""
 import logging
+import logging
+
 from aiogram import Router
 from aiogram.types import CallbackQuery, Message
 

@@ -28,6 +28,12 @@ from services.pagination import slice_page
 from services import cart, profiles
 from data import db_utils
 from services.exchange import current_range, range_label
+from services.product_render import (
+    as_float as _as_float,
+    build_product_caption,
+    format_money as _format_money,
+    format_money_with_currency as _format_money_with_currency,
+)
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -60,39 +66,6 @@ async def _ask_city(target: Message, action: str) -> None:
     """Отправляет предложение выбрать город для указанного раздела."""
 
     await send_md_safe(target, "Выберите город:", reply_markup=city_selector(action))
-
-
-# --- корзина: вспомогательные функции ---
-
-
-def _format_money(value: float | None) -> str:
-    """Форматирует стоимость для отображения пользователю."""
-
-    if value is None:
-        return "—"
-    return f"{value:.2f} ₽"
-
-
-def _format_money_with_currency(value: float | None, currency: str | None) -> str:
-    """Форматирует стоимость с учётом переданного обозначения валюты."""
-
-    if value is None:
-        return "—"
-    code = (currency or "").strip()
-    if not code or code.upper() == "RUB":
-        return f"{value:.2f} ₽"
-    return f"{value:.2f} {code}"
-
-
-def _as_float(value: object) -> float | None:
-    """Аккуратно приводит значение к числу с плавающей точкой."""
-
-    if value in (None, "", "—"):
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
 
 
 def _resolve_cart_price(product: dict, rng: str) -> tuple[float | None, str | None, str | None]:
@@ -556,70 +529,11 @@ async def product_card(cb: CallbackQuery):
     p = await db_utils.fetch_product(pid)
 
     rng, usd = await current_range()
-    range_key = rng.replace("-", "_")
-    if range_key != rng and logger.isEnabledFor(logging.DEBUG):
-        logger.debug("Нормализовал диапазон курса: %s → %s", rng, range_key)
-    lbl = range_label(range_key, usd)
-
     if logger.isEnabledFor(logging.DEBUG):
-        logger.debug("Карточка товара %s, диапазон %s, данные: %s", pid, range_key, p)
-
-    course_line = None
-    if p.get("section") == "fabrics":
-        piece = _format_money(_as_float(p.get(f"price_piece_{range_key}")))
-        roll = _format_money(_as_float(p.get(f"price_roll_{range_key}")))
-        price_line = f"Отрез: {piece} · Ролик: {roll}"
-        course_line = f"💵 {lbl}"
-    else:
-        currency = p.get("currency") or ""
-        rrc = _format_money_with_currency(_as_float(p.get("price_rrc")), currency)
-        opt = _format_money_with_currency(_as_float(p.get("price_opt")), currency)
-        price_line = f"РРЦ: {rrc} · Опт: {opt}"
+        logger.debug("Карточка товара %s, диапазон %s, данные: %s", pid, rng, p)
 
     qty = cart.ensure_selection(cb.from_user.id, pid)
-
-    def _line(label: str, value: object) -> str:
-        text = value if value not in (None, "") else "-"
-        return escape_user(f"{label}: {text}")
-
-    article_value = p.get("article") if p.get("section") != "fabrics" else "-"
-
-    lines = [
-        f"*{escape_user(p.get('name'))}*",
-        _line("Артикул", article_value or "-"),
-    ]
-
-    if p.get("section") == "fabrics":
-        lines.extend(
-            [
-                _line("Страна", p.get("country")),
-                _line("Тип ткани", p.get("fabric_type")),
-                _line("Сегмент", p.get("segment")),
-            ]
-        )
-    else:
-        lines.extend(
-            [
-                _line("Коллекция", p.get("collection")),
-                _line("Бренд/страна", p.get("brand_country")),
-                _line("Кратность", p.get("multiplicity")),
-                _line("Ед.", p.get("unit")),
-            ]
-        )
-
-    lines.append(escape_user(price_line))
-    if course_line:
-        lines.append(escape_user(course_line))
-    if p.get("in_stock") is not None:
-        lines.append(_line("Наличие", p.get("in_stock")))
-    if not course_line:
-        lines.append(escape_user(lbl))
-
-    special_flag = p.get("special") if p.get("section") == "fabrics" else p.get("status")
-    if special_flag:
-        lines.append(_line("Статус", special_flag))
-
-    caption = "\n".join(lines)
+    caption = build_product_caption(p, rng, usd)
 
     products = await db_utils.fetch_products_by_category(section, category, city)
     product_ids = [prod_id for prod_id, _ in products]

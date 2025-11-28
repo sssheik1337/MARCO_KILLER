@@ -10,6 +10,7 @@ from handlers import menu as menu_handlers
 from handlers import admin as admin_handlers
 from handlers import fallback as fallback_handlers
 from data.db_utils import init_db
+from middlewares.user_registry import UserRegistry
 
 async def main() -> None:
     logging.basicConfig(level=getattr(logging, LOG_LEVEL.upper(), logging.INFO))
@@ -18,6 +19,9 @@ async def main() -> None:
         default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN_V2),
     )
     dp = Dispatcher(storage=MemoryStorage())
+
+    dp.message.middleware(UserRegistry())
+    dp.callback_query.middleware(UserRegistry())
 
     try:
         await init_db()  # создаём таблицы, если их нет

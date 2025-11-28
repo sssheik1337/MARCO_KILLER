@@ -1,16 +1,25 @@
 import logging
 
 from aiogram import Router, F
-from aiogram.exceptions import TelegramBadRequest
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
+from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message, ContentType, InlineKeyboardMarkup, InlineKeyboardButton
 from middlewares.admin_filter import AdminOnly
-from data.db_utils import set_setting, get_setting
+from data.db_utils import (
+    fetch_active_users,
+    find_product_by_code,
+    get_setting,
+    mark_user_blocked,
+    set_setting,
+)
 from data.importer import parse_fabrics, parse_hardware, parse_stock
 import aiosqlite
 from config import DB_PATH
-from structure.markdown import send_md_safe, edit_md_safe, message_to_markdown, escape_user
+from structure.markdown import send_md_safe, edit_md_safe, message_to_markdown, escape_user, send_md_safe_to_chat
 from structure.keyboards import usd_keyboard, import_result_keyboard
+from structure.states import BroadcastState
 from services.exchange import current_range, refresh_range
+from services.product_render import build_product_caption
 
 router = Router()
 router.message.middleware(AdminOnly())
@@ -66,6 +75,13 @@ _IMPORT_TARGETS = {
 }
 
 
+_BROADCAST_TYPES = {
+    "promo": {"label": "🔥Акция", "title": "акцию"},
+    "new": {"label": "⭐Новинка", "title": "новинку"},
+    "sale": {"label": "💥Распродажа", "title": "распродажу"},
+}
+
+
 def admin_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📇 Править контакты", callback_data="admin:edit:contacts"),
@@ -79,9 +95,25 @@ def admin_kb():
          InlineKeyboardButton(text="📤 Фурнитура СПБ (xlsx)", callback_data="admin:import:hardware_spb")],
         [InlineKeyboardButton(text="📦 Наличие Москва (xlsx)", callback_data="admin:import:stock_msk"),
          InlineKeyboardButton(text="📦 Наличие СПБ (xlsx)", callback_data="admin:import:stock_spb")],
+        [InlineKeyboardButton(text="Публикация акции / новинки / распродажи", callback_data="admin:broadcast")],
         [InlineKeyboardButton(text="💵 Курс USD: авто/ручной", callback_data="admin:usd")],
         [InlineKeyboardButton(text="🏠 В меню", callback_data="home")],
     ])
+
+
+def broadcast_type_kb() -> InlineKeyboardMarkup:
+    """Возвращает клавиатуру выбора типа рассылки."""
+
+    buttons = [
+        InlineKeyboardButton(text=cfg["label"], callback_data=f"admin:broadcast:type:{key}")
+        for key, cfg in _BROADCAST_TYPES.items()
+    ]
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            buttons,
+            [InlineKeyboardButton(text="🏠 В меню", callback_data="home")],
+        ]
+    )
 
 
 def edit_prompt_kb(target: str) -> InlineKeyboardMarkup:
@@ -159,7 +191,96 @@ async def refresh_usd(cb: CallbackQuery):
             return
         raise
 
-    await cb.answer("Курс обновлён")
+
+@router.callback_query(F.data == "admin:broadcast")
+async def broadcast_menu(cb: CallbackQuery, state: FSMContext):
+    """Запускает сценарий рассылки по артикулу."""
+
+    await state.clear()
+    await send_md_safe(
+        cb.message,
+        "Выберите тип рассылки:",
+        reply_markup=broadcast_type_kb(),
+    )
+    await cb.answer()
+
+
+@router.callback_query(F.data.startswith("admin:broadcast:type:"))
+async def choose_broadcast_type(cb: CallbackQuery, state: FSMContext):
+    """Фиксирует выбранный тип и запрашивает артикул товара."""
+
+    broadcast_type = cb.data.split(":")[-1]
+    if broadcast_type not in _BROADCAST_TYPES:
+        await cb.answer("Неизвестный тип", show_alert=True)
+        return
+
+    await state.set_state(BroadcastState.waiting_article)
+    await state.update_data(broadcast_type=broadcast_type)
+    label = _BROADCAST_TYPES[broadcast_type]["label"]
+    await send_md_safe(
+        cb.message,
+        f"Вы выбрали {label}. Пришлите артикул товара или серийный номер для рассылки.",
+    )
+    await cb.answer()
+
+
+@router.message(BroadcastState.waiting_article)
+async def process_broadcast(msg: Message, state: FSMContext):
+    """Ищет товар по артикулу и отправляет карточку всем пользователям."""
+
+    data = await state.get_data()
+    broadcast_type = data.get("broadcast_type")
+    if not broadcast_type or broadcast_type not in _BROADCAST_TYPES:
+        await send_md_safe(msg, "Сначала выберите тип рассылки через меню админа.")
+        await state.clear()
+        return
+
+    article = (msg.text or msg.caption or "").strip()
+    if not article:
+        await send_md_safe(msg, "Пришлите артикул товара для рассылки.")
+        return
+
+    product = await find_product_by_code(article)
+    if not product:
+        await send_md_safe(msg, "Товар с таким артикулом не найден.")
+        await state.clear()
+        return
+
+    rng, usd = await current_range()
+    caption = build_product_caption(
+        product,
+        rng,
+        usd,
+        include_city=True,
+        prefix=_BROADCAST_TYPES[broadcast_type]["label"],
+    )
+
+    recipients = await fetch_active_users()
+    if not recipients:
+        await send_md_safe(msg, "Список пользователей пуст, отправлять некому.")
+        await state.clear()
+        return
+
+    sent = 0
+    blocked = 0
+    for user_id in recipients:
+        try:
+            await send_md_safe_to_chat(msg.bot, user_id, caption)
+            sent += 1
+        except TelegramForbiddenError:
+            blocked += 1
+            await mark_user_blocked(user_id)
+        except TelegramBadRequest as exc:
+            logging.warning("Не удалось отправить рассылку пользователю %s: %s", user_id, exc)
+        except Exception as exc:  # pragma: no cover - логирование сетевых ошибок
+            logging.warning("Сбой отправки рассылки пользователю %s: %s", user_id, exc)
+
+    await state.clear()
+    await send_md_safe(
+        msg,
+        f"Рассылка завершена. Доставлено: {sent}. Заблокировали: {blocked}.",
+        reply_markup=admin_kb(),
+    )
 
 # простые текстовые поля (без JSON)
 @router.callback_query(F.data.startswith("admin:edit:"))
