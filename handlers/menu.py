@@ -7,7 +7,7 @@ from aiogram import Router, F
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
-from config import PAGE_SIZE, ADMINS
+from config import PAGE_SIZE, ADMINS, DEFAULT_CITY
 from structure.keyboards import (
     main_menu,
     pager,
@@ -41,6 +41,12 @@ _STOCK_CONTEXT: dict[int, dict[int, dict[str, Any]]] = defaultdict(dict)
 
 def _is_admin(user_id: int) -> bool:
     return user_id in ADMINS
+
+
+def _user_city(user_id: int) -> str:
+    """Возвращает выбранный пользователем город или значение по умолчанию."""
+
+    return profiles.get_city_or_default(user_id, DEFAULT_CITY)
 
 
 # --- корзина: вспомогательные функции ---
@@ -324,7 +330,8 @@ STOCK_PROD_PREFIX = "sprodlist"
 async def _send_catalog_sections(target: Message, user_id: int, page: int = 1) -> bool:
     """Показывает разделы каталога и возвращает успех отображения."""
 
-    sections = await db_utils.fetch_sections()
+    city = _user_city(user_id)
+    sections = await db_utils.fetch_sections(city)
     if not sections:
         await send_md_safe(
             target,
@@ -350,7 +357,8 @@ async def _send_catalog_sections(target: Message, user_id: int, page: int = 1) -
 async def _send_stock_sections(target: Message, user_id: int, page: int = 1) -> bool:
     """Показывает разделы наличия."""
 
-    sections = await db_utils.fetch_stock_sections()
+    city = _user_city(user_id)
+    sections = await db_utils.fetch_stock_sections(city)
     if not sections:
         await send_md_safe(
             target,
@@ -400,7 +408,8 @@ async def stock_root(cb: CallbackQuery):
 @router.callback_query(F.data.regexp(rf"^{CAT_SEC_PREFIX}:page:"))
 async def catalog_sections_page(cb: CallbackQuery):
     page = int(cb.data.split(":")[-1])
-    sections = await db_utils.fetch_sections()
+    city = _user_city(cb.from_user.id)
+    sections = await db_utils.fetch_sections(city)
     labeled = _label_sections(sections)
     page_items, page, total = slice_page(labeled, page, PAGE_SIZE)
     await cb.message.edit_reply_markup(
@@ -412,7 +421,8 @@ async def catalog_sections_page(cb: CallbackQuery):
 @router.callback_query(F.data.regexp(rf"^{CAT_SEC_PREFIX}:open:"))
 async def open_catalog_section(cb: CallbackQuery):
     section = cb.data.split(":")[-1]
-    cats = await db_utils.fetch_categories(section)
+    city = _user_city(cb.from_user.id)
+    cats = await db_utils.fetch_categories(section, city)
     if not cats:
         await send_md_safe(cb.message, "Здесь пока пусто.")
         await cb.answer()
@@ -432,7 +442,8 @@ async def open_category_page(cb: CallbackQuery):
     parts = cb.data.split(":")
     section = parts[1]
     page = int(parts[-1])
-    cats = await db_utils.fetch_categories(section)
+    city = _user_city(cb.from_user.id)
+    cats = await db_utils.fetch_categories(section, city)
     enumerated = [(name, str(idx)) for idx, name in enumerate(cats)]
     page_items, page, total = slice_page(enumerated, page, PAGE_SIZE)
     await cb.message.edit_reply_markup(
@@ -453,7 +464,8 @@ async def open_category(cb: CallbackQuery):
         await cb.answer("Категория недоступна", show_alert=True)
         return
 
-    cats = await db_utils.fetch_categories(section)
+    city = _user_city(cb.from_user.id)
+    cats = await db_utils.fetch_categories(section, city)
     if category_idx < 0 or category_idx >= len(cats):
         logger.warning(
             "Категория с индексом %s не найдена для раздела %s", category_idx, section
@@ -463,7 +475,7 @@ async def open_category(cb: CallbackQuery):
 
     category = cats[category_idx]
 
-    prods = await db_utils.fetch_products_by_category(section, category)
+    prods = await db_utils.fetch_products_by_category(section, category, city)
     items = [(name, str(pid)) for pid, name in prods]
     page_items, page, total = slice_page(items, 1, PAGE_SIZE)
     await send_md_safe(
@@ -482,7 +494,8 @@ async def product_list_page(cb: CallbackQuery):
     section = parts[1]
     category = parts[2]
     page = int(parts[-1])
-    prods = await db_utils.fetch_products_by_category(section, category)
+    city = _user_city(cb.from_user.id)
+    prods = await db_utils.fetch_products_by_category(section, category, city)
     items = [(name, str(pid)) for pid, name in prods]
     page_items, page, total = slice_page(items, page, PAGE_SIZE)
     await cb.message.edit_reply_markup(
@@ -502,6 +515,7 @@ async def product_card(cb: CallbackQuery):
     section = parts[1] if len(parts) > 1 else ""
     category = ":".join(parts[2:-2]) if len(parts) > 3 else ""
 
+    city = _user_city(cb.from_user.id)
     p = await db_utils.fetch_product(pid)
 
     rng, usd = await current_range()
@@ -570,7 +584,7 @@ async def product_card(cb: CallbackQuery):
 
     caption = "\n".join(lines)
 
-    products = await db_utils.fetch_products_by_category(section, category)
+    products = await db_utils.fetch_products_by_category(section, category, city)
     product_ids = [prod_id for prod_id, _ in products]
     try:
         index = product_ids.index(pid)
@@ -598,6 +612,7 @@ async def product_card(cb: CallbackQuery):
         "prefix": list_prefix,
         "page": page,
         "product_id": pid,
+        "city": city,
     }
 
     await cb.answer()
@@ -606,7 +621,8 @@ async def product_card(cb: CallbackQuery):
 @router.callback_query(F.data.regexp(rf"^{STOCK_SEC_PREFIX}:page:"))
 async def stock_sections_page(cb: CallbackQuery):
     page = int(cb.data.split(":")[-1])
-    sections = await db_utils.fetch_stock_sections()
+    city = _user_city(cb.from_user.id)
+    sections = await db_utils.fetch_stock_sections(city)
     labeled = [(section.title(), section) for section in sections]
     page_items, page, total = slice_page(labeled, page, PAGE_SIZE)
     await cb.message.edit_reply_markup(
@@ -618,7 +634,8 @@ async def stock_sections_page(cb: CallbackQuery):
 @router.callback_query(F.data.regexp(rf"^{STOCK_SEC_PREFIX}:open:"))
 async def open_stock_section(cb: CallbackQuery):
     section = cb.data.split(":")[-1]
-    cats = await db_utils.fetch_stock_categories(section)
+    city = _user_city(cb.from_user.id)
+    cats = await db_utils.fetch_stock_categories(section, city)
     if not cats:
         await send_md_safe(cb.message, "Здесь пока нет остатков.")
         await cb.answer()
@@ -638,7 +655,8 @@ async def stock_category_page(cb: CallbackQuery):
     parts = cb.data.split(":")
     section = parts[1]
     page = int(parts[-1])
-    cats = await db_utils.fetch_stock_categories(section)
+    city = _user_city(cb.from_user.id)
+    cats = await db_utils.fetch_stock_categories(section, city)
     enumerated = [(name, str(idx)) for idx, name in enumerate(cats)]
     page_items, page, total = slice_page(enumerated, page, PAGE_SIZE)
     await cb.message.edit_reply_markup(
@@ -659,7 +677,8 @@ async def open_stock_category(cb: CallbackQuery):
         await cb.answer("Категория недоступна", show_alert=True)
         return
 
-    cats = await db_utils.fetch_stock_categories(section)
+    city = _user_city(cb.from_user.id)
+    cats = await db_utils.fetch_stock_categories(section, city)
     if category_idx < 0 or category_idx >= len(cats):
         logger.warning(
             "Категория наличия с индексом %s не найдена для раздела %s", category_idx, section
@@ -668,7 +687,7 @@ async def open_stock_category(cb: CallbackQuery):
         return
 
     category = cats[category_idx]
-    prods = await db_utils.fetch_stock_products_by_category(section, category)
+    prods = await db_utils.fetch_stock_products_by_category(section, category, city)
     items = [(name, str(pid)) for pid, name in prods]
     page_items, page, total = slice_page(items, 1, PAGE_SIZE)
     await send_md_safe(
@@ -687,7 +706,8 @@ async def stock_product_page(cb: CallbackQuery):
     section = parts[1]
     category = parts[2]
     page = int(parts[-1])
-    prods = await db_utils.fetch_stock_products_by_category(section, category)
+    city = _user_city(cb.from_user.id)
+    prods = await db_utils.fetch_stock_products_by_category(section, category, city)
     items = [(name, str(pid)) for pid, name in prods]
     page_items, page, total = slice_page(items, page, PAGE_SIZE)
     await cb.message.edit_reply_markup(
@@ -707,6 +727,7 @@ async def stock_product_card(cb: CallbackQuery):
     section = parts[1] if len(parts) > 1 else ""
     category = ":".join(parts[2:-2]) if len(parts) > 3 else ""
 
+    city = _user_city(cb.from_user.id)
     item = await db_utils.fetch_stock_item(pid)
 
     lines = [f"*{escape_user(item.get('name'))}*"]
@@ -724,7 +745,7 @@ async def stock_product_card(cb: CallbackQuery):
 
     caption = "\n".join(lines)
 
-    products = await db_utils.fetch_stock_products_by_category(section, category)
+    products = await db_utils.fetch_stock_products_by_category(section, category, city)
     product_ids = [prod_id for prod_id, _ in products]
     try:
         index = product_ids.index(pid)
@@ -746,6 +767,7 @@ async def stock_product_card(cb: CallbackQuery):
         "prefix": list_prefix,
         "page": page,
         "product_id": pid,
+        "city": city,
     }
 
     await cb.answer()
@@ -818,13 +840,18 @@ async def prod_back(cb: CallbackQuery):
             product_id = context.get("product_id")
             if product_id is not None:
                 cart.clear_selection(user_id, product_id)
+            city = context.get("city") or _user_city(user_id)
             products = await db_utils.fetch_products_by_category(
                 context["section"],
                 context["category"],
+                city,
             )
         else:
+            city = context.get("city") or _user_city(user_id)
             products = await db_utils.fetch_stock_products_by_category(
-                context["section"], context["category"]
+                context["section"],
+                context["category"],
+                city,
             )
 
         items = [(name, str(pid)) for pid, name in products]
