@@ -29,15 +29,33 @@ def empty_catalog_keyboard(is_admin: bool) -> InlineKeyboardMarkup:
         rows = [
             [
                 InlineKeyboardButton(
-                    text="📤 Импорт тканей (XLSX)",
-                    callback_data="admin:import:fabrics",
-                )
+                    text="📤 Ткани Москва (XLSX)",
+                    callback_data="admin:import:fabrics_msk",
+                ),
+                InlineKeyboardButton(
+                    text="📤 Ткани СПБ (XLSX)",
+                    callback_data="admin:import:fabrics_spb",
+                ),
             ],
             [
                 InlineKeyboardButton(
-                    text="📤 Импорт фурнитуры (XLSX)",
-                    callback_data="admin:import:hardware",
-                )
+                    text="📤 Фурнитура Москва (XLSX)",
+                    callback_data="admin:import:hardware_msk",
+                ),
+                InlineKeyboardButton(
+                    text="📤 Фурнитура СПБ (XLSX)",
+                    callback_data="admin:import:hardware_spb",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="📦 Наличие Москва (XLSX)",
+                    callback_data="admin:import:stock_msk",
+                ),
+                InlineKeyboardButton(
+                    text="📦 Наличие СПБ (XLSX)",
+                    callback_data="admin:import:stock_spb",
+                ),
             ],
             [home_button],
         ]

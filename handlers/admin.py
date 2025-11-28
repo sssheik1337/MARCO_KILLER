@@ -7,7 +7,7 @@ from middlewares.admin_filter import AdminOnly
 from data.db_utils import set_setting, get_setting
 from data.importer import parse_fabrics, parse_hardware, parse_stock
 import aiosqlite
-from config import DB_PATH, DEFAULT_CITY
+from config import DB_PATH
 from structure.markdown import send_md_safe, edit_md_safe, message_to_markdown, escape_user
 from structure.keyboards import usd_keyboard, import_result_keyboard
 from services.exchange import current_range, refresh_range
@@ -25,15 +25,58 @@ _EDITABLE_SETTINGS = {
 }
 
 
+_IMPORT_TARGETS = {
+    "fabrics_msk": {
+        "section": "fabrics",
+        "city": "msk",
+        "prompt": "Пришлите XLSX с тканями для Москвы.",
+        "title": "ткани (Москва)",
+    },
+    "fabrics_spb": {
+        "section": "fabrics",
+        "city": "spb",
+        "prompt": "Пришлите XLSX с тканями для Санкт-Петербурга.",
+        "title": "ткани (СПБ)",
+    },
+    "hardware_msk": {
+        "section": "hardware",
+        "city": "msk",
+        "prompt": "Пришлите XLSX с фурнитурой для Москвы.",
+        "title": "фурнитура (Москва)",
+    },
+    "hardware_spb": {
+        "section": "hardware",
+        "city": "spb",
+        "prompt": "Пришлите XLSX с фурнитурой для Санкт-Петербурга.",
+        "title": "фурнитура (СПБ)",
+    },
+    "stock_msk": {
+        "section": "stock",
+        "city": "msk",
+        "prompt": "Пришлите XLSX с остатками для Москвы.",
+        "title": "наличие (Москва)",
+    },
+    "stock_spb": {
+        "section": "stock",
+        "city": "spb",
+        "prompt": "Пришлите XLSX с остатками для Санкт-Петербурга.",
+        "title": "наличие (СПБ)",
+    },
+}
+
+
 def admin_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📇 Править контакты", callback_data="admin:edit:contacts"),
          InlineKeyboardButton(text="🗺️ Адрес/маршрут", callback_data="admin:edit:address")],
         [InlineKeyboardButton(text="🕘 Режим работы", callback_data="admin:edit:worktime"),
          InlineKeyboardButton(text="📄 Реквизиты", callback_data="admin:edit:requisites")],
-        [InlineKeyboardButton(text="📤 Импорт ТКАНИ (xlsx)", callback_data="admin:import:fabrics")],
-        [InlineKeyboardButton(text="📤 Импорт ФУРНИТУРА (xlsx)", callback_data="admin:import:hardware")],
-        [InlineKeyboardButton(text="📦 Импорт НАЛИЧИЕ (xlsx)", callback_data="admin:import:stock")],
+        [InlineKeyboardButton(text="📤 Ткани Москва (xlsx)", callback_data="admin:import:fabrics_msk"),
+         InlineKeyboardButton(text="📤 Ткани СПБ (xlsx)", callback_data="admin:import:fabrics_spb")],
+        [InlineKeyboardButton(text="📤 Фурнитура Москва (xlsx)", callback_data="admin:import:hardware_msk"),
+         InlineKeyboardButton(text="📤 Фурнитура СПБ (xlsx)", callback_data="admin:import:hardware_spb")],
+        [InlineKeyboardButton(text="📦 Наличие Москва (xlsx)", callback_data="admin:import:stock_msk"),
+         InlineKeyboardButton(text="📦 Наличие СПБ (xlsx)", callback_data="admin:import:stock_spb")],
         [InlineKeyboardButton(text="💵 Курс USD: авто/ручной", callback_data="admin:usd")],
         [InlineKeyboardButton(text="🏠 В меню", callback_data="home")],
     ])
@@ -180,59 +223,61 @@ async def save_text(msg: Message):
     )
 
 # импорты
-@router.callback_query(F.data == "admin:import:fabrics")
-async def imp_fabrics(cb: CallbackQuery): 
-    await set_setting("import_target","fabrics")
+@router.callback_query(F.data.startswith("admin:import:"))
+async def imp_start(cb: CallbackQuery):
+    target_key = cb.data.split(":", maxsplit=2)[-1]
+    target = _IMPORT_TARGETS.get(target_key)
+
+    if not target:
+        await send_md_safe(cb.message, "Неизвестный раздел импорта.")
+        await cb.answer()
+        return
+
+    await set_setting("import_target", target_key)
     await send_md_safe(
         cb.message,
-        "Пришлите XLSX с тканями.",
+        target["prompt"],
     )
-
-@router.callback_query(F.data == "admin:import:hardware")
-async def imp_hw(cb: CallbackQuery):
-    await set_setting("import_target","hardware")
-    await send_md_safe(
-        cb.message,
-        "Пришлите XLSX с фурнитурой.",
-    )
-
-
-@router.callback_query(F.data == "admin:import:stock")
-async def imp_stock(cb: CallbackQuery):
-    await set_setting("import_target", "stock")
-    await send_md_safe(
-        cb.message,
-        "Пришлите XLSX с остатками товаров.",
-    )
+    await cb.answer()
 
 @router.message(F.content_type == ContentType.DOCUMENT)
 async def import_xlsx(msg: Message):
-    target = await get_setting("import_target","")
-    if not target:
+    target_key = await get_setting("import_target", "")
+    if not target_key:
         return
 
-    city = DEFAULT_CITY
+    target_config = _IMPORT_TARGETS.get(target_key)
+    if not target_config:
+        await send_md_safe(msg, "Неизвестный раздел импорта.")
+        await set_setting("import_target", "")
+        return
+
+    section = target_config["section"]
+    city = target_config["city"]
 
     f = await msg.bot.get_file(msg.document.file_id)
     stream = await msg.bot.download_file(f.file_path)
-    section_title = {
-        "fabrics": "«ткани»",
-        "hardware": "«фурнитура»",
-        "stock": "«наличие»",
-    }
+    file_name = (msg.document.file_name or "").lower()
+    if not file_name.endswith(".xlsx"):
+        await send_md_safe(
+            msg,
+            "Ошибка: формат XLS не поддерживается. Загрузите файл в формате XLSX.",
+        )
+        await set_setting("import_target", "")
+        return
 
     try:
-        if target == "fabrics":
+        if section == "fabrics":
             items = parse_fabrics(stream, city=city)
-        elif target == "hardware":
+        elif section == "hardware":
             items = parse_hardware(stream, city=city)
-        elif target == "stock":
+        elif section == "stock":
             items = parse_stock(stream, city=city)
         else:
             await send_md_safe(msg, "Неизвестный раздел импорта.")
             return
     except Exception as exc:
-        logging.exception("Ошибка разбора файла для раздела %s", target)
+        logging.exception("Ошибка разбора файла для раздела %s", section)
         await send_md_safe(
             msg,
             f"Не удалось обработать файл: {escape_user(str(exc))}",
@@ -243,7 +288,7 @@ async def import_xlsx(msg: Message):
         try:
             await db.execute("BEGIN")
 
-            if target == "stock":
+            if section == "stock":
                 await db.execute("DELETE FROM stock_items WHERE city=?", (city,))
                 stock_sql = (
                     "INSERT INTO stock_items(city,section,category,name,article,quantity,unit) "
@@ -308,7 +353,7 @@ async def import_xlsx(msg: Message):
 
                 await db.execute(
                     "DELETE FROM products WHERE section=? AND city=?",
-                    (target, city),
+                    (section, city),
                 )
                 if payload:
                     await db.executemany(product_sql, payload)
@@ -316,7 +361,7 @@ async def import_xlsx(msg: Message):
         except Exception as exc:
             if db.in_transaction:
                 await db.rollback()
-            logging.exception("Ошибка импорта раздела %s", target)
+            logging.exception("Ошибка импорта раздела %s", section)
             await send_md_safe(
                 msg,
                 f"Импорт прерван из-за ошибки: {escape_user(str(exc))}",
@@ -324,7 +369,7 @@ async def import_xlsx(msg: Message):
             return
         else:
             row = None
-            if target == "fabrics":
+            if section == "fabrics":
                 cursor = await db.execute(
                     "SELECT * FROM products WHERE section=? AND city=? AND name LIKE ?",
                     ("fabrics", city, "%BISON%"),
@@ -339,22 +384,19 @@ async def import_xlsx(msg: Message):
                         ("fabrics", city),
                     )
                 row = await cursor.fetchone()
-            if row is not None:
-                columns = [desc[0] for desc in cursor.description]
-                snapshot = {column: row[idx] for idx, column in enumerate(columns)}
-                    logging.info(
-                        "Запись ткани после импорта: %s",
-                        snapshot,
-                    )
+                if row is not None:
+                    columns = [desc[0] for desc in cursor.description]
+                    snapshot = {column: row[idx] for idx, column in enumerate(columns)}
+                    logging.info("Запись ткани после импорта: %s", snapshot)
                 else:
                     logging.warning(
                         "После импорта раздела тканей записи не найдены."
                     )
             await db.commit()
 
-    await set_setting("import_target","")
+    await set_setting("import_target", "")
     await send_md_safe(
         msg,
-        f"Импортировано {import_count} позиций для раздела {section_title.get(target, target)}",
+        f"Импортировано {import_count} позиций для раздела {target_config['title']}",
         reply_markup=import_result_keyboard(),
     )
