@@ -2,36 +2,18 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from config import PAGE_SIZE
 from data import db_utils
 
+
 def main_menu(is_admin: bool, ready_catalog_url: str | None = None) -> InlineKeyboardMarkup:
     """Формирует главное меню с актуальными разделами."""
 
+    ready_url = ready_catalog_url or "https://example.com"
+
     rows: list[list[InlineKeyboardButton]] = [
-        [InlineKeyboardButton(text="📚 Каталог товаров", callback_data="menu:catalog")],
-        [InlineKeyboardButton(text="📦 Наличие", callback_data="menu:stock")],
+        [InlineKeyboardButton(text="📚 Каталог", callback_data="catalog")],
+        [InlineKeyboardButton(text="📦 Наличие", callback_data="stock")],
+        [InlineKeyboardButton(text="Каталог готовых изделий 📷", url=ready_url)],
+        [InlineKeyboardButton(text="👤 Профиль", callback_data="profile")],
     ]
-
-    if ready_catalog_url:
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text="Каталог готовых изделий 📷", url=ready_catalog_url
-                )
-            ]
-        )
-
-    rows.extend(
-        [
-            [
-                InlineKeyboardButton(text="📇 Контакты", callback_data="menu:contacts"),
-                InlineKeyboardButton(text="🗺️ Как проехать", callback_data="menu:route"),
-            ],
-            [InlineKeyboardButton(text="📄 Реквизиты", callback_data="menu:requisites")],
-            [InlineKeyboardButton(text="📞 Оставить заявку на звонок", callback_data="menu:callback")],
-            [InlineKeyboardButton(text="❓ Задать вопрос", callback_data="menu:question")],
-            [InlineKeyboardButton(text="👨‍💼 Связь с руководителем", callback_data="menu:boss")],
-            [InlineKeyboardButton(text="🐞 Сообщить об ошибке", callback_data="menu:bug")],
-        ]
-    )
 
     if is_admin:
         rows.append([InlineKeyboardButton(text="🛠 Админ-панель", callback_data="admin:open")])
@@ -44,6 +26,82 @@ async def main_menu_with_link(is_admin: bool) -> InlineKeyboardMarkup:
 
     ready_link = await db_utils.get_setting("ready_catalog_url", "")
     return main_menu(is_admin, ready_link or None)
+
+
+def catalog_menu() -> InlineKeyboardMarkup:
+    """Клавиатура выбора раздела каталога."""
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🧵 Ткани", callback_data="catalog:fabrics")],
+            [InlineKeyboardButton(text="🔩 Фурнитура", callback_data="catalog:hardware")],
+            [InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")],
+        ]
+    )
+
+
+def stock_city_menu() -> InlineKeyboardMarkup:
+    """Клавиатура выбора города для раздела наличия."""
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Москва", callback_data="stock:city:msk")],
+            [InlineKeyboardButton(text="Санкт-Петербург", callback_data="stock:city:spb")],
+            [InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")],
+        ]
+    )
+
+
+def stock_section_menu(city: str) -> InlineKeyboardMarkup:
+    """Клавиатура выбора раздела наличия для выбранного города."""
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🧵 Ткани", callback_data=f"stock:{city}:fabrics"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🔩 Фурнитура", callback_data=f"stock:{city}:hardware"
+                )
+            ],
+            [InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")],
+        ]
+    )
+
+
+def kb_stock_select_city() -> InlineKeyboardMarkup:
+    """Клавиатура выбора города для раздела наличия."""
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Москва", callback_data="stock_city:msk")],
+            [InlineKeyboardButton(text="Санкт-Петербург", callback_data="stock_city:spb")],
+            [InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")],
+        ]
+    )
+
+
+def kb_stock_sections(city: str) -> InlineKeyboardMarkup:
+    """Клавиатура выбора раздела наличия для выбранного города."""
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🧵 Ткани", callback_data=f"stock_section:{city}:fabrics"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🔩 Фурнитура", callback_data=f"stock_section:{city}:hardware"
+                )
+            ],
+            [InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")],
+        ]
+    )
 
 
 def empty_catalog_keyboard(is_admin: bool) -> InlineKeyboardMarkup:

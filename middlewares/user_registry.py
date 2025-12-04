@@ -23,7 +23,7 @@ class UserRegistry(BaseMiddleware):
 
         if user:
             try:
-                await db_utils.upsert_user(user.id, user.username, user.full_name)
+                await db_utils.upsert_user(user.id)
             except Exception as exc:  # pragma: no cover - логирование ошибок сохранения
                 logger.warning("Не удалось сохранить пользователя %s: %s", user.id, exc)
 

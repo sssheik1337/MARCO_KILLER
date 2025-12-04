@@ -1,12 +1,14 @@
 import logging
 
 from aiogram import Router, F
+from aiogram.filters import Command, CommandObject
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message, ContentType, InlineKeyboardMarkup, InlineKeyboardButton
 from middlewares.admin_filter import AdminOnly
 from data.db_utils import (
     fetch_active_users,
+    find_catalog_product_by_article,
     find_product_by_code,
     get_setting,
     mark_user_blocked,
@@ -19,6 +21,7 @@ from structure.markdown import send_md_safe, edit_md_safe, message_to_markdown, 
 from structure.keyboards import usd_keyboard, import_result_keyboard
 from structure.states import BroadcastState
 from services.exchange import current_range, refresh_range
+from services.notifications import broadcast, build_product_card
 from services.product_render import build_product_caption
 
 router = Router()
@@ -80,6 +83,36 @@ _BROADCAST_TYPES = {
     "new": {"label": "⭐Новинка", "title": "новинку"},
     "sale": {"label": "💥Распродажа", "title": "распродажу"},
 }
+
+
+@router.message(Command("notify"))
+async def notify_admin(msg: Message, command: CommandObject | None):
+    """Команда администратора для рассылки карточки по артикулу."""
+
+    article = (command.args or "").strip() if command else ""
+    if not article:
+        await send_md_safe(msg, "Укажите артикул после команды /notify")
+        return
+
+    found = await find_catalog_product_by_article(article)
+    if not found:
+        await send_md_safe(msg, "Артикул не найден")
+        return
+
+    source, product = found
+    card_text = build_product_card(source, product)
+
+    sent, failed = await broadcast(msg.bot, card_text)
+    await send_md_safe(
+        msg,
+        "\n".join(
+            [
+                "Уведомление отправлено.",
+                card_text,
+                f"Итог: доставлено {sent}, ошибок {failed}.",
+            ]
+        ),
+    )
 
 
 def admin_kb():

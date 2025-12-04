@@ -9,6 +9,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup
 from config import PAGE_SIZE, ADMINS, DEFAULT_CITY
 from structure.keyboards import (
+    catalog_menu,
     main_menu_with_link,
     pager,
     product_controls,
@@ -16,6 +17,7 @@ from structure.keyboards import (
     empty_catalog_keyboard,
     cart_keyboard,
     city_selector,
+    kb_stock_select_city,
 )
 from structure.markdown import (
     edit_md_safe,
@@ -301,6 +303,59 @@ async def on_home(cb: CallbackQuery):
         "Главное меню:",
         reply_markup=menu_markup,
     )
+    await cb.answer()
+
+
+# --- новое главное меню ---
+
+
+@router.callback_query(F.data == "catalog")
+async def on_catalog(cb: CallbackQuery):
+    """Показывает выбор раздела каталога."""
+
+    await send_md_safe(
+        cb.message,
+        "Выберите раздел каталога:",
+        reply_markup=catalog_menu(),
+    )
+    await cb.answer()
+
+
+@router.callback_query(F.data == "catalog:fabrics")
+async def on_catalog_fabrics(cb: CallbackQuery):
+    """Заглушка для раздела тканей каталога."""
+
+    await send_md_safe(cb.message, "Раздел каталога «Ткани» будет добавлен позже.")
+    await cb.answer()
+
+
+@router.callback_query(F.data == "catalog:hardware")
+async def on_catalog_hardware(cb: CallbackQuery):
+    """Заглушка для раздела фурнитуры каталога."""
+
+    await send_md_safe(
+        cb.message, "Раздел каталога «Фурнитура» будет добавлен позже."
+    )
+    await cb.answer()
+
+
+@router.callback_query(F.data == "stock")
+async def on_stock(cb: CallbackQuery):
+    """Показывает выбор города для раздела наличия."""
+
+    await send_md_safe(
+        cb.message,
+        "Выберите город:",
+        reply_markup=kb_stock_select_city(),
+    )
+    await cb.answer()
+
+
+@router.callback_query(F.data == "profile")
+async def on_profile(cb: CallbackQuery):
+    """Заглушка для профиля пользователя."""
+
+    await send_md_safe(cb.message, "Профиль будет доступен позже.")
     await cb.answer()
 
 
