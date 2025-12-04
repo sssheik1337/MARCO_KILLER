@@ -7,7 +7,10 @@ import re
 import sqlite3
 from typing import BinaryIO, Union
 
-import chardet
+try:
+    import chardet
+except ImportError:  # pragma: no cover - зависит от окружения
+    chardet = None
 import pandas as pd
 from openpyxl import load_workbook
 
@@ -229,8 +232,12 @@ def _load_csv_rows(source: SourceType) -> list[list[object]]:
             data = current.read()
             _reset_stream(current)
 
-        detection = chardet.detect(data)
-        encoding = detection.get("encoding") or "utf-8"
+        if chardet is None:
+            logger.warning("chardet не установлен, используем UTF-8 по умолчанию")
+            encoding = "utf-8"
+        else:
+            detection = chardet.detect(data)
+            encoding = detection.get("encoding") or "utf-8"
         buffer = io.BytesIO(data)
         df = pd.read_csv(buffer, header=None, encoding=encoding)
         return df.where(pd.notna(df), None).values.tolist()
