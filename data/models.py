@@ -11,9 +11,15 @@ class Product(BaseModel):
     country: str | None = None
     fabric_type: str | None = None
     segment: str | None = None
+    collection: str | None = None
+    brand_country: str | None = None
+    multiplicity: str | None = None
+    unit: str | None = None
+    currency: str | None = None
+    status: str | None = None
     price_piece: float | None = None
     price_roll: float | None = None
-    special: str | None = None  # "sale" | "new" | None
+    special: str | None = None  # произвольная отметка из прайс-листа
     in_stock: int | None = None
     image_url: str | None = None
 
