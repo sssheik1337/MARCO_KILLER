@@ -899,6 +899,40 @@ def parse_fabrics_stock_spb(stream: SourceType) -> list[dict]:
         raise Exception(f"Ошибка при импорте остатков тканей СПБ: {exc}") from exc
 
 
+def parse_fabrics(stream: SourceType, city: str | None = None, section: str | None = None):
+    """Совместимость со старым API: возвращает каталог тканей."""
+
+    return parse_fabrics_catalog(stream)
+
+
+def parse_hardware(stream: SourceType, city: str | None = None, section: str | None = None):
+    """Совместимость со старым API: возвращает каталог фурнитуры."""
+
+    return parse_hardware_catalog(stream)
+
+
+def parse_stock(stream: SourceType, city: str | None = None, section: str | None = None):
+    """Заглушка для остатков: требует явного указания раздела."""
+
+    if section is None:
+        raise Exception(
+            "Укажите раздел остатков (fabrics/hardware) для импорта."
+        )
+
+    normalized = (section or "").lower()
+    if normalized == "fabrics":
+        if city == "msk":
+            return parse_fabrics_stock_msk(stream)
+        return parse_fabrics_stock_spb(stream)
+
+    if normalized == "hardware":
+        if city == "msk":
+            return parse_hardware_stock_msk(stream)
+        return parse_hardware_stock_spb(stream)
+
+    raise Exception("Неизвестный раздел остатков. Ожидается fabrics или hardware.")
+
+
 __all__ = [
     "parse_fabrics_catalog",
     "parse_hardware_catalog",
@@ -906,6 +940,9 @@ __all__ = [
     "parse_fabrics_stock_msk",
     "parse_hardware_stock_spb",
     "parse_hardware_stock_msk",
+    "parse_fabrics",
+    "parse_hardware",
+    "parse_stock",
     "_string",
     "_number",
     "_number_or_error",
