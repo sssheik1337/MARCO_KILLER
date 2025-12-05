@@ -1,4 +1,5 @@
 """Обработчики выбора города и раздела для остатков."""
+
 from collections import defaultdict
 
 from aiogram import Router, F

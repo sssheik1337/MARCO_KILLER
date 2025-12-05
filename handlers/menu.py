@@ -4,7 +4,6 @@ from collections import defaultdict
 from typing import Any
 
 from aiogram import Router, F
-from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup
 from config import PAGE_SIZE, ADMINS, DEFAULT_CITY
@@ -15,19 +14,17 @@ from structure.keyboards import (
     product_controls,
     stock_product_controls,
     empty_catalog_keyboard,
-    cart_keyboard,
     city_selector,
     kb_stock_select_city,
 )
 from structure.markdown import (
-    edit_md_safe,
     escape_user,
     send_md_safe,
     send_md_safe_to_chat,
 )
 from structure.states import SupportRequestState
 from services.pagination import slice_page
-from services import cart, profiles
+from services import profiles
 from data import db_utils
 from services.exchange import current_range, range_label
 from services.product_render import (
@@ -68,186 +65,6 @@ async def _ask_city(target: Message, action: str) -> None:
     """Отправляет предложение выбрать город для указанного раздела."""
 
     await send_md_safe(target, "Выберите город:", reply_markup=city_selector(action))
-
-
-def _resolve_cart_price(product: dict, rng: str) -> tuple[float | None, str | None, str | None]:
-    """Возвращает цену, валюту и тип цены для последующего форматирования."""
-
-    section = product.get("section")
-    if section == "fabrics":
-        range_key = rng.replace("-", "_")
-        piece = _as_float(product.get(f"price_piece_{range_key}"))
-        roll = _as_float(product.get(f"price_roll_{range_key}"))
-        if piece is not None:
-            return piece, None, "piece"
-        if roll is not None:
-            return roll, None, "roll"
-        return None, None, None
-
-    price = _as_float(product.get("price_opt"))
-    if price is None:
-        price = _as_float(product.get("price_rrc"))
-    currency = (product.get("currency") or None)
-    if isinstance(currency, str):
-        currency = currency.strip() or None
-        if currency:
-            currency = currency.upper()
-    return price, currency, None
-
-
-def _resolve_unit_label(product: dict, price_source: str | None) -> str:
-    """Определяет подпись количества для строки корзины."""
-
-    if product.get("section") == "fabrics":
-        if price_source == "roll":
-            return "ролик"
-        if price_source == "piece":
-            return "отрез"
-        return "шт"
-
-    unit = product.get("unit")
-    if isinstance(unit, str) and unit.strip():
-        return unit.strip()
-    return "шт"
-
-
-def _order_totals(totals: dict[str | None, float]) -> list[tuple[str | None, float]]:
-    """Сортирует суммы по валютам: сначала рубли, затем остальные по алфавиту."""
-
-    def _sort_key(item: tuple[str | None, float]) -> tuple[int, str | None]:
-        currency, _ = item
-        if currency is None or currency.upper() == "RUB":
-            return (0, None)
-        return (1, currency)
-
-    return sorted(totals.items(), key=_sort_key)
-
-
-async def _build_cart_summary(user_id: int) -> tuple[list[dict], dict[str | None, float], str]:
-    """Собирает информацию о корзине для отображения и отправки админам."""
-
-    items_raw = cart.items(user_id)
-    if not items_raw:
-        return [], {}, ""
-
-    rng, usd = await current_range()
-    label = range_label(rng, usd)
-
-    items: list[dict] = []
-    totals: dict[str | None, float] = defaultdict(float)
-
-    for pid, qty in items_raw.items():
-        product = await db_utils.fetch_product(pid)
-        if not product:
-            logger.warning("Товар %s не найден при построении корзины", pid)
-            continue
-
-        price, currency, price_source = _resolve_cart_price(product, rng)
-        line_total = price * qty if price is not None else None
-        if line_total is not None:
-            totals[currency] += line_total
-
-        unit_label = _resolve_unit_label(product, price_source)
-
-        items.append(
-            {
-                "id": pid,
-                "name": product.get("name") or f"ID {pid}",
-                "article": product.get("article"),
-                "collection": product.get("collection"),
-                "qty": qty,
-                "unit": unit_label,
-                "unit_price": price,
-                "currency": currency,
-                "line_total": line_total,
-            }
-        )
-
-    return items, dict(totals), label
-
-
-def _render_cart_text(items: list[dict], totals: dict[str | None, float], label: str) -> str:
-    """Строит текст корзины для пользователя."""
-
-    if not items:
-        return "Корзина пуста"
-
-    lines = [
-        f"{escape_user(item['name']) or '-'} × {item['qty']} = "
-        f"{_format_money_with_currency(item['line_total'], item['currency'])}"
-        for item in items
-    ]
-    if totals:
-        ordered = _order_totals(totals)
-        total_line = ", ".join(
-            _format_money_with_currency(amount, currency) for currency, amount in ordered
-        )
-    else:
-        total_line = "—"
-    lines.append(f"*Итого:* {total_line}")
-    if label:
-        lines.append(label)
-    return "\n".join(lines)
-
-
-def _render_cart_admin_text(
-    source: CallbackQuery | Message,
-    items: list[dict],
-    totals: dict[str | None, float],
-    label: str,
-) -> str:
-    """Формирует сообщение для администраторов о содержимом корзины."""
-
-    if not items:
-        return ""
-
-    from_user = source.from_user if source.from_user else None
-    if not from_user:
-        return ""
-
-    full_name = from_user.full_name or "Без имени"
-    header = [
-        "🧺 Новая заявка из корзины",
-        f"Пользователь: {escape_user(full_name)}",
-    ]
-    if from_user.username:
-        header[-1] += f" (@{escape_user(from_user.username)})"
-
-    phone = profiles.get_phone(from_user.id)
-    if phone:
-        header.append(f"Телефон: {escape_user(phone)}")
-
-    body: list[str] = []
-    for index, item in enumerate(items, start=1):
-        details: list[str] = []
-        if item.get("article"):
-            details.append(f"Артикул {escape_user(str(item['article']))}")
-        if item.get("collection"):
-            details.append(f"Коллекция {escape_user(str(item['collection']))}")
-        details_text = f" ({'; '.join(details)})" if details else ""
-
-        unit_label = escape_user(item.get("unit") or "шт")
-        unit_price_text = _format_money_with_currency(item.get("unit_price"), item.get("currency"))
-        line_total_text = _format_money_with_currency(item.get("line_total"), item.get("currency"))
-
-        body.append(
-            f"{index}) {escape_user(item['name'])}{details_text} — "
-            f"{item['qty']} {unit_label} × {unit_price_text} = {line_total_text}"
-        )
-
-    if totals:
-        ordered = _order_totals(totals)
-        total_line = ", ".join(
-            _format_money_with_currency(amount, currency) for currency, amount in ordered
-        )
-    else:
-        total_line = "—"
-
-    footer = [f"Итого: {total_line}"]
-    if label:
-        footer.append(label)
-
-    return "\n".join(header + ["", "Позиции:"] + body + ["", *footer])
 
 
 # --- настройки обращений ---
@@ -323,19 +140,40 @@ async def on_catalog(cb: CallbackQuery):
 
 @router.callback_query(F.data == "catalog:fabrics")
 async def on_catalog_fabrics(cb: CallbackQuery):
-    """Заглушка для раздела тканей каталога."""
+    """Открывает каталог тканей из общего прайс-листа."""
 
-    await send_md_safe(cb.message, "Раздел каталога «Ткани» будет добавлен позже.")
+    if profiles.get_city(cb.from_user.id) is None:
+        await _ask_city(cb.message, "catalog")
+        await cb.answer()
+        return
+
+    await _send_catalog_sections(cb.message, cb.from_user.id, 1)
     await cb.answer()
 
 
 @router.callback_query(F.data == "catalog:hardware")
 async def on_catalog_hardware(cb: CallbackQuery):
-    """Заглушка для раздела фурнитуры каталога."""
+    """Открывает каталог фурнитуры из общего прайс-листа."""
 
-    await send_md_safe(
-        cb.message, "Раздел каталога «Фурнитура» будет добавлен позже."
-    )
+    if profiles.get_city(cb.from_user.id) is None:
+        await _ask_city(cb.message, "catalog")
+        await cb.answer()
+        return
+
+    await _send_catalog_sections(cb.message, cb.from_user.id, 1)
+    await cb.answer()
+
+
+@router.callback_query(F.data == "menu:price")
+async def on_price(cb: CallbackQuery):
+    """Показывает прайс с текущим курсом и разделами каталога."""
+
+    if profiles.get_city(cb.from_user.id) is None:
+        await _ask_city(cb.message, "catalog")
+        await cb.answer()
+        return
+
+    await _send_catalog_sections(cb.message, cb.from_user.id, 1)
     await cb.answer()
 
 
@@ -350,13 +188,6 @@ async def on_stock(cb: CallbackQuery):
     )
     await cb.answer()
 
-
-@router.callback_query(F.data == "profile")
-async def on_profile(cb: CallbackQuery):
-    """Заглушка для профиля пользователя."""
-
-    await send_md_safe(cb.message, "Профиль будет доступен позже.")
-    await cb.answer()
 
 
 # --- каталог: разделы → категории → товары ---
@@ -586,7 +417,6 @@ async def product_card(cb: CallbackQuery):
     if logger.isEnabledFor(logging.DEBUG):
         logger.debug("Карточка товара %s, диапазон %s, данные: %s", pid, rng, p)
 
-    qty = cart.ensure_selection(cb.from_user.id, pid)
     caption = build_product_caption(p, rng, usd)
 
     products = await db_utils.fetch_products_by_category(section, category, city)
@@ -602,13 +432,13 @@ async def product_card(cb: CallbackQuery):
     if p.get("image_url"):
         msg = await cb.message.answer_photo(
             p["image_url"], caption=caption,
-            reply_markup=product_controls(pid, qty)
+            reply_markup=product_controls(pid)
         )
     else:
         msg = await send_md_safe(
             cb.message,
             caption,
-            reply_markup=product_controls(pid, qty),
+            reply_markup=product_controls(pid),
         )
 
     _PRODUCT_CONTEXT[cb.from_user.id][msg.message_id] = {
@@ -779,48 +609,6 @@ async def stock_product_card(cb: CallbackQuery):
     await cb.answer()
 
 
-# --- карточка: +/- и добавление в корзину ---
-
-@router.callback_query(F.data.startswith("prod:inc:"))
-async def prod_inc(cb: CallbackQuery):
-    """Увеличивает выбранное количество и обновляет клавиатуру."""
-
-    pid = int(cb.data.split(":")[-1])
-    _, new_qty = cart.adjust_selection(cb.from_user.id, pid, 1)
-    try:
-        await cb.message.edit_reply_markup(reply_markup=product_controls(pid, new_qty))
-    except TelegramBadRequest:
-        logger.debug("Не удалось обновить клавиатуру для товара %s", pid)
-    await cb.answer("Добавлено")
-
-
-@router.callback_query(F.data.startswith("prod:dec:"))
-async def prod_dec(cb: CallbackQuery):
-    """Уменьшает выбранное количество с нижней границей в единицу."""
-
-    pid = int(cb.data.split(":")[-1])
-    previous, new_qty = cart.adjust_selection(cb.from_user.id, pid, -1)
-    if new_qty == previous:
-        await cb.answer("Минимум 1")
-        return
-
-    try:
-        await cb.message.edit_reply_markup(reply_markup=product_controls(pid, new_qty))
-    except TelegramBadRequest:
-        logger.debug("Не удалось обновить клавиатуру для товара %s", pid)
-    await cb.answer("Убрано")
-
-
-@router.callback_query(F.data.startswith("prod:add:"))
-async def prod_add(cb: CallbackQuery):
-    """Сохраняет выбранное количество товара в корзине."""
-
-    pid = int(cb.data.split(":")[-1])
-    qty = cart.ensure_selection(cb.from_user.id, pid)
-    cart.set_qty(cb.from_user.id, pid, qty)
-    await cb.answer(f"В корзине: {qty}")
-
-
 # --- карточка: возврат и заглушки ---
 
 @router.callback_query(F.data == "back")
@@ -843,9 +631,6 @@ async def prod_back(cb: CallbackQuery):
 
     if context:
         if context_source == "catalog":
-            product_id = context.get("product_id")
-            if product_id is not None:
-                cart.clear_selection(user_id, product_id)
             city = context.get("city") or _user_city(user_id)
             products = await db_utils.fetch_products_by_category(
                 context["section"],
@@ -867,76 +652,6 @@ async def prod_back(cb: CallbackQuery):
         reply_markup = pager(context.get("prefix", ""), page_items, page, total)
         title = context.get("category") or "Товары"
         await send_md_safe(cb.message, title, reply_markup=reply_markup)
-    try:
-        await cb.message.delete()
-    except TelegramBadRequest:
-        logger.debug("Не удалось удалить карточку товара: %s", cb.data)
-    await cb.answer()
-
-
-@router.callback_query(F.data == "noop")
-async def prod_noop(cb: CallbackQuery):
-    """Заглушка для неактивной кнопки количества."""
-
-    await cb.answer()
-
-
-# --- корзина ---
-
-@router.callback_query(F.data == "menu:cart")
-async def show_cart(cb: CallbackQuery):
-    items, totals, label = await _build_cart_summary(cb.from_user.id)
-    text = _render_cart_text(items, totals, label)
-    await send_md_safe(
-        cb.message,
-        text,
-        reply_markup=cart_keyboard(bool(items)),
-    )
-    await cb.answer()
-
-
-@router.callback_query(F.data == "cart:clear")
-async def clear_cart(cb: CallbackQuery):
-    cart.clear(cb.from_user.id)
-    await edit_md_safe(
-        cb.message,
-        "Корзина пуста",
-        reply_markup=cart_keyboard(False),
-    )
-    await cb.answer("Корзина очищена")
-
-
-@router.callback_query(F.data == "cart:checkout")
-async def checkout_cart(cb: CallbackQuery):
-    items, totals, label = await _build_cart_summary(cb.from_user.id)
-    if not items:
-        await cb.answer("Корзина пуста", show_alert=True)
-        return
-
-    admin_text = _render_cart_admin_text(cb, items, totals, label)
-    if admin_text and ADMINS:
-        for admin_id in ADMINS:
-            try:
-                await send_md_safe_to_chat(
-                    cb.message.bot,
-                    admin_id,
-                    admin_text,
-                )
-            except Exception as exc:
-                logger.warning(
-                    "Не удалось отправить корзину админу %s: %s", admin_id, exc
-                )
-
-    cart.clear(cb.from_user.id)
-
-    await edit_md_safe(
-        cb.message,
-        "Ваша заявка по корзине отправлена, менеджер свяжется с вами. Корзина очищена.",
-        reply_markup=cart_keyboard(False),
-    )
-    await cb.answer("Отправлено")
-
-
 # --- информационные страницы ---
 
 async def _send_setting_text(target: Message, user_id: int, key: str, empty_text: str) -> None:
