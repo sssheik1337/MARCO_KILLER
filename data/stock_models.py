@@ -26,11 +26,15 @@ class StockItemRow:
     """Единичная запись остатка."""
 
     id: int
+    city: str
+    section: str
+    kind: str | None
+    item_type: str | None
     code: str | None
     article: str | None
     name: str
-    quantity: float
-    unit: str
+    quantity: float | None
+    unit: str | None
     extra_info: str | None
     date_in: str | None
 
@@ -42,4 +46,9 @@ class StockItemCity:
     city: Literal["msk", "spb"]
     section: Literal["fabrics", "hardware"]
     items: list[StockItemRow]
+    kind: str | None = None
+    item_type: str | None = None
+    kind_slug: str | None = None
+    type_slug: str | None = None
+    back_callback: str | None = None
 

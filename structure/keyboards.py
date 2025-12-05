@@ -126,6 +126,45 @@ def kb_stock_sections(city: str) -> InlineKeyboardMarkup:
     )
 
 
+def kb_stock_kinds(city: str, section: str, kinds: list[tuple[str, str]]) -> InlineKeyboardMarkup:
+    """Клавиатура выбора вида номенклатуры."""
+
+    rows = [[InlineKeyboardButton(text=title, callback_data=f"stock:kind:{city}:{section}:{slug}:1")]
+            for title, slug in kinds]
+    rows.append(
+        [
+            InlineKeyboardButton(text="⬅ Назад", callback_data=f"stock_section:{city}:{section}"),
+            InlineKeyboardButton(text="🏠 Главное меню", callback_data="home"),
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def kb_stock_types(
+    city: str, section: str, kind_slug: str, types: list[tuple[str, str]]
+) -> InlineKeyboardMarkup:
+    """Клавиатура выбора типа номенклатуры."""
+
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=title,
+                callback_data=f"stock:type:{city}:{section}:{kind_slug}:{slug}:1",
+            )
+        ]
+        for title, slug in types
+    ]
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text="⬅ Назад", callback_data=f"stock:kindlist:{city}:{section}"
+            ),
+            InlineKeyboardButton(text="🏠 Главное меню", callback_data="home"),
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def stock_pagination_keyboard(city: str, section: str, page: int, total_pages: int) -> InlineKeyboardMarkup:
     """Клавиатура пагинации для списка остатков."""
 
@@ -147,6 +186,46 @@ def stock_pagination_keyboard(city: str, section: str, page: int, total_pages: i
         )
 
     return InlineKeyboardMarkup(inline_keyboard=[nav_row])
+
+
+def stock_items_keyboard(
+    city: str,
+    section: str,
+    page: int,
+    total_pages: int,
+    *,
+    kind_slug: str | None = None,
+    type_slug: str | None = None,
+    back_callback: str | None = None,
+    flat: bool = False,
+) -> InlineKeyboardMarkup:
+    """Пагинация списка остатков с учётом выбранных фильтров."""
+
+    def _callback(target_page: int) -> str:
+        if kind_slug and type_slug:
+            return f"stock:type:{city}:{section}:{kind_slug}:{type_slug}:{target_page}"
+        if flat:
+            return f"stock:flat:{city}:{section}:{target_page}"
+        return f"stock:{city}:{section}:{target_page}"
+
+    nav_row: list[InlineKeyboardButton] = []
+    if page > 1:
+        nav_row.append(InlineKeyboardButton(text="◀️ Назад", callback_data=_callback(page - 1)))
+
+    if page < total_pages:
+        nav_row.append(InlineKeyboardButton(text="Вперёд ▶️", callback_data=_callback(page + 1)))
+
+    control_row: list[InlineKeyboardButton] = []
+    if back_callback:
+        control_row.append(InlineKeyboardButton(text="⬅ Назад", callback_data=back_callback))
+    control_row.append(InlineKeyboardButton(text="🏠 Главное меню", callback_data="home"))
+
+    keyboard_rows: list[list[InlineKeyboardButton]] = []
+    if nav_row:
+        keyboard_rows.append(nav_row)
+    keyboard_rows.append(control_row)
+
+    return InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
 
 
 def empty_catalog_keyboard(is_admin: bool) -> InlineKeyboardMarkup:

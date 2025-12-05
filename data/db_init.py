@@ -48,6 +48,8 @@ async def init_db() -> None:
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         city TEXT NOT NULL,
         section TEXT NOT NULL,
+        kind TEXT,
+        item_type TEXT,
         category TEXT,
         article TEXT,
         name TEXT,
@@ -165,6 +167,8 @@ async def init_db() -> None:
         await db.executescript(create_sql)
         await ensure_column(db, "products", "city", "TEXT")
         await ensure_column(db, "stock_items", "city", "TEXT")
+        await ensure_column(db, "stock_items", "kind", "TEXT")
+        await ensure_column(db, "stock_items", "item_type", "TEXT")
         await ensure_column(db, "stock_items", "code", "TEXT")
         await ensure_column(db, "stock_items", "extra_info", "TEXT")
         await ensure_column(db, "stock_items", "date_in", "TEXT")

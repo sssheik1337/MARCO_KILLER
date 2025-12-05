@@ -715,6 +715,9 @@ def parse_hardware_stock_msk(stream: SourceType) -> list[dict]:
             unit = _string(row.get(columns["ед."]))
             additional_info = _string(row.get(columns["доп. инфо."]))
             arrival_date = _string(row.get(columns["дата прихода"]))
+            kind = _string(row.get(columns["вид номенклатуры"]))
+            item_type = _string(row.get(columns["тип номенклатуры"]))
+            code = _string(row.get(columns["код товара"]))
 
             if not name and not article:
                 logger.warning("Запись пропущена: нет артикула и наименования")
@@ -723,6 +726,11 @@ def parse_hardware_stock_msk(stream: SourceType) -> list[dict]:
             catalog_id = _find_catalog_id(article, name, article_map, name_map)
 
             item = {
+                "city": "msk",
+                "section": "hardware",
+                "kind": kind,
+                "item_type": item_type,
+                "code": code,
                 "catalog_id": catalog_id,
                 "name": name,
                 "article": article,
@@ -731,7 +739,7 @@ def parse_hardware_stock_msk(stream: SourceType) -> list[dict]:
                 "unit": unit,
                 "arrival_date": arrival_date,
                 "reserved": _string(row.get(reserved_idx)) if reserved_idx is not None else None,
-                "additional_info": additional_info,
+                "extra_info": additional_info,
             }
             items.append(item)
 
@@ -844,6 +852,8 @@ def parse_hardware_stock_spb(stream: SourceType) -> list[dict]:
 
             item = {
                 "catalog_id": catalog_id,
+                "kind": None,
+                "item_type": None,
                 "name": name,
                 "article": None,
                 "quantity": quantity,
@@ -851,7 +861,7 @@ def parse_hardware_stock_spb(stream: SourceType) -> list[dict]:
                 "unit": "ед. хранения",
                 "arrival_date": None,
                 "reserved": None,
-                "additional_info": None,
+                "extra_info": None,
                 "city": "spb",
                 "section": "hardware",
             }
@@ -928,8 +938,9 @@ def parse_fabrics_stock_msk(stream: SourceType) -> list[dict]:
 
             quantity = _number_or_error(row.get(columns["наличие"]), "Наличие")
             unit = _string(row.get(columns["ед."]))
-            status = _string(row.get(columns["доп. инфо."]))
-            category = _string(row.get(columns["вид номенклатуры"]))
+            extra_info = _string(row.get(columns["доп. инфо."]))
+            kind = _string(row.get(columns["вид номенклатуры"]))
+            item_type = _string(row.get(columns["тип номенклатуры"]))
 
             if quantity is None:
                 logger.warning("Запись пропущена: не указано количество")
@@ -938,12 +949,13 @@ def parse_fabrics_stock_msk(stream: SourceType) -> list[dict]:
             item = {
                 "city": "msk",
                 "section": "fabrics",
-                "category": category,
+                "kind": kind,
+                "item_type": item_type,
                 "article": article,
                 "name": name,
                 "quantity": quantity,
                 "unit": unit,
-                "status": status,
+                "extra_info": extra_info,
             }
             items.append(item)
 
@@ -1048,12 +1060,14 @@ def parse_fabrics_stock_spb(stream: SourceType) -> list[dict]:
             item = {
                 "city": "spb",
                 "section": "fabrics",
+                "kind": None,
+                "item_type": None,
                 "article": None,
                 "category": None,
                 "name": name,
                 "quantity": quantity,
                 "unit": "ед. хранения",
-                "status": None,
+                "extra_info": None,
             }
             items.append(item)
 

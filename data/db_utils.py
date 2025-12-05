@@ -138,6 +138,8 @@ async def add_stock_items(
     columns = [
         "city",
         "section",
+        "kind",
+        "item_type",
         "code",
         "article",
         "name",
@@ -167,6 +169,8 @@ async def add_stock_items(
         values = [
             item.get("city", city),
             item.get("section", section),
+            item.get("kind") or None,
+            item.get("item_type") or None,
             item.get("code") or None,
             article or None,
             name,
@@ -200,7 +204,7 @@ async def fetch_stock_items(city: str, section: str) -> list[dict]:
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(
             """
-            SELECT city, section, code, article, name, quantity, unit, extra_info, date_in
+            SELECT city, section, kind, item_type, code, article, name, quantity, unit, extra_info, date_in
             FROM stock_items
             WHERE city = ?
               AND section = ?

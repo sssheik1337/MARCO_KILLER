@@ -17,7 +17,7 @@ async def load_city_stock(city: str, section: str) -> StockItemCity:
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(
             """
-            SELECT id, code, article, name, quantity, unit, extra_info, date_in
+            SELECT id, city, section, kind, item_type, code, article, name, quantity, unit, extra_info, date_in
             FROM stock_items
             WHERE city = ? AND section = ?
             ORDER BY name
@@ -27,17 +27,34 @@ async def load_city_stock(city: str, section: str) -> StockItemCity:
         rows = await cur.fetchall()
 
     items: list[StockItemRow] = []
-    for (row_id, code, article, name, quantity, unit, extra_info, date_in) in rows:
-        qty = float(quantity) if quantity is not None else 0.0
+    for (
+        row_id,
+        row_city,
+        row_section,
+        kind,
+        item_type,
+        code,
+        article,
+        name,
+        quantity,
+        unit,
+        extra_info,
+        date_in,
+    ) in rows:
+        qty = float(quantity) if quantity is not None else None
         items.append(
             StockItemRow(
                 id=row_id,
+                city=row_city,
+                section=row_section,
+                kind=kind,
+                item_type=item_type,
                 code=code,
                 article=article,
                 name=name,
                 quantity=qty,
-                unit=unit or "",
-                extra_info=extra_info or "",
+                unit=unit,
+                extra_info=extra_info,
                 date_in=date_in,
             )
         )
