@@ -7,10 +7,7 @@ import re
 import sqlite3
 from typing import BinaryIO, Union
 
-try:
-    import chardet
-except ImportError:  # pragma: no cover - зависит от окружения
-    chardet = None
+import chardet
 import pandas as pd
 from openpyxl import load_workbook
 
@@ -22,6 +19,97 @@ SourceType = Union[str, BinaryIO]
 
 class FormatError(Exception):
     """Исключение для ошибок формата входного файла."""
+
+
+class SchemaMismatchError(Exception):
+    """Исключение для несоответствия структуры таблицы ожидаемому формату."""
+
+    def __init__(self, table_type: str, missing: list):
+        super().__init__()
+        self.table_type = table_type
+        self.missing = missing
+
+
+TABLE_SCHEMAS = {
+    "fabrics_catalog": {
+        "required_columns": [
+            "Наименование коллекции",
+            "Страна",
+            "Тип ткани",
+            "сегмент",
+            "РОЛИК_85_90",
+            "ОТРЕЗ_85_90",
+            "РОЛИК_90_95",
+            "ОТРЕЗ_90_95",
+            "РОЛИК_95_100",
+            "ОТРЕЗ_95_100",
+            "статус",
+        ],
+        "template_path": "templates/fabrics_catalog_example.xlsx",
+    },
+    "hardware_catalog": {
+        "required_columns": [
+            "Артикул",
+            "Наименование",
+            "Коллекция",
+            "Статус",
+            "Кратность",
+            "Бренд (Страна)",
+            "Ед.",
+            "Валюта",
+            "РРЦ",
+            "Оптовая",
+        ],
+        "template_path": "templates/hardware_catalog_example.xlsx",
+    },
+    "stock_fabrics_spb": {
+        "required_columns": [
+            "Номенклатура",
+            "Остаток",
+            "Свободный остаток",
+        ],
+        "template_path": "templates/stock_fabrics_spb_example.xlsx",
+    },
+    "stock_fabrics_msk": {
+        "required_columns": [
+            "Код товара",
+            "Вид номенклатуры",
+            "Тип номенклатуры",
+            "Артикул",
+            "Номенклатура",
+            "Программа",
+            "Наличие",
+            "Ед.",
+            "Доп. инфо.",
+            "Дата прихода",
+        ],
+        "template_path": "templates/stock_fabrics_msk_example.xlsx",
+    },
+    "stock_hardware_spb": {
+        "required_columns": [
+            "Номенклатура",
+            "Остаток",
+            "Свободный остаток",
+        ],
+        "template_path": "templates/stock_hardware_spb_example.xlsx",
+    },
+    "stock_hardware_msk": {
+        "required_columns": [
+            "Код товара",
+            "Вид номенклатуры",
+            "Тип номенклатуры",
+            "Артикул",
+            "Номенклатура",
+            "Программа",
+            "Наличие",
+            "Ед.",
+            "Доп. инфо.",
+            "Дата прихода",
+            "Резерв",
+        ],
+        "template_path": "templates/stock_hardware_msk_example.xlsx",
+    },
+}
 
 
 logger = logging.getLogger(__name__)
@@ -175,7 +263,7 @@ def _detect_format(source: SourceType) -> str:
         prefix_bytes = prefix.encode() if isinstance(prefix, str) else prefix
 
     def _xls_not_supported() -> None:
-        raise FormatError("Формат XLS не поддерживается. Используйте формат XLSX.")
+        raise Exception("Формат XLS не поддерживается. Используйте XLSX")
 
     if name:
         lowered = name.lower()
@@ -232,12 +320,8 @@ def _load_csv_rows(source: SourceType) -> list[list[object]]:
             data = current.read()
             _reset_stream(current)
 
-        if chardet is None:
-            logger.warning("chardet не установлен, используем UTF-8 по умолчанию")
-            encoding = "utf-8"
-        else:
-            detection = chardet.detect(data)
-            encoding = detection.get("encoding") or "utf-8"
+        detection = chardet.detect(data)
+        encoding = detection.get("encoding") or "utf-8"
         buffer = io.BytesIO(data)
         df = pd.read_csv(buffer, header=None, encoding=encoding)
         return df.where(pd.notna(df), None).values.tolist()
@@ -271,6 +355,24 @@ def _ensure_columns(columns: dict[str, object], required: list[str]) -> None:
             raise Exception(
                 f"Ошибка: отсутствует столбец «{title}». Проверьте разметку таблицы."
             )
+
+
+def _validate_headers(table_type: str, headers: list[str]) -> None:
+    """Проверяет структуру таблицы по ожидаемой схеме."""
+
+    schema = TABLE_SCHEMAS[table_type]
+    required = schema["required_columns"]
+
+    if not headers or all((h or "").strip() == "" for h in headers):
+        missing = required
+    else:
+        missing = [c for c in required if c not in headers]
+
+    if missing:
+        logger.error(
+            f"Ошибка структуры ({table_type}): отсутствуют колонки: {missing}",
+        )
+        raise SchemaMismatchError(table_type, missing)
 
 
 def _row_value(row: list[object], index: int) -> object:
@@ -320,6 +422,7 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
     """Парсит общий каталог тканей."""
 
     try:
+        table_type = "fabrics_catalog"
         rows = _load_rows(stream)
         if not rows:
             return []
@@ -376,11 +479,29 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
                     f"Ошибка: отсутствует столбец «{human}». Проверьте разметку таблицы."
                 )
 
-        special_index = None
-        for idx, value in enumerate(header_row):
-            if value is None or str(value).strip() == "":
-                special_index = idx
-                break
+        status_index = columns.get(_normalize_header("статус"))
+        special_index = status_index
+        if special_index is None:
+            for idx, value in enumerate(header_row):
+                if value is None or str(value).strip() == "":
+                    special_index = idx
+                    break
+
+        headers = [
+            "Наименование коллекции",
+            "Страна",
+            "Тип ткани",
+            "сегмент",
+        ]
+        for range_key in ("85_90", "90_95", "95_100"):
+            if (range_key, "roll") in price_columns:
+                headers.append(f"РОЛИК_{range_key}")
+            if (range_key, "piece") in price_columns:
+                headers.append(f"ОТРЕЗ_{range_key}")
+        if special_index is not None:
+            headers.append("статус")
+
+        _validate_headers(table_type, headers)
 
         items: list[dict] = []
         for row in rows[header_index + 1 :]:
@@ -440,6 +561,7 @@ def parse_hardware_catalog(stream: SourceType) -> list[dict]:
     """Парсит общий каталог фурнитуры."""
 
     try:
+        table_type = "hardware_catalog"
         rows = _load_rows(stream)
         if not rows:
             return []
@@ -478,6 +600,9 @@ def parse_hardware_catalog(stream: SourceType) -> list[dict]:
             header_index = 0
             header_row = rows[0]
             columns = temp_columns
+
+        headers = [(_string(val) or "").strip() for val in header_row]
+        _validate_headers(table_type, headers)
 
         data_rows = rows[header_index + 1 :]
         df = pd.DataFrame(data_rows, columns=header_row)
@@ -521,6 +646,7 @@ def parse_hardware_stock_msk(stream: SourceType) -> list[dict]:
     """Парсит остатки фурнитуры для Москвы."""
 
     try:
+        table_type = "stock_hardware_msk"
         rows = _load_rows(stream)
         if not rows:
             return []
@@ -559,6 +685,9 @@ def parse_hardware_stock_msk(stream: SourceType) -> list[dict]:
             header_index = 0
             header_row = rows[0]
             columns = temp_columns
+
+        headers = [(_string(val) or "").strip() for val in header_row]
+        _validate_headers(table_type, headers)
 
         data_rows = rows[header_index + 1 :]
         df = pd.DataFrame(data_rows, columns=header_row)
@@ -604,6 +733,7 @@ def parse_hardware_stock_spb(stream: SourceType) -> list[dict]:
     """Парсит остатки фурнитуры для Санкт-Петербурга."""
 
     try:
+        table_type = "stock_hardware_spb"
         rows = _load_rows(stream)
         if not rows:
             return []
@@ -644,19 +774,24 @@ def parse_hardware_stock_spb(stream: SourceType) -> list[dict]:
             for val in combined_headers
             if val is not None
         }
-        required_combined = {
-            _normalize_header("Номенклатура"): "Номенклатура",
-            _normalize_header("Остаток (В ед. хранения)"): "Остаток (В ед. хранения)",
-            _normalize_header("Свободный остаток (В ед. хранения)"): "Свободный остаток (В ед. хранения)",
-        }
 
-        missing = [
-            original
-            for norm_key, original in required_combined.items()
-            if norm_key not in normalized_headers
-        ]
-        if missing:
-            raise Exception("Ошибка: структура таблицы остатков фурнитуры СПБ не распознана.")
+        headers: list[str] = []
+        for value in combined_headers:
+            normalized = _normalize_header(value)
+            if normalized == _normalize_header("Номенклатура"):
+                headers.append("Номенклатура")
+            elif normalized in {
+                _normalize_header("Остаток (В ед. хранения)"),
+                _normalize_header("Остаток"),
+            }:
+                headers.append("Остаток")
+            elif normalized in {
+                _normalize_header("Свободный остаток (В ед. хранения)"),
+                _normalize_header("Свободный остаток"),
+            }:
+                headers.append("Свободный остаток")
+
+        _validate_headers(table_type, headers)
 
         data_rows = rows[(header_index + 2 if sub_header else header_index + 1) :]
         df = pd.DataFrame(data_rows, columns=combined_headers)
@@ -714,6 +849,7 @@ def parse_fabrics_stock_msk(stream: SourceType) -> list[dict]:
     """Парсит остатки тканей для Москвы."""
 
     try:
+        table_type = "stock_fabrics_msk"
         rows = _load_rows(stream)
         if not rows:
             return []
@@ -751,6 +887,9 @@ def parse_fabrics_stock_msk(stream: SourceType) -> list[dict]:
             header_index = 0
             header_row = rows[0]
             columns = temp_columns
+
+        headers = [(_string(val) or "").strip() for val in header_row]
+        _validate_headers(table_type, headers)
 
         data_rows = rows[header_index + 1 :]
         df = pd.DataFrame(data_rows, columns=header_row)
@@ -794,6 +933,7 @@ def parse_fabrics_stock_spb(stream: SourceType) -> list[dict]:
     """Парсит остатки тканей для Санкт-Петербурга."""
 
     try:
+        table_type = "stock_fabrics_spb"
         rows = _load_rows(stream)
         if not rows:
             return []
@@ -833,22 +973,24 @@ def parse_fabrics_stock_spb(stream: SourceType) -> list[dict]:
             combined_headers.append(combined)
 
         normalized_headers = {_normalize_header(val): val for val in combined_headers}
-        required_combined = {
-            _normalize_header("Номенклатура"): "Номенклатура",
-            _normalize_header("Остаток (В ед. хранения)"): "Остаток (В ед. хранения)",
-            _normalize_header("Свободный остаток (В ед. хранения)"): "Свободный остаток (В ед. хранения)",
-        }
 
-        missing = [
-            original
-            for norm_key, original in required_combined.items()
-            if norm_key not in normalized_headers
-        ]
-        if missing:
-            raise Exception(
-                "Ошибка: структура таблицы остатков тканей СПБ не распознана.\n"
-                "Требуемые колонки: Номенклатура, Остаток, Свободный остаток."
-            )
+        headers: list[str] = []
+        for value in combined_headers:
+            normalized = _normalize_header(value)
+            if normalized == _normalize_header("Номенклатура"):
+                headers.append("Номенклатура")
+            elif normalized in {
+                _normalize_header("Остаток (В ед. хранения)"),
+                _normalize_header("Остаток"),
+            }:
+                headers.append("Остаток")
+            elif normalized in {
+                _normalize_header("Свободный остаток (В ед. хранения)"),
+                _normalize_header("Свободный остаток"),
+            }:
+                headers.append("Свободный остаток")
+
+        _validate_headers(table_type, headers)
 
         data_rows = rows[(header_index + 2 if sub_header else header_index + 1) :]
         df = pd.DataFrame(data_rows, columns=combined_headers)
@@ -946,4 +1088,6 @@ __all__ = [
     "_string",
     "_number",
     "_number_or_error",
+    "SchemaMismatchError",
+    "TABLE_SCHEMAS",
 ]

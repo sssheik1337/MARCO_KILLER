@@ -848,13 +848,12 @@ async def handle_support_request(msg: Message, state: FSMContext):
     await _notify_admins(msg, request_key, user_text)
 
     user_id = msg.from_user.id if msg.from_user else 0
+    await state.clear()
     await send_md_safe(
         msg,
         _REQUEST_CONFIRMATIONS[request_key],
         reply_markup=await _main_menu(user_id),
     )
-
-    await state.clear()
 
 
 @router.callback_query(F.data == "cancel_fsm")

@@ -1,10 +1,18 @@
 import logging
+from pathlib import Path
 
 from aiogram import Router, F
 from aiogram.filters import Command, CommandObject
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message, ContentType, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import (
+    CallbackQuery,
+    Message,
+    ContentType,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+    FSInputFile,
+)
 from middlewares.admin_filter import AdminOnly
 from data.db_utils import (
     fetch_active_users,
@@ -14,7 +22,13 @@ from data.db_utils import (
     mark_user_blocked,
     set_setting,
 )
-from data.importer import parse_fabrics, parse_hardware, parse_stock
+from data import importer
+from data.importer import (
+    SchemaMismatchError,
+    parse_fabrics,
+    parse_hardware,
+    parse_stock,
+)
 import aiosqlite
 from config import DB_PATH
 from structure.markdown import send_md_safe, edit_md_safe, message_to_markdown, escape_user, send_md_safe_to_chat
@@ -422,11 +436,19 @@ async def import_xlsx(msg: Message):
 
     f = await msg.bot.get_file(msg.document.file_id)
     stream = await msg.bot.download_file(f.file_path)
-    file_name = (msg.document.file_name or "").lower()
-    if not file_name.endswith(".xlsx"):
+    file_name = msg.document.file_name or ""
+    ext = Path(file_name).suffix.lower()
+    if ext == ".xls":
         await send_md_safe(
             msg,
-            "Ошибка: формат XLS не поддерживается. Загрузите файл в формате XLSX.",
+            "Ошибка: формат XLS не поддерживается. Используйте XLSX",
+        )
+        await set_setting("import_target", "")
+        return
+    if ext not in {".xlsx", ".csv"}:
+        await send_md_safe(
+            msg,
+            "Ошибка: поддерживаются только файлы XLSX или CSV.",
         )
         await set_setting("import_target", "")
         return
@@ -441,6 +463,25 @@ async def import_xlsx(msg: Message):
         else:
             await send_md_safe(msg, "Неизвестный раздел импорта.")
             return
+    except SchemaMismatchError as e:
+        schema = importer.TABLE_SCHEMAS[e.table_type]
+        template = schema["template_path"]
+
+        text = (
+            f"Ошибка! Загруженная таблица не соответствует формату раздела «{e.table_type}».\n"
+            f"Отсутствующие столбцы:\n"
+            + "\n".join(f"• {c}" for c in e.missing)
+            + "\n\nПожалуйста, используйте корректный шаблон."
+        )
+
+        await msg.answer(text)
+
+        try:
+            await msg.answer_document(FSInputFile(template))
+        except Exception as ex:  # noqa: BLE001
+            logging.error(f"Не удалось отправить шаблон {template}: {ex}")
+
+        return
     except Exception as exc:
         logging.exception("Ошибка разбора файла для раздела %s", section)
         await send_md_safe(
