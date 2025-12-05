@@ -126,6 +126,29 @@ def kb_stock_sections(city: str) -> InlineKeyboardMarkup:
     )
 
 
+def stock_pagination_keyboard(city: str, section: str, page: int, total_pages: int) -> InlineKeyboardMarkup:
+    """Клавиатура пагинации для списка остатков."""
+
+    nav_row: list[InlineKeyboardButton] = []
+    if page > 1:
+        nav_row.append(
+            InlineKeyboardButton(
+                text="◀️ Назад", callback_data=f"stock:{city}:{section}:{page - 1}"
+            )
+        )
+
+    nav_row.append(InlineKeyboardButton(text="🏠 Главное меню", callback_data="home"))
+
+    if page < total_pages:
+        nav_row.append(
+            InlineKeyboardButton(
+                text="Вперёд ▶️", callback_data=f"stock:{city}:{section}:{page + 1}"
+            )
+        )
+
+    return InlineKeyboardMarkup(inline_keyboard=[nav_row])
+
+
 def empty_catalog_keyboard(is_admin: bool) -> InlineKeyboardMarkup:
     """Клавиатура для пустого каталога до первичного импорта."""
 
