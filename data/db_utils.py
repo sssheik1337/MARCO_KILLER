@@ -1,5 +1,11 @@
+import logging
+
 import aiosqlite
 from config import DB_PATH, DEFAULT_CITY
+from data.importer import debug_log
+
+
+logger = logging.getLogger(__name__)
 
 
 async def upsert_user(tg_id: int) -> None:
@@ -118,6 +124,54 @@ async def fetch_product(pid: int) -> dict:
 
 
 # --- наличие ---
+
+
+async def add_stock_items(
+    db: aiosqlite.Connection, items: list[dict], city: str, section: str
+) -> int:
+    """Сохраняет остатки с учётом города и раздела."""
+
+    debug_log("Writing stock items", len(items))
+
+    await db.execute(
+        "DELETE FROM stock_items WHERE city=? AND section=?",
+        (city, section),
+    )
+
+    stock_sql = (
+        "INSERT INTO stock_items("  # noqa: ISC003
+        "city,section,category,article,name,quantity,free_quantity,unit,program,reserve,arrival_date"
+        ") VALUES(?,?,?,?,?,?,?,?,?,?,?)"
+    )
+
+    payload = []
+    for item in items:
+        if not item.get("name") and not item.get("article"):
+            logger.warning(f"[DB-SKIP] Invalid stock record: {item}")
+            continue
+        payload.append(
+            (
+                item.get("city", city),
+                item.get("section", section),
+                item.get("category"),
+                item.get("article"),
+                item.get("name"),
+                item.get("quantity"),
+                item.get("free_quantity"),
+                item.get("unit"),
+                item.get("program"),
+                item.get("reserve"),
+                item.get("arrival_date"),
+            )
+        )
+
+    if payload:
+        await db.executemany(stock_sql, payload)
+
+    await db.commit()
+
+    debug_log("Committed stock items", len(payload))
+    return len(payload)
 
 
 async def fetch_stock_sections(city: str = DEFAULT_CITY) -> list[str]:

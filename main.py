@@ -15,7 +15,15 @@ from data.db_init import init_db
 from middlewares.user_registry import UserRegistry
 
 async def main() -> None:
-    logging.basicConfig(level=getattr(logging, LOG_LEVEL.upper(), logging.INFO))
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format="%(asctime)s %(levelname)s %(message)s",
+        filename="bot_debug.log",
+        filemode="a",
+    )
+    console = logging.StreamHandler()
+    console.setLevel(logging.DEBUG)
+    logging.getLogger("").addHandler(console)
     bot = Bot(
         BOT_TOKEN,
         default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN_V2),

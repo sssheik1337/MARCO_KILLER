@@ -15,6 +15,7 @@ from aiogram.types import (
 )
 from middlewares.admin_filter import AdminOnly
 from data.db_utils import (
+    add_stock_items,
     fetch_active_users,
     find_catalog_product_by_article,
     find_product_by_code,
@@ -462,6 +463,14 @@ async def import_xlsx(msg: Message):
 
     try:
         items = parser(stream, **parser_kwargs)
+        if items:
+            logging.info(
+                f"[IMPORT DONE] Type={target_key} City={city} Items={len(items)}"
+            )
+        else:
+            logging.warning(
+                f"[IMPORT WARNING] Parsed 0 items for {target_key} ({city})"
+            )
     except SchemaMismatchError as e:
         schema = importer.TABLE_SCHEMAS[e.table_type]
         template = schema["template_path"]
@@ -494,34 +503,7 @@ async def import_xlsx(msg: Message):
             await db.execute("BEGIN")
 
             if section in {"fabrics", "hardware"} and target_key.startswith("stock_"):
-                await db.execute(
-                    "DELETE FROM stock_items WHERE city=? AND section=?",
-                    (city, section),
-                )
-                stock_sql = (
-                    "INSERT INTO stock_items("  # noqa: ISC003
-                    "city,section,category,article,name,quantity,free_quantity,unit,program,reserve,arrival_date"
-                    ") VALUES(?,?,?,?,?,?,?,?,?,?,?)"
-                )
-                stock_payload = [
-                    (
-                        item.get("city", city),
-                        item.get("section", section),
-                        item.get("category"),
-                        item.get("article"),
-                        item.get("name"),
-                        item.get("quantity"),
-                        item.get("free_quantity"),
-                        item.get("unit"),
-                        item.get("program"),
-                        item.get("reserve"),
-                        item.get("arrival_date"),
-                    )
-                    for item in items
-                ]
-                if stock_payload:
-                    await db.executemany(stock_sql, stock_payload)
-                import_count = len(stock_payload)
+                import_count = await add_stock_items(db, items, city, section)
             else:
                 product_sql = (
                     "INSERT INTO products("  # noqa: ISC003
@@ -605,7 +587,8 @@ async def import_xlsx(msg: Message):
                     logging.warning(
                         "После импорта раздела тканей записи не найдены."
                     )
-            await db.commit()
+            if not target_key.startswith("stock_"):
+                await db.commit()
 
     await set_setting("import_target", "")
     await send_md_safe(
