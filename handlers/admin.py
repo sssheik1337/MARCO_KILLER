@@ -497,19 +497,23 @@ async def import_xlsx(msg: Message):
             if section == "stock":
                 await db.execute("DELETE FROM stock_items WHERE city=?", (city,))
                 stock_sql = (
-                    "INSERT INTO stock_items(city,section,category,name,article,quantity,unit,status) "
-                    "VALUES(?,?,?,?,?,?,?,?)"
+                    "INSERT INTO stock_items("  # noqa: ISC003
+                    "city,section,category,article,name,quantity,free_quantity,unit,program,reserve,arrival_date"
+                    ") VALUES(?,?,?,?,?,?,?,?,?,?,?)"
                 )
                 stock_payload = [
                     (
                         item.get("city", city),
                         item.get("section"),
                         item.get("category"),
-                        item.get("name"),
                         item.get("article"),
+                        item.get("name"),
                         item.get("quantity"),
+                        item.get("free_quantity"),
                         item.get("unit"),
-                        item.get("status"),
+                        item.get("program"),
+                        item.get("reserve"),
+                        item.get("arrival_date"),
                     )
                     for item in items
                 ]

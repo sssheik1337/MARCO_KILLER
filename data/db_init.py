@@ -1,4 +1,5 @@
 import os
+import sqlite3
 
 import aiosqlite
 
@@ -15,26 +16,31 @@ async def init_db() -> None:
     create_sql = """
     CREATE TABLE IF NOT EXISTS products (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        city TEXT NOT NULL,
         section TEXT NOT NULL,
+        category TEXT,
+        subcategory TEXT,
         name TEXT,
         article TEXT,
-        collection TEXT,
         country TEXT,
         fabric_type TEXT,
         segment TEXT,
+        collection TEXT,
         brand_country TEXT,
+        multiplicity TEXT,
         unit TEXT,
         currency TEXT,
         status TEXT,
-        price_roll_85_90 REAL,
         price_piece_85_90 REAL,
-        price_roll_90_95 REAL,
+        price_roll_85_90 REAL,
         price_piece_90_95 REAL,
-        price_roll_95_100 REAL,
+        price_roll_90_95 REAL,
         price_piece_95_100 REAL,
+        price_roll_95_100 REAL,
         price_rrc REAL,
         price_opt REAL,
         special TEXT,
+        in_stock REAL,
         image_url TEXT
     );
 
@@ -42,12 +48,14 @@ async def init_db() -> None:
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         city TEXT NOT NULL,
         section TEXT NOT NULL,
-        name TEXT,
+        category TEXT,
         article TEXT,
+        name TEXT,
         quantity REAL,
+        free_quantity REAL,
         unit TEXT,
-        status TEXT,
-        extra TEXT,
+        program TEXT,
+        reserve REAL,
         arrival_date TEXT
     );
 
@@ -152,4 +160,15 @@ async def init_db() -> None:
 
     async with aiosqlite.connect(DB_PATH) as db:
         await db.executescript(create_sql)
+        await ensure_column(db, "products", "city", "TEXT")
+        await ensure_column(db, "stock_items", "city", "TEXT")
         await db.commit()
+
+
+async def ensure_column(db: aiosqlite.Connection, table: str, column: str, type_def: str):
+    """Добавляет отсутствующий столбец, если он нужен для текущей схемы."""
+
+    try:
+        await db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {type_def}")
+    except sqlite3.OperationalError:
+        pass

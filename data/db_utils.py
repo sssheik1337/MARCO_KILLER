@@ -31,7 +31,7 @@ async def fetch_active_users() -> list[int]:
 
 
 async def find_product_by_code(code: str) -> dict | None:
-    """Ищет товар по артикулу или названию без ограничения города."""
+    """Ищет товар по артикулу без ограничения города."""
 
     normalized = (code or "").strip()
     if not normalized:
@@ -43,11 +43,10 @@ async def find_product_by_code(code: str) -> dict | None:
             SELECT *
             FROM products
             WHERE lower(coalesce(article, '')) = lower(?)
-               OR lower(name) = lower(?)
             ORDER BY city
             LIMIT 1
             """,
-            (normalized, normalized),
+            (normalized,),
         )
         row = await cur.fetchone()
         if not row:
