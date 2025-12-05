@@ -10,7 +10,7 @@ from handlers import menu as menu_handlers
 from handlers import stock as stock_handlers
 from handlers import admin as admin_handlers
 from handlers import fallback as fallback_handlers
-from data.db_utils import init_db
+from data.db_init import init_db
 from middlewares.user_registry import UserRegistry
 
 async def main() -> None:
