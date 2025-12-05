@@ -2,7 +2,6 @@ import logging
 
 import aiosqlite
 from config import DB_PATH, DEFAULT_CITY
-from data.importer import debug_log
 
 
 logger = logging.getLogger(__name__)
@@ -182,7 +181,7 @@ async def add_stock_items(
 
         payload.append(tuple(values))
 
-    logger.info(f"Сохраняем {len(payload)} записей в таблицу stock...")
+    logger.info(f"Сохраняем {len(payload)} записей в stock_items...")
 
     inserted_count = 0
     if payload:
@@ -190,7 +189,7 @@ async def add_stock_items(
         inserted_count = len(payload)
 
     await db.commit()
-    logger.info(f"Импорт завершён. Добавлено записей: {inserted_count}")
+    logger.info(f"Импорт завершён: добавлено {inserted_count} записей.")
 
     return inserted_count
 

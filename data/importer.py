@@ -13,12 +13,6 @@ from openpyxl import load_workbook
 
 from config import DB_PATH
 
-def debug_log(prefix: str, data: dict | list | str):
-    """Выводит отладочную информацию с общим префиксом."""
-
-    logger.debug(f"[DEBUG] {prefix}: {data}")
-
-
 SourceType = Union[str, BinaryIO]
 
 
@@ -432,17 +426,7 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
         if not rows:
             return []
 
-        logger.info(
-            f"Начинаем импорт {table_type} для spb. Всего строк: {len(rows)}"
-        )
-
-        logger.info(
-            f"Начинаем импорт {table_type} для msk. Всего строк: {len(rows)}"
-        )
-
-        logger.info(
-            f"Начинаем импорт {table_type} для -. Всего строк: {len(rows)}"
-        )
+        logger.info(f"Импорт {table_type} для города -")
 
         header_index = None
         for idx, row in enumerate(rows):
@@ -586,9 +570,7 @@ def parse_hardware_catalog(stream: SourceType) -> list[dict]:
         if not rows:
             return []
 
-        logger.info(
-            f"Начинаем импорт {table_type} для -. Всего строк: {len(rows)}"
-        )
+        logger.info(f"Импорт {table_type} для города -")
 
         required_titles = [
             "Артикул",
@@ -676,6 +658,8 @@ def parse_hardware_stock_msk(stream: SourceType) -> list[dict]:
         rows = _load_rows(stream)
         if not rows:
             return []
+
+        logger.info(f"Импорт {table_type} для города msk")
 
         required_titles = [
             "Код товара",
@@ -767,9 +751,7 @@ def parse_hardware_stock_spb(stream: SourceType) -> list[dict]:
         if not rows:
             return []
 
-        logger.info(
-            f"Начинаем импорт {table_type} для spb. Всего строк: {len(rows)}"
-        )
+        logger.info(f"Импорт {table_type} для города spb")
 
         base_headers = ["Номенклатура", "Остаток", "Свободный остаток"]
 
@@ -890,9 +872,7 @@ def parse_fabrics_stock_msk(stream: SourceType) -> list[dict]:
         if not rows:
             return []
 
-        logger.info(
-            f"Начинаем импорт {table_type} для msk. Всего строк: {len(rows)}"
-        )
+        logger.info(f"Импорт {table_type} для города msk")
 
         required_titles = [
             "Код товара",
@@ -981,9 +961,7 @@ def parse_fabrics_stock_spb(stream: SourceType) -> list[dict]:
         if not rows:
             return []
 
-        logger.info(
-            f"Начинаем импорт {table_type} для spb. Всего строк: {len(rows)}"
-        )
+        logger.info(f"Импорт {table_type} для города spb")
 
         base_headers = ["Номенклатура", "Остаток", "Свободный остаток"]
 

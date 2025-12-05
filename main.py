@@ -24,6 +24,8 @@ async def main() -> None:
     console = logging.StreamHandler()
     console.setLevel(logging.DEBUG)
     logging.getLogger("").addHandler(console)
+    # Отключаем детальный вывод для aiosqlite, чтобы не засорять логи
+    logging.getLogger("aiosqlite").setLevel(logging.WARNING)
     bot = Bot(
         BOT_TOKEN,
         default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN_V2),
