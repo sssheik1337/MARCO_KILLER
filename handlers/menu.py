@@ -494,7 +494,7 @@ async def open_stock_section(cb: CallbackQuery):
     city = _user_city(cb.from_user.id)
     cats = await db_utils.fetch_stock_categories(section, city)
     if not cats:
-        await send_md_safe(cb.message, "В этом разделе пока нет позиций.")
+        await send_md_safe(cb.message, "Данные об остатках пока отсутствуют.")
         await cb.answer()
         return
     enumerated = [(name, str(idx)) for idx, name in enumerate(cats)]
@@ -545,6 +545,10 @@ async def open_stock_category(cb: CallbackQuery):
 
     category = cats[category_idx]
     prods = await db_utils.fetch_stock_products_by_category(section, category, city)
+    if not prods:
+        await send_md_safe(cb.message, "Данные об остатках пока отсутствуют.")
+        await cb.answer()
+        return
     items = [(name, str(pid)) for pid, name in prods]
     page_items, page, total = slice_page(items, 1, PAGE_SIZE)
     await send_md_safe(
@@ -565,6 +569,9 @@ async def stock_product_page(cb: CallbackQuery):
     page = int(parts[-1])
     city = _user_city(cb.from_user.id)
     prods = await db_utils.fetch_stock_products_by_category(section, category, city)
+    if not prods:
+        await cb.answer()
+        return
     items = [(name, str(pid)) for pid, name in prods]
     page_items, page, total = slice_page(items, page, PAGE_SIZE)
     await cb.message.edit_reply_markup(
@@ -585,7 +592,11 @@ async def stock_product_card(cb: CallbackQuery):
     category = ":".join(parts[2:-2]) if len(parts) > 3 else ""
 
     city = _user_city(cb.from_user.id)
-    item = await db_utils.fetch_stock_item(pid)
+    item = await db_utils.fetch_stock_item(city, section, pid)
+    if not item:
+        await send_md_safe(cb.message, "Данные об остатках пока отсутствуют.")
+        await cb.answer()
+        return
 
     lines = [f"*{escape_user(item.get('name'))}*"]
 
@@ -594,8 +605,9 @@ async def stock_product_card(cb: CallbackQuery):
         return escape_user(f"{label}: {text}")
 
     lines.append(_line("Артикул", item.get("article")))
-    lines.append(_line("Категория", item.get("category")))
-    lines.append(_line("Статус", item.get("status")))
+    lines.append(_line("Код", item.get("code")))
+    lines.append(_line("Доп. информация", item.get("extra_info")))
+    lines.append(_line("Дата прихода", item.get("date_in")))
     qty_text = _format_quantity_value(
         _as_float(item.get("quantity")), item.get("unit") if isinstance(item.get("unit"), str) else None
     )

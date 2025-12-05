@@ -195,12 +195,12 @@ async def add_stock_items(
 
 
 async def fetch_stock_items(city: str, section: str) -> list[dict]:
-    """Возвращает остатки по городу и разделу без дополнительной фильтрации."""
+    """Возвращает остатки по городу и разделу."""
 
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(
             """
-            SELECT id, city, section, code, article, name, quantity, unit, extra_info, date_in
+            SELECT city, section, code, article, name, quantity, unit, extra_info, date_in
             FROM stock_items
             WHERE city = ?
               AND section = ?
@@ -242,22 +242,17 @@ async def fetch_stock_products_by_category(
 
     items = await fetch_stock_items(city, section)
     return [
-        (int(item.get("id")), item.get("name"))
-        for item in items
-        if item.get("id") is not None and item.get("name")
+        (idx, item.get("name")) for idx, item in enumerate(items) if item.get("name")
     ]
 
 
-async def fetch_stock_item(pid: int) -> dict:
-    """Возвращает запись наличия по идентификатору."""
+async def fetch_stock_item(city: str, section: str, index: int) -> dict:
+    """Возвращает запись наличия по индексу из списка для города и раздела."""
 
-    async with aiosqlite.connect(DB_PATH) as db:
-        cur = await db.execute("SELECT * FROM stock_items WHERE id=?", (pid,))
-        row = await cur.fetchone()
-        if not row:
-            return {}
-        cols = [c[0] for c in cur.description]
-        return dict(zip(cols, row))
+    items = await fetch_stock_items(city, section)
+    if index < 0 or index >= len(items):
+        return {}
+    return items[index]
 
 
 async def _table_has_column(db: aiosqlite.Connection, table: str, column: str) -> bool:
