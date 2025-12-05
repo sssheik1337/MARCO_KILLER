@@ -582,7 +582,7 @@ async def import_xlsx(msg: Message):
             return
         else:
             row = None
-            if section == "fabrics":
+            if section == "fabrics" and not target_key.startswith("stock_"):
                 cursor = await db.execute(
                     "SELECT * FROM products WHERE section=? AND city=? AND name LIKE ?",
                     ("fabrics", city, "%BISON%"),

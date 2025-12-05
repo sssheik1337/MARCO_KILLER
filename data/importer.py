@@ -895,8 +895,6 @@ def parse_fabrics_stock_msk(stream: SourceType) -> list[dict]:
         df = pd.DataFrame(data_rows, columns=header_row)
         df = df.dropna(how="all")
 
-        article_map, name_map = _load_catalog_index("fabrics_catalog")
-
         items: list[dict] = []
         for _, row in df.iterrows():
             name = _string(row.get(columns["номенклатура"]))
@@ -906,20 +904,18 @@ def parse_fabrics_stock_msk(stream: SourceType) -> list[dict]:
 
             quantity = _number_or_error(row.get(columns["наличие"]), "Наличие")
             unit = _string(row.get(columns["ед."]))
-            additional_info = _string(row.get(columns["доп. инфо."]))
-            arrival_date = _string(row.get(columns["дата прихода"]))
-
-            catalog_id = _find_catalog_id(article, name, article_map, name_map)
+            status = _string(row.get(columns["доп. инфо."]))
+            category = _string(row.get(columns["вид номенклатуры"]))
 
             item = {
-                "catalog_id": catalog_id,
+                "city": "msk",
+                "section": "fabrics",
+                "category": category,
+                "article": article,
                 "name": name,
                 "quantity": quantity,
-                "free_quantity": None,
                 "unit": unit,
-                "arrival_date": arrival_date,
-                "reserved": None,
-                "additional_info": additional_info,
+                "status": status,
             }
             items.append(item)
 
@@ -996,8 +992,6 @@ def parse_fabrics_stock_spb(stream: SourceType) -> list[dict]:
         df = pd.DataFrame(data_rows, columns=combined_headers)
         df = df.dropna(how="all")
 
-        article_map, name_map = _load_catalog_index("fabrics_catalog")
-
         items: list[dict] = []
         for _, row in df.iterrows():
             name = _string(row.get(normalized_headers[_normalize_header("Номенклатура")]))
@@ -1012,26 +1006,16 @@ def parse_fabrics_stock_spb(stream: SourceType) -> list[dict]:
                 ),
                 "Остаток (В ед. хранения)",
             )
-            free_quantity = _number_or_error(
-                row.get(
-                    normalized_headers[
-                        _normalize_header("Свободный остаток (В ед. хранения)")
-                    ]
-                ),
-                "Свободный остаток (В ед. хранения)",
-            )
-
-            catalog_id = _find_catalog_id(None, name, article_map, name_map)
 
             item = {
-                "catalog_id": catalog_id,
+                "city": "spb",
+                "section": "fabrics",
+                "article": None,
+                "category": None,
                 "name": name,
                 "quantity": quantity,
-                "free_quantity": free_quantity,
                 "unit": "ед. хранения",
-                "arrival_date": None,
-                "reserved": None,
-                "additional_info": None,
+                "status": None,
             }
             items.append(item)
 
