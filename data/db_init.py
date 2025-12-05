@@ -56,7 +56,10 @@ async def init_db() -> None:
         unit TEXT,
         program TEXT,
         reserve REAL,
-        arrival_date TEXT
+        arrival_date TEXT,
+        code TEXT,
+        extra_info TEXT,
+        date_in TEXT
     );
 
     CREATE TABLE IF NOT EXISTS users (
@@ -162,6 +165,9 @@ async def init_db() -> None:
         await db.executescript(create_sql)
         await ensure_column(db, "products", "city", "TEXT")
         await ensure_column(db, "stock_items", "city", "TEXT")
+        await ensure_column(db, "stock_items", "code", "TEXT")
+        await ensure_column(db, "stock_items", "extra_info", "TEXT")
+        await ensure_column(db, "stock_items", "date_in", "TEXT")
         await db.commit()
 
 

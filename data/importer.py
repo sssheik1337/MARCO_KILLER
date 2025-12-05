@@ -368,17 +368,10 @@ def _validate_headers(table_type: str, headers: list[str]) -> None:
 
     schema = TABLE_SCHEMAS[table_type]
     required = schema["required_columns"]
-    expected_columns = required
-    actual_headers = headers
-
     if not headers or all((h or "").strip() == "" for h in headers):
         missing = required
     else:
         missing = [c for c in required if c not in headers]
-
-    debug_log("Expected schema", expected_columns)
-    debug_log("Actual columns", actual_headers)
-    debug_log("Missing columns", missing)
 
     if missing:
         logger.error(
@@ -439,7 +432,17 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
         if not rows:
             return []
 
-        debug_log("Total raw rows", len(rows))
+        logger.info(
+            f"Начинаем импорт {table_type} для spb. Всего строк: {len(rows)}"
+        )
+
+        logger.info(
+            f"Начинаем импорт {table_type} для msk. Всего строк: {len(rows)}"
+        )
+
+        logger.info(
+            f"Начинаем импорт {table_type} для -. Всего строк: {len(rows)}"
+        )
 
         header_index = None
         for idx, row in enumerate(rows):
@@ -516,13 +519,12 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
             headers.append("статус")
 
         _validate_headers(table_type, headers)
-        debug_log("Headers detected", headers)
 
         items: list[dict] = []
         for row in rows[header_index + 1 :]:
             name = _string(_row_value(row, columns["наименование коллекции"]))
             if not name:
-                logger.warning(f"[SKIP] Row skipped due to missing fields: {row}")
+                logger.warning("Запись пропущена: нет наименования строки")
                 continue
 
             item = {
@@ -567,8 +569,7 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
             }
             items.append(item)
 
-        debug_log("Parsed items (preview)", items[:5])
-        debug_log("Total parsed items", len(items))
+        logger.info(f"Получено валидных записей: {len(items)}")
 
         return items
     except Exception as exc:  # noqa: BLE001
@@ -585,7 +586,9 @@ def parse_hardware_catalog(stream: SourceType) -> list[dict]:
         if not rows:
             return []
 
-        debug_log("Total raw rows", len(rows))
+        logger.info(
+            f"Начинаем импорт {table_type} для -. Всего строк: {len(rows)}"
+        )
 
         required_titles = [
             "Артикул",
@@ -624,7 +627,6 @@ def parse_hardware_catalog(stream: SourceType) -> list[dict]:
 
         headers = [(_string(val) or "").strip() for val in header_row]
         _validate_headers(table_type, headers)
-        debug_log("Headers detected", headers)
 
         data_rows = rows[header_index + 1 :]
         df = pd.DataFrame(data_rows, columns=header_row)
@@ -655,6 +657,8 @@ def parse_hardware_catalog(stream: SourceType) -> list[dict]:
                 "image_url": None,
             }
             items.append(item)
+
+        logger.info(f"Получено валидных записей: {len(items)}")
 
         return items
     except Exception as exc:  # noqa: BLE001
@@ -728,7 +732,7 @@ def parse_hardware_stock_msk(stream: SourceType) -> list[dict]:
             arrival_date = _string(row.get(columns["дата прихода"]))
 
             if not name and not article:
-                logger.warning(f"[SKIP] Row skipped due to missing fields: {row}")
+                logger.warning("Запись пропущена: нет артикула и наименования")
                 continue
 
             catalog_id = _find_catalog_id(article, name, article_map, name_map)
@@ -746,8 +750,7 @@ def parse_hardware_stock_msk(stream: SourceType) -> list[dict]:
             }
             items.append(item)
 
-        debug_log("Parsed items (preview)", items[:5])
-        debug_log("Total parsed items", len(items))
+        logger.info(f"Получено валидных записей: {len(items)}")
 
         return items
     except Exception as exc:  # noqa: BLE001
@@ -763,6 +766,10 @@ def parse_hardware_stock_spb(stream: SourceType) -> list[dict]:
         rows = _load_rows(stream)
         if not rows:
             return []
+
+        logger.info(
+            f"Начинаем импорт {table_type} для spb. Всего строк: {len(rows)}"
+        )
 
         base_headers = ["Номенклатура", "Остаток", "Свободный остаток"]
 
@@ -829,6 +836,7 @@ def parse_hardware_stock_spb(stream: SourceType) -> list[dict]:
         for _, row in df.iterrows():
             name = _string(row.get(normalized_headers[_normalize_header("Номенклатура")]))
             if not name:
+                logger.warning("Запись пропущена: нет наименования")
                 continue
 
             quantity = _number_or_error(
@@ -865,6 +873,8 @@ def parse_hardware_stock_spb(stream: SourceType) -> list[dict]:
             }
             items.append(item)
 
+        logger.info(f"Получено валидных записей: {len(items)}")
+
         return items
     except Exception as exc:  # noqa: BLE001
         logger.error("Ошибка импорта остатков фурнитуры (СПБ)", exc_info=True)
@@ -880,7 +890,9 @@ def parse_fabrics_stock_msk(stream: SourceType) -> list[dict]:
         if not rows:
             return []
 
-        debug_log("Total raw rows", len(rows))
+        logger.info(
+            f"Начинаем импорт {table_type} для msk. Всего строк: {len(rows)}"
+        )
 
         required_titles = [
             "Код товара",
@@ -918,7 +930,6 @@ def parse_fabrics_stock_msk(stream: SourceType) -> list[dict]:
 
         headers = [(_string(val) or "").strip() for val in header_row]
         _validate_headers(table_type, headers)
-        debug_log("Headers detected", headers)
 
         data_rows = rows[header_index + 1 :]
         df = pd.DataFrame(data_rows, columns=header_row)
@@ -926,11 +937,10 @@ def parse_fabrics_stock_msk(stream: SourceType) -> list[dict]:
 
         items: list[dict] = []
         for _, row in df.iterrows():
-            debug_log("Row before parse", row.to_dict())
             name = _string(row.get(columns["номенклатура"]))
             article = _string(row.get(columns["артикул"]))
             if not name and not article:
-                logger.warning(f"[SKIP] Row skipped due to missing fields: {row.to_dict()}")
+                logger.warning("Запись пропущена: нет артикула и наименования")
                 continue
 
             quantity = _number_or_error(row.get(columns["наличие"]), "Наличие")
@@ -939,9 +949,7 @@ def parse_fabrics_stock_msk(stream: SourceType) -> list[dict]:
             category = _string(row.get(columns["вид номенклатуры"]))
 
             if quantity is None:
-                logger.warning(
-                    f"[BAD QUANTITY] Raw value={row.get(columns['наличие'])} row={row.to_dict()}"
-                )
+                logger.warning("Запись пропущена: не указано количество")
                 continue
 
             item = {
@@ -954,11 +962,9 @@ def parse_fabrics_stock_msk(stream: SourceType) -> list[dict]:
                 "unit": unit,
                 "status": status,
             }
-            debug_log("Row parsed", item)
             items.append(item)
 
-        debug_log("Parsed items (preview)", items[:5])
-        debug_log("Total parsed items", len(items))
+        logger.info(f"Получено валидных записей: {len(items)}")
 
         return items
     except Exception as exc:  # noqa: BLE001
@@ -975,7 +981,9 @@ def parse_fabrics_stock_spb(stream: SourceType) -> list[dict]:
         if not rows:
             return []
 
-        debug_log("Total raw rows", len(rows))
+        logger.info(
+            f"Начинаем импорт {table_type} для spb. Всего строк: {len(rows)}"
+        )
 
         base_headers = ["Номенклатура", "Остаток", "Свободный остаток"]
 
@@ -1030,7 +1038,6 @@ def parse_fabrics_stock_spb(stream: SourceType) -> list[dict]:
                 headers.append("Свободный остаток")
 
         _validate_headers(table_type, headers)
-        debug_log("Headers detected", headers)
 
         data_rows = rows[(header_index + 2 if sub_header else header_index + 1) :]
         df = pd.DataFrame(data_rows, columns=combined_headers)
@@ -1038,10 +1045,9 @@ def parse_fabrics_stock_spb(stream: SourceType) -> list[dict]:
 
         items: list[dict] = []
         for _, row in df.iterrows():
-            debug_log("Row before parse", row.to_dict())
             name = _string(row.get(normalized_headers[_normalize_header("Номенклатура")]))
             if not name:
-                logger.warning(f"[SKIP] Row skipped due to missing fields: {row.to_dict()}")
+                logger.warning("Запись пропущена: нет наименования")
                 continue
 
             quantity = _number_or_error(
@@ -1054,9 +1060,7 @@ def parse_fabrics_stock_spb(stream: SourceType) -> list[dict]:
             )
 
             if quantity is None:
-                logger.warning(
-                    f"[BAD QUANTITY] Raw value={row.get(normalized_headers[_normalize_header('Остаток (В ед. хранения)')])} row={row.to_dict()}"
-                )
+                logger.warning("Запись пропущена: не указано количество")
                 continue
 
             item = {
@@ -1069,11 +1073,9 @@ def parse_fabrics_stock_spb(stream: SourceType) -> list[dict]:
                 "unit": "ед. хранения",
                 "status": None,
             }
-            debug_log("Row parsed", item)
             items.append(item)
 
-        debug_log("Parsed items (preview)", items[:5])
-        debug_log("Total parsed items", len(items))
+        logger.info(f"Получено валидных записей: {len(items)}")
 
         return items
     except Exception as exc:  # noqa: BLE001
