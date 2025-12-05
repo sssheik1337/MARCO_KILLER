@@ -23,12 +23,7 @@ from data.db_utils import (
     set_setting,
 )
 from data import importer
-from data.importer import (
-    SchemaMismatchError,
-    parse_fabrics,
-    parse_hardware,
-    parse_stock,
-)
+from data.importer import SchemaMismatchError
 import aiosqlite
 from config import DB_PATH
 from structure.markdown import send_md_safe, edit_md_safe, message_to_markdown, escape_user, send_md_safe_to_chat
@@ -53,41 +48,47 @@ _EDITABLE_SETTINGS = {
 
 
 _IMPORT_TARGETS = {
-    "fabrics_msk": {
+    "fabrics_catalog": {
+        "section": "fabrics",
+        "city": "all",
+        "prompt": "Пришлите XLSX или CSV с каталогом тканей.",
+        "title": "каталог тканей",
+        "parser": importer.parse_fabrics_catalog,
+    },
+    "hardware_catalog": {
+        "section": "hardware",
+        "city": "all",
+        "prompt": "Пришлите XLSX или CSV с каталогом фурнитуры.",
+        "title": "каталог фурнитуры",
+        "parser": importer.parse_hardware_catalog,
+    },
+    "stock_fabrics_msk": {
         "section": "fabrics",
         "city": "msk",
-        "prompt": "Пришлите XLSX с тканями для Москвы.",
-        "title": "ткани (Москва)",
+        "prompt": "Пришлите XLSX или CSV с остатками тканей для Москвы.",
+        "title": "остатки тканей (Москва)",
+        "parser": importer.parse_fabrics_stock_msk,
     },
-    "fabrics_spb": {
+    "stock_fabrics_spb": {
         "section": "fabrics",
         "city": "spb",
-        "prompt": "Пришлите XLSX с тканями для Санкт-Петербурга.",
-        "title": "ткани (СПБ)",
+        "prompt": "Пришлите XLSX или CSV с остатками тканей для Санкт-Петербурга.",
+        "title": "остатки тканей (СПБ)",
+        "parser": importer.parse_fabrics_stock_spb,
     },
-    "hardware_msk": {
+    "stock_hardware_msk": {
         "section": "hardware",
         "city": "msk",
-        "prompt": "Пришлите XLSX с фурнитурой для Москвы.",
-        "title": "фурнитура (Москва)",
+        "prompt": "Пришлите XLSX или CSV с остатками фурнитуры для Москвы.",
+        "title": "остатки фурнитуры (Москва)",
+        "parser": importer.parse_hardware_stock_msk,
     },
-    "hardware_spb": {
+    "stock_hardware_spb": {
         "section": "hardware",
         "city": "spb",
-        "prompt": "Пришлите XLSX с фурнитурой для Санкт-Петербурга.",
-        "title": "фурнитура (СПБ)",
-    },
-    "stock_msk": {
-        "section": "stock",
-        "city": "msk",
-        "prompt": "Пришлите XLSX с остатками для Москвы.",
-        "title": "наличие (Москва)",
-    },
-    "stock_spb": {
-        "section": "stock",
-        "city": "spb",
-        "prompt": "Пришлите XLSX с остатками для Санкт-Петербурга.",
-        "title": "наличие (СПБ)",
+        "prompt": "Пришлите XLSX или CSV с остатками фурнитуры для Санкт-Петербурга.",
+        "title": "остатки фурнитуры (СПБ)",
+        "parser": importer.parse_hardware_stock_spb,
     },
 }
 
@@ -136,12 +137,12 @@ def admin_kb():
         [InlineKeyboardButton(text="🕘 Режим работы", callback_data="admin:edit:worktime"),
          InlineKeyboardButton(text="📄 Реквизиты", callback_data="admin:edit:requisites")],
         [InlineKeyboardButton(text="Изменить ссылку на каталог готовых изделий", callback_data="admin:edit:ready_catalog_url")],
-        [InlineKeyboardButton(text="📤 Ткани Москва (xlsx)", callback_data="admin:import:fabrics_msk"),
-         InlineKeyboardButton(text="📤 Ткани СПБ (xlsx)", callback_data="admin:import:fabrics_spb")],
-        [InlineKeyboardButton(text="📤 Фурнитура Москва (xlsx)", callback_data="admin:import:hardware_msk"),
-         InlineKeyboardButton(text="📤 Фурнитура СПБ (xlsx)", callback_data="admin:import:hardware_spb")],
-        [InlineKeyboardButton(text="📦 Наличие Москва (xlsx)", callback_data="admin:import:stock_msk"),
-         InlineKeyboardButton(text="📦 Наличие СПБ (xlsx)", callback_data="admin:import:stock_spb")],
+        [InlineKeyboardButton(text="📤 Каталог тканей", callback_data="admin:import:fabrics_catalog"),
+         InlineKeyboardButton(text="📤 Каталог фурнитуры", callback_data="admin:import:hardware_catalog")],
+        [InlineKeyboardButton(text="📦 Остатки тканей Москва", callback_data="admin:import:stock_fabrics_msk"),
+         InlineKeyboardButton(text="📦 Остатки тканей СПБ", callback_data="admin:import:stock_fabrics_spb")],
+        [InlineKeyboardButton(text="📦 Остатки фурнитуры Москва", callback_data="admin:import:stock_hardware_msk"),
+         InlineKeyboardButton(text="📦 Остатки фурнитуры СПБ", callback_data="admin:import:stock_hardware_spb")],
         [InlineKeyboardButton(text="Публикация акции / новинки / распродажи", callback_data="admin:broadcast")],
         [InlineKeyboardButton(text="💵 Курс USD: авто/ручной", callback_data="admin:usd")],
         [InlineKeyboardButton(text="🏠 В меню", callback_data="home")],
@@ -432,7 +433,13 @@ async def import_xlsx(msg: Message):
         return
 
     section = target_config["section"]
-    city = target_config["city"]
+    city = target_config.get("city")
+    parser = target_config.get("parser")
+    parser_kwargs = target_config.get("parser_kwargs", {})
+    if parser is None:
+        await send_md_safe(msg, "Не найден обработчик для выбранного импорта.")
+        await set_setting("import_target", "")
+        return
 
     f = await msg.bot.get_file(msg.document.file_id)
     stream = await msg.bot.download_file(f.file_path)
@@ -454,15 +461,7 @@ async def import_xlsx(msg: Message):
         return
 
     try:
-        if section == "fabrics":
-            items = parse_fabrics(stream, city=city)
-        elif section == "hardware":
-            items = parse_hardware(stream, city=city)
-        elif section == "stock":
-            items = parse_stock(stream, city=city)
-        else:
-            await send_md_safe(msg, "Неизвестный раздел импорта.")
-            return
+        items = parser(stream, **parser_kwargs)
     except SchemaMismatchError as e:
         schema = importer.TABLE_SCHEMAS[e.table_type]
         template = schema["template_path"]
@@ -494,8 +493,11 @@ async def import_xlsx(msg: Message):
         try:
             await db.execute("BEGIN")
 
-            if section == "stock":
-                await db.execute("DELETE FROM stock_items WHERE city=?", (city,))
+            if section in {"fabrics", "hardware"} and target_key.startswith("stock_"):
+                await db.execute(
+                    "DELETE FROM stock_items WHERE city=? AND section=?",
+                    (city, section),
+                )
                 stock_sql = (
                     "INSERT INTO stock_items("  # noqa: ISC003
                     "city,section,category,article,name,quantity,free_quantity,unit,program,reserve,arrival_date"
@@ -504,7 +506,7 @@ async def import_xlsx(msg: Message):
                 stock_payload = [
                     (
                         item.get("city", city),
-                        item.get("section"),
+                        item.get("section", section),
                         item.get("category"),
                         item.get("article"),
                         item.get("name"),
@@ -533,7 +535,7 @@ async def import_xlsx(msg: Message):
                 payload = [
                     (
                         item.get("city", city),
-                        item.get("section"),
+                        item.get("section", section),
                         item.get("category"),
                         item.get("subcategory"),
                         item.get("name"),
