@@ -2,36 +2,40 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from config import PAGE_SIZE
 from data import db_utils
 
+
 def main_menu(is_admin: bool, ready_catalog_url: str | None = None) -> InlineKeyboardMarkup:
-    """Формирует главное меню с актуальными разделами."""
+    """Формирует главное меню с разделами и ссылкой на готовые изделия."""
+
+    ready_url = ready_catalog_url or "https://example.com"
 
     rows: list[list[InlineKeyboardButton]] = [
-        [InlineKeyboardButton(text="📚 Каталог товаров", callback_data="menu:catalog")],
-        [InlineKeyboardButton(text="📦 Наличие", callback_data="menu:stock")],
-    ]
-
-    if ready_catalog_url:
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text="Каталог готовых изделий 📷", url=ready_catalog_url
-                )
-            ]
-        )
-
-    rows.extend(
         [
-            [
-                InlineKeyboardButton(text="📇 Контакты", callback_data="menu:contacts"),
-                InlineKeyboardButton(text="🗺️ Как проехать", callback_data="menu:route"),
-            ],
-            [InlineKeyboardButton(text="📄 Реквизиты", callback_data="menu:requisites")],
-            [InlineKeyboardButton(text="📞 Оставить заявку на звонок", callback_data="menu:callback")],
-            [InlineKeyboardButton(text="❓ Задать вопрос", callback_data="menu:question")],
-            [InlineKeyboardButton(text="👨‍💼 Связь с руководителем", callback_data="menu:boss")],
-            [InlineKeyboardButton(text="🐞 Сообщить об ошибке", callback_data="menu:bug")],
-        ]
-    )
+            InlineKeyboardButton(text="📚 Каталог", callback_data="catalog"),
+            InlineKeyboardButton(text="📦 Наличие", callback_data="stock"),
+        ],
+        [
+            InlineKeyboardButton(text="📇 Контакты", callback_data="menu:contacts"),
+            InlineKeyboardButton(text="🧭 Как проехать", callback_data="menu:route"),
+        ],
+        [
+            InlineKeyboardButton(text="📄 Реквизиты", callback_data="menu:requisites"),
+            InlineKeyboardButton(text="📞 Заявка на звонок", callback_data="menu:callback"),
+        ],
+        [
+            InlineKeyboardButton(text="❓ Задать вопрос", callback_data="menu:question"),
+            InlineKeyboardButton(
+                text="👤 Связь с руководителем", callback_data="menu:boss"
+            ),
+        ],
+        [
+            InlineKeyboardButton(text="🐞 Сообщить об ошибке", callback_data="menu:bug"),
+        ],
+        [
+            InlineKeyboardButton(
+                text="📸 Каталог готовых изделий", url=ready_url
+            ),
+        ],
+    ]
 
     if is_admin:
         rows.append([InlineKeyboardButton(text="🛠 Админ-панель", callback_data="admin:open")])
@@ -44,6 +48,82 @@ async def main_menu_with_link(is_admin: bool) -> InlineKeyboardMarkup:
 
     ready_link = await db_utils.get_setting("ready_catalog_url", "")
     return main_menu(is_admin, ready_link or None)
+
+
+def catalog_menu() -> InlineKeyboardMarkup:
+    """Клавиатура выбора раздела каталога."""
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🧵 Ткани", callback_data="catalog:fabrics")],
+            [InlineKeyboardButton(text="🔩 Фурнитура", callback_data="catalog:hardware")],
+            [InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")],
+        ]
+    )
+
+
+def stock_city_menu() -> InlineKeyboardMarkup:
+    """Клавиатура выбора города для раздела наличия."""
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Москва", callback_data="stock:city:msk")],
+            [InlineKeyboardButton(text="Санкт-Петербург", callback_data="stock:city:spb")],
+            [InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")],
+        ]
+    )
+
+
+def stock_section_menu(city: str) -> InlineKeyboardMarkup:
+    """Клавиатура выбора раздела наличия для выбранного города."""
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🧵 Ткани", callback_data=f"stock:{city}:fabrics"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🔩 Фурнитура", callback_data=f"stock:{city}:hardware"
+                )
+            ],
+            [InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")],
+        ]
+    )
+
+
+def kb_stock_select_city() -> InlineKeyboardMarkup:
+    """Клавиатура выбора города для раздела наличия."""
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Москва", callback_data="stock_city:msk")],
+            [InlineKeyboardButton(text="Санкт-Петербург", callback_data="stock_city:spb")],
+            [InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")],
+        ]
+    )
+
+
+def kb_stock_sections(city: str) -> InlineKeyboardMarkup:
+    """Клавиатура выбора раздела наличия для выбранного города."""
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🧵 Ткани", callback_data=f"stock_section:{city}:fabrics"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🔩 Фурнитура", callback_data=f"stock_section:{city}:hardware"
+                )
+            ],
+            [InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")],
+        ]
+    )
 
 
 def empty_catalog_keyboard(is_admin: bool) -> InlineKeyboardMarkup:
@@ -94,6 +174,14 @@ def empty_catalog_keyboard(is_admin: bool) -> InlineKeyboardMarkup:
         ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
+
+def cancel_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура отмены для сценариев с состояниями."""
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="Отмена", callback_data="cancel_fsm")]]
+    )
+
 def pager(prefix: str, items: list[tuple[str, str]], page: int, total: int) -> InlineKeyboardMarkup:
     rows = [[InlineKeyboardButton(text=title, callback_data=f"{prefix}:open:{item_id}")]
             for title, item_id in items]
@@ -106,15 +194,15 @@ def pager(prefix: str, items: list[tuple[str, str]], page: int, total: int) -> I
     rows.append(nav_row)
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
-def product_controls(product_id: int, qty: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="➖", callback_data=f"prod:dec:{product_id}"),
-         InlineKeyboardButton(text=str(qty), callback_data="noop"),
-         InlineKeyboardButton(text="➕", callback_data=f"prod:inc:{product_id}")],
-        [InlineKeyboardButton(text="🧺 В корзину", callback_data=f"prod:add:{product_id}")],
-        [InlineKeyboardButton(text="⬅️ Назад", callback_data="back"),
-         InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")],
-    ])
+def product_controls(product_id: int) -> InlineKeyboardMarkup:
+    """Клавиатура карточки товара без корзины."""
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="back")],
+            [InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")],
+        ]
+    )
 
 
 def stock_product_controls(product_id: int) -> InlineKeyboardMarkup:
@@ -126,21 +214,6 @@ def stock_product_controls(product_id: int) -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")],
         ]
     )
-
-
-def cart_keyboard(has_items: bool) -> InlineKeyboardMarkup:
-    """Клавиатура управления корзиной."""
-
-    rows: list[list[InlineKeyboardButton]] = []
-    if has_items:
-        rows.append(
-            [
-                InlineKeyboardButton(text="🧹 Очистить", callback_data="cart:clear"),
-                InlineKeyboardButton(text="✅ Оформить", callback_data="cart:checkout"),
-            ]
-        )
-    rows.append([InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def usd_keyboard() -> InlineKeyboardMarkup:

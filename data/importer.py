@@ -1,233 +1,100 @@
-from typing import BinaryIO, Union
-from collections.abc import Iterable
+"""Модуль импорта прайс-листов и остатков из XLSX/CSV в словари."""
+from __future__ import annotations
 
+import io
 import logging
 import re
+import sqlite3
+from typing import BinaryIO, Union
 
-from openpyxl import load_workbook
+try:
+    import chardet
+except ImportError:  # pragma: no cover - зависит от окружения
+    chardet = None
 import pandas as pd
+from openpyxl import load_workbook
 
-from config import DEFAULT_CITY
+from config import DB_PATH
 
 
 SourceType = Union[str, BinaryIO]
 
 
+class FormatError(Exception):
+    """Исключение для ошибок формата входного файла."""
+
+
 logger = logging.getLogger(__name__)
 
-_PRICE_RANGES = {
-    "85_90": "85-90",
-    "90_95": "90-95",
-    "95_100": "95-100",
-}
 
+# ---------------------------------- служебные функции ----------------------------------
 
 def _reset_stream(source: SourceType) -> SourceType:
-    """Возвращает источник в начало, если он поток."""
+    """Возвращает поток в начало, если он поддерживает seek."""
 
     if hasattr(source, "seek"):
         source.seek(0)
     return source
 
 
-def _load_sheet_rows(source: SourceType) -> list[list[object]]:
-    """Читает строки первого листа XLSX с вычисленными значениями."""
+def _normalize_header(value: object) -> str:
+    """Нормализует заголовок колонки: нижний регистр и одиночные пробелы."""
 
-    current_source = _reset_stream(source)
-    workbook = load_workbook(current_source, data_only=True)
-    try:
-        sheet = workbook.active
-        rows: list[list[object]] = []
-        max_columns = sheet.max_column or 0
-        for row in sheet.iter_rows(values_only=True):
-            values = list(row)
-            if max_columns and len(values) < max_columns:
-                values.extend([None] * (max_columns - len(values)))
-            rows.append(values)
-    finally:
-        workbook.close()
-
-    return rows
+    return " ".join(str(value or "").strip().lower().split())
 
 
-def _normalize(name: object) -> str:
-    """Приводит имя колонки к нижнему регистру без лишних пробелов."""
+def _string(value: object) -> str | None:
+    """Возвращает строку без лишних пробелов или None для пустых/NaN значений."""
 
-    return " ".join(str(name).strip().lower().split())
+    if isinstance(value, (list, tuple, set, pd.Series, pd.Index)):
+        for item in value:
+            result = _string(item)
+            if result is not None:
+                return result
+        return None
 
-
-def _string_value(value: object) -> str | None:
-    """Возвращает строковое представление значения или None."""
-
-    candidate = value
-
-    if isinstance(candidate, (pd.Series, pd.Index)):
-        iterable: Iterable = candidate.tolist()
-    elif isinstance(candidate, (list, tuple, set)):
-        iterable = list(candidate)
-    else:
-        iterable = None
-
-    if iterable is not None:
-        candidate = None
-        for item in iterable:
-            if item is None:
-                continue
-            try:
-                if pd.isna(item):
-                    continue
-            except TypeError:
-                pass
-            candidate = item
-            break
-
-    if candidate is None:
+    if value is None:
         return None
 
     try:
-        if pd.isna(candidate):
+        if pd.isna(value):
             return None
     except TypeError:
         pass
 
-    text = str(candidate).strip()
+    text = str(value).strip()
     return text or None
 
 
-def _number_value(value: object) -> float | None:
-    """Преобразует ячейку с ценой к числу, обрабатывая коллекции и серии."""
+def _number(value: object) -> float | None:
+    """Преобразует значение в float, очищая пробелы, запятые и валютные суффиксы."""
 
-    candidate = value
+    if isinstance(value, (list, tuple, set, pd.Series, pd.Index)):
+        for item in value:
+            result = _number(item)
+            if result is not None:
+                return result
+        return None
 
-    if isinstance(candidate, (pd.Series, pd.Index)):
-        iterable: Iterable = candidate.tolist()
-    elif isinstance(candidate, (list, tuple, set)):
-        iterable = list(candidate)
-    else:
-        iterable = None
-
-    if iterable is not None:
-        candidate = None
-        for item in iterable:
-            if item is None:
-                continue
-            try:
-                if pd.isna(item):
-                    continue
-            except TypeError:
-                pass
-            candidate = item
-            break
-
-    if candidate is None:
+    if value is None:
         return None
 
     try:
-        if pd.isna(candidate):
+        if pd.isna(value):
             return None
     except TypeError:
         pass
 
-    if isinstance(candidate, (int, float)) and not isinstance(candidate, bool):
-        number = float(candidate)
-        return number if number > 0 else None
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
 
-    text = str(candidate).strip()
+    text = str(value).strip()
     if not text:
         return None
 
     normalized = text.replace("\xa0", " ")
     cleaned = re.sub(r"[^0-9,\.\-]", "", normalized)
-    if not cleaned:
-        return None
-
-    negative = cleaned.startswith("-")
-    if negative:
-        cleaned = cleaned[1:]
-
-    cleaned = cleaned.strip()
-    if not cleaned:
-        return None
-
-    last_comma = cleaned.rfind(",")
-    last_dot = cleaned.rfind(".")
-
-    number_text = cleaned
-    decimal_sep = None
-    thousands_sep = None
-
-    if last_comma != -1 or last_dot != -1:
-        if last_comma > last_dot:
-            decimal_sep = ","
-            thousands_sep = "." if last_dot != -1 else None
-        elif last_dot > last_comma:
-            decimal_sep = "."
-            thousands_sep = "," if last_comma != -1 else None
-        else:
-            decimal_sep = "," if last_comma != -1 else "."
-
-        if thousands_sep:
-            number_text = number_text.replace(thousands_sep, "")
-        if decimal_sep != ".":
-            number_text = number_text.replace(decimal_sep, ".")
-
-    number_text = number_text.replace(" ", "")
-
-    try:
-        number = float(number_text)
-    except (TypeError, ValueError):
-        return None
-
-    if negative:
-        number = -number
-
-    return number if number > 0 else None
-
-
-def _quantity_value(value: object) -> float | None:
-    """Возвращает числовое значение остатка, поддерживая коллекции и нули."""
-
-    candidate = value
-
-    if isinstance(candidate, (pd.Series, pd.Index)):
-        iterable: Iterable = candidate.tolist()
-    elif isinstance(candidate, (list, tuple, set)):
-        iterable = list(candidate)
-    else:
-        iterable = None
-
-    if iterable is not None:
-        candidate = None
-        for item in iterable:
-            if item is None:
-                continue
-            try:
-                if pd.isna(item):
-                    continue
-            except TypeError:
-                pass
-            candidate = item
-            break
-
-    if candidate is None:
-        return None
-
-    try:
-        if pd.isna(candidate):
-            return None
-    except TypeError:
-        pass
-
-    if isinstance(candidate, (int, float)) and not isinstance(candidate, bool):
-        return float(candidate)
-
-    text = str(candidate).strip()
-    if not text:
-        return None
-
-    normalized = text.replace("\xa0", " ")
-    cleaned = re.sub(r"[^0-9,\.\-]", "", normalized)
-    if cleaned == "":
+    if cleaned in {"", "-", ",", "."}:
         return None
 
     negative = cleaned.startswith("-")
@@ -273,337 +140,810 @@ def _quantity_value(value: object) -> float | None:
     return number
 
 
-def _build_multiheader_dataframe(rows: list[list[object]]) -> tuple[pd.DataFrame, dict[str, str]]:
-    """Формирует датафрейм с учётом двухуровневой шапки цен."""
+def _number_or_error(value: object, column_title: str) -> float | None:
+    """Пытается преобразовать значение в число или сообщает об ошибке."""
 
-    top_index = 3
-    bottom_index = 4
-    if len(rows) <= bottom_index:
-        raise ValueError("Недостаточно строк для многоуровневой шапки")
+    number = _number(value)
+    if number is not None:
+        return number
 
-    top_row = rows[top_index]
-    bottom_row = rows[bottom_index]
-    combined_columns: list[str] = []
-    last_top = ""
+    text = _string(value)
+    if text not in (None, "", "-", "—"):
+        raise Exception(
+            f"Ошибка: некорректное числовое значение в столбце «{column_title}»."
+        )
 
-    max_len = max(len(top_row), len(bottom_row))
-
-    for index in range(max_len):
-        top_cell = top_row[index] if index < len(top_row) else None
-        bottom_cell = bottom_row[index] if index < len(bottom_row) else None
-        top_text = "" if top_cell is None else str(top_cell).strip()
-        bottom_text = "" if bottom_cell is None else str(bottom_cell).strip()
-
-        if not top_text:
-            lower_bottom = bottom_text.lower()
-            if lower_bottom in {"ролик", "отрез"} and last_top:
-                top_text = last_top
-        else:
-            last_top = top_text
-
-        if top_text and bottom_text:
-            combined = f"{top_text}__{bottom_text}"
-        else:
-            combined = top_text or bottom_text
-
-        combined_columns.append(combined)
-
-    data_rows = rows[bottom_index + 1 :]
-    if not data_rows:
-        raise ValueError("Нет данных после шапки таблицы")
-
-    df = pd.DataFrame(data_rows, columns=combined_columns)
-    df = df.dropna(how="all")
-    mapping = {_normalize(col): col for col in combined_columns}
-
-    if "наименование коллекции" not in mapping:
-        raise ValueError("Многоуровневая шапка не содержит колонку коллекции")
-
-    return df, mapping
-
-
-def _build_single_header_dataframe(
-    rows: list[list[object]], header_index: int
-) -> tuple[pd.DataFrame, dict[str, str]]:
-    """Формирует датафрейм с одиночной строкой заголовков."""
-
-    if header_index >= len(rows):
-        raise ValueError("Указанная строка заголовков отсутствует")
-
-    header_row = rows[header_index]
-    data_rows = rows[header_index + 1 :]
-    if not data_rows:
-        raise ValueError("Нет данных после строки заголовков")
-
-    df = pd.DataFrame(data_rows, columns=header_row)
-    df = df.dropna(how="all")
-    mapping = {_normalize(col): col for col in df.columns}
-
-    if "наименование коллекции" not in mapping:
-        raise ValueError("Строка заголовков не содержит колонку коллекции")
-
-    return df, mapping
-
-
-def _read_fabric_frame(source: SourceType) -> tuple[pd.DataFrame, dict[str, str]]:
-    """Возвращает датафрейм с колонками тканей и их сопоставление."""
-
-    rows = _load_sheet_rows(source)
-    if not rows:
-        raise ValueError("Файл не содержит данных")
-
-    try:
-        return _build_multiheader_dataframe(rows)
-    except ValueError:
-        pass
-
-    header_candidates = (0, 1, 2, 3, 4, 5)
-
-    for header in header_candidates:
-        try:
-            return _build_single_header_dataframe(rows, header)
-        except ValueError:
-            continue
-
-    raise ValueError("Не удалось найти заголовок с колонкой 'Наименование коллекции'")
-
-
-def _resolve_column(columns: dict[str, str], *aliases: str) -> str | None:
-    """Возвращает имя существующей колонки по набору псевдонимов."""
-
-    for alias in aliases:
-        normalized = _normalize(alias)
-        if normalized in columns:
-            return columns[normalized]
     return None
 
 
-def parse_fabrics(source: SourceType, city: str = DEFAULT_CITY) -> list[dict]:
-    """Разбирает XLSX с тканями и возвращает список товаров."""
+def _detect_format(source: SourceType) -> str:
+    """Определяет формат файла по расширению или сигнатуре."""
 
-    df, columns = _read_fabric_frame(source)
+    name = getattr(source, "name", None) if not isinstance(source, str) else source
+    prefix_bytes: bytes | None = None
 
-    name_column = columns.get("наименование коллекции")
-
-    if logger.isEnabledFor(logging.INFO):
-        logger.info("Колонки таблицы тканей: %s", repr(list(df.columns)))
-        if name_column and name_column in df.columns:
-            bison_rows = df[df[name_column] == "BISON"]
-            if not bison_rows.empty:
-                logger.info("Строка ткани BISON: %s", bison_rows.iloc[0].to_dict())
-
-    price_columns: dict[tuple[str, str], str] = {}
-    price_order = [
-        ("85_90", "roll"),
-        ("85_90", "piece"),
-        ("90_95", "roll"),
-        ("90_95", "piece"),
-        ("95_100", "roll"),
-        ("95_100", "piece"),
-    ]
-
-    column_list = list(df.columns)
-    segment_column = columns.get("сегмент")
-    wholesale_roll_column = columns.get("оптовая от ролика")
-    wholesale_piece_column = columns.get("оптовая в отрез")
-    special_column = columns.get("спеццена")
-
-    def _column_index(target: str | None) -> int | None:
-        """Возвращает индекс колонки или None."""
-
-        if target is None:
-            return None
+    if isinstance(source, str):
         try:
-            return column_list.index(target)
-        except ValueError:
-            return None
+            with open(source, "rb") as handle:
+                prefix_bytes = handle.read(4)
+        except OSError:
+            prefix_bytes = None
+    elif hasattr(source, "read"):
+        current = _reset_stream(source)
+        prefix = current.read(4)
+        _reset_stream(current)
+        prefix_bytes = prefix.encode() if isinstance(prefix, str) else prefix
 
-    segment_index = _column_index(segment_column)
-    wholesale_roll_index = _column_index(wholesale_roll_column)
-    wholesale_piece_index = _column_index(wholesale_piece_column)
-    special_index = _column_index(special_column)
+    def _xls_not_supported() -> None:
+        raise FormatError("Формат XLS не поддерживается. Используйте формат XLSX.")
 
-    base_index_candidates = [
-        index for index in (wholesale_roll_index, wholesale_piece_index) if index is not None
-    ]
-    if base_index_candidates:
-        base_index = max(base_index_candidates) + 1
-    elif segment_index is not None:
-        base_index = segment_index + 1
-    else:
-        base_index = 0
+    if name:
+        lowered = name.lower()
+        if lowered.endswith(".xls"):
+            _xls_not_supported()
+        if lowered.endswith(".xlsx"):
+            if prefix_bytes is not None and not prefix_bytes.startswith(b"PK"):
+                _xls_not_supported()
+            return "xlsx"
+        if lowered.endswith(".csv"):
+            return "csv"
 
-    candidates: list[str] = []
-    current_index = base_index
-    limit_index = special_index if special_index is not None else len(column_list)
+    if prefix_bytes is not None and prefix_bytes.startswith(b"PK"):
+        return "xlsx"
 
-    while current_index < limit_index and len(candidates) < len(price_order):
-        column_name = column_list[current_index]
-        current_index += 1
-        if column_name is None:
-            continue
-        candidates.append(column_name)
+    return "csv"
 
-    while len(candidates) < len(price_order) and current_index < len(column_list):
-        column_name = column_list[current_index]
-        current_index += 1
-        if column_name is None:
-            continue
-        candidates.append(column_name)
 
-    if len(candidates) >= len(price_order):
-        for key, column in zip(price_order, candidates[: len(price_order)]):
-            price_columns[key] = column
-    else:
-        logger.warning(
-            "Недостаточно колонок цен для позиционного сопоставления: %s",
-            candidates,
-        )
+def _load_xlsx_rows(source: SourceType) -> list[list[object]]:
+    """Читает XLSX с вычисленными формулами и возвращает список строк."""
 
-    if logger.isEnabledFor(logging.DEBUG):
-        logger.debug(
-            "Сопоставление колонок цен: %s",
-            {
-                f"{range_key}_{price_kind}": column
-                for (range_key, price_kind), column in price_columns.items()
-            },
-        )
+    current = _reset_stream(source)
+    try:
+        workbook = load_workbook(current, data_only=True)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Ошибка загрузки XLSX", exc_info=True)
+        raise Exception(
+            "Ошибка при чтении XLSX-файла. Проверьте, что файл не повреждён и соответствует формату XLSX."
+        ) from exc
 
-    items: list[dict] = []
+    try:
+        sheet = workbook.active
+        rows: list[list[object]] = []
+        max_columns = sheet.max_column or 0
+        for row in sheet.iter_rows(values_only=True):
+            values = list(row)
+            if max_columns and len(values) < max_columns:
+                values.extend([None] * (max_columns - len(values)))
+            rows.append(values)
+    finally:
+        workbook.close()
+    return rows
 
-    for _, row in df.iterrows():
-        name = _string_value(row.get(name_column)) if name_column else None
-        if not name:
-            continue
 
-        country = _string_value(row.get(columns.get("страна")))
-        fabric_type = _string_value(row.get(columns.get("тип ткани")))
-        segment = _string_value(row.get(columns.get("сегмент")))
-        special_flag = _string_value(row.get(columns.get("спеццена")))
+def _load_csv_rows(source: SourceType) -> list[list[object]]:
+    """Читает CSV без заголовков и возвращает список строк."""
 
-        record: dict[str, object] = {
-            "city": city,
-            "section": "fabrics",
-            "category": "Ткани",
-            "name": name,
-            "country": country,
-            "fabric_type": fabric_type,
-            "segment": segment,
-            "special": special_flag,
-            "in_stock": None,
-        }
+    try:
+        if isinstance(source, str):
+            with open(source, "rb") as handle:
+                data = handle.read()
+        else:
+            current = _reset_stream(source)
+            data = current.read()
+            _reset_stream(current)
 
-        for range_key in _PRICE_RANGES:
-            for price_kind in ("piece", "roll"):
-                column_name = price_columns.get((range_key, price_kind))
-                field_name = f"price_{price_kind}_{range_key}"
-                record[field_name] = (
-                    _number_value(row.get(column_name)) if column_name else None
+        if chardet is None:
+            logger.warning("chardet не установлен, используем UTF-8 по умолчанию")
+            encoding = "utf-8"
+        else:
+            detection = chardet.detect(data)
+            encoding = detection.get("encoding") or "utf-8"
+        buffer = io.BytesIO(data)
+        df = pd.read_csv(buffer, header=None, encoding=encoding)
+        return df.where(pd.notna(df), None).values.tolist()
+    except UnicodeDecodeError as exc:
+        logger.error("Ошибка декодирования CSV", exc_info=True)
+        raise Exception("Ошибка чтения CSV: некорректная кодировка файла.") from exc
+    except pd.errors.ParserError as exc:  # type: ignore[attr-defined]
+        logger.error("Ошибка парсинга CSV", exc_info=True)
+        raise Exception("Ошибка: некорректная структура CSV-файла.") from exc
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Неизвестная ошибка при чтении CSV", exc_info=True)
+        raise Exception("Ошибка чтения CSV-файла. Проверьте корректность данных.") from exc
+
+
+def _load_rows(source: SourceType) -> list[list[object]]:
+    """Возвращает все строки файла вне зависимости от формата."""
+
+    fmt = _detect_format(source)
+    if fmt == "xlsx":
+        return _load_xlsx_rows(source)
+    if fmt == "csv":
+        return _load_csv_rows(source)
+    raise FormatError("Формат файла не поддерживается. Используйте XLSX или CSV")
+
+
+def _ensure_columns(columns: dict[str, object], required: list[str]) -> None:
+    """Проверяет наличие обязательных колонок, выбрасывая осмысленную ошибку."""
+
+    for title in required:
+        if _normalize_header(title) not in columns:
+            raise Exception(
+                f"Ошибка: отсутствует столбец «{title}». Проверьте разметку таблицы."
+            )
+
+
+def _row_value(row: list[object], index: int) -> object:
+    """Безопасно получает значение ячейки по индексу."""
+
+    return row[index] if 0 <= index < len(row) else None
+
+
+def _load_catalog_index(table: str) -> tuple[dict[str, int], dict[str, int]]:
+    """Возвращает словари поиска по артикулу и названию для каталога."""
+
+    article_map: dict[str, int] = {}
+    name_map: dict[str, int] = {}
+    with sqlite3.connect(DB_PATH) as conn:
+        try:
+            cur = conn.execute(f"SELECT id, article, name FROM {table}")
+            rows = cur.fetchall()
+            for catalog_id, article, name in rows:
+                if article:
+                    article_map[_normalize_header(article)] = int(catalog_id)
+                if name:
+                    name_map[_normalize_header(name)] = int(catalog_id)
+            return article_map, name_map
+        except sqlite3.OperationalError:
+            return article_map, name_map
+
+
+def _find_catalog_id(
+    article: str | None, name: str | None, article_map: dict[str, int], name_map: dict[str, int]
+) -> int | None:
+    """Ищет id каталога по артикулу или названию."""
+
+    if article:
+        normalized = _normalize_header(article)
+        if normalized in article_map:
+            return article_map[normalized]
+    if name:
+        normalized = _normalize_header(name)
+        if normalized in name_map:
+            return name_map[normalized]
+    return None
+
+
+# ---------------------------------- парсинг каталогов ----------------------------------
+
+def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
+    """Парсит общий каталог тканей."""
+
+    try:
+        rows = _load_rows(stream)
+        if not rows:
+            return []
+
+        header_index = None
+        for idx, row in enumerate(rows):
+            first_cell = _normalize_header(_row_value(row, 0))
+            if first_cell == "наименование коллекции":
+                header_index = idx
+                break
+
+        if header_index is None:
+            raise Exception(
+                "Ошибка: отсутствует столбец «Наименование коллекции». Проверьте разметку таблицы."
+            )
+
+        header_row = rows[header_index]
+        top_row = rows[header_index - 1] if header_index > 0 else [None] * len(header_row)
+
+        columns: dict[str, int] = {}
+        for idx, value in enumerate(header_row):
+            columns[_normalize_header(value)] = idx
+
+        required_columns = [
+            "Наименование коллекции",
+            "Страна",
+            "Тип ткани",
+            "сегмент",
+            "Оптовая от ролика",
+            "Оптовая в отрез",
+        ]
+        _ensure_columns(columns, required_columns)
+
+        price_columns: dict[tuple[str, str], int] = {}
+        range_map = {"85-90": "85_90", "90-95": "90_95", "95-100": "95_100"}
+        for idx, bottom in enumerate(header_row):
+            bottom_norm = _normalize_header(bottom)
+            top_text = _string(_row_value(top_row, idx)) or ""
+            range_key = range_map.get(top_text.strip())
+            if bottom_norm in {"ролик", "отрез"} and range_key:
+                kind = "roll" if bottom_norm == "ролик" else "piece"
+                price_columns[(range_key, kind)] = idx
+
+        for human, key in [
+            ("РОЛИК (85-90)", ("85_90", "roll")),
+            ("отрез (85-90)", ("85_90", "piece")),
+            ("РОЛИК (90-95)", ("90_95", "roll")),
+            ("отрез (90-95)", ("90_95", "piece")),
+            ("РОЛИК (95-100)", ("95_100", "roll")),
+            ("отрез (95-100)", ("95_100", "piece")),
+        ]:
+            if key not in price_columns:
+                raise Exception(
+                    f"Ошибка: отсутствует столбец «{human}». Проверьте разметку таблицы."
                 )
 
-        items.append(record)
+        special_index = None
+        for idx, value in enumerate(header_row):
+            if value is None or str(value).strip() == "":
+                special_index = idx
+                break
 
-    return items
+        items: list[dict] = []
+        for row in rows[header_index + 1 :]:
+            name = _string(_row_value(row, columns["наименование коллекции"]))
+            if not name:
+                continue
+
+            item = {
+                "name": name,
+                "country": _string(_row_value(row, columns["страна"])),
+                "fabric_type": _string(_row_value(row, columns["тип ткани"])),
+                "segment": _string(_row_value(row, columns["сегмент"])),
+                "wholesale_roll": _number_or_error(
+                    _row_value(row, columns["оптовая от ролика"]),
+                    "Оптовая от ролика",
+                ),
+                "wholesale_piece": _number_or_error(
+                    _row_value(row, columns["оптовая в отрез"]),
+                    "Оптовая в отрез",
+                ),
+                "price_roll_85_90": _number_or_error(
+                    _row_value(row, price_columns[("85_90", "roll")]),
+                    "РОЛИК (85-90)",
+                ),
+                "price_piece_85_90": _number_or_error(
+                    _row_value(row, price_columns[("85_90", "piece")]),
+                    "отрез (85-90)",
+                ),
+                "price_roll_90_95": _number_or_error(
+                    _row_value(row, price_columns[("90_95", "roll")]),
+                    "РОЛИК (90-95)",
+                ),
+                "price_piece_90_95": _number_or_error(
+                    _row_value(row, price_columns[("90_95", "piece")]),
+                    "отрез (90-95)",
+                ),
+                "price_roll_95_100": _number_or_error(
+                    _row_value(row, price_columns[("95_100", "roll")]),
+                    "РОЛИК (95-100)",
+                ),
+                "price_piece_95_100": _number_or_error(
+                    _row_value(row, price_columns[("95_100", "piece")]),
+                    "отрез (95-100)",
+                ),
+                "special_status": _string(_row_value(row, special_index)) if special_index is not None else None,
+                "image_url": None,
+            }
+            items.append(item)
+
+        return items
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Ошибка импорта каталога тканей", exc_info=True)
+        raise Exception(f"Ошибка при импорте каталога тканей: {exc}") from exc
 
 
-def parse_stock(source: SourceType, city: str = DEFAULT_CITY) -> list[dict]:
-    """Разбирает XLSX с остатками товаров."""
+def parse_hardware_catalog(stream: SourceType) -> list[dict]:
+    """Парсит общий каталог фурнитуры."""
 
-    df_source = _reset_stream(source)
-    df = pd.read_excel(df_source)
-    columns = {_normalize(col): col for col in df.columns}
+    try:
+        rows = _load_rows(stream)
+        if not rows:
+            return []
 
-    section_col = _resolve_column(columns, "Раздел", "Section", "Раздел остатков")
-    category_col = _resolve_column(columns, "Категория", "Группа")
-    name_col = _resolve_column(columns, "Наименование", "Товар", "Название")
-    article_col = _resolve_column(columns, "Артикул", "SKU", "Код")
-    qty_col = _resolve_column(columns, "Наличие", "Остаток", "Количество", "Кол-во")
-    unit_col = _resolve_column(columns, "Ед.", "Ед", "Единица", "единица")
-    status_col = _resolve_column(columns, "Статус", "Статус наличия", "Availability")
+        required_titles = [
+            "Артикул",
+            "Фото",
+            "Наименование",
+            "Коллекция",
+            "Статус",
+            "Кратность",
+            "Бренд (Страна)",
+            "Ед.",
+            "Валюта",
+            "РРЦ",
+            "Оптовая",
+        ]
 
-    items: list[dict] = []
+        header_index = None
+        columns: dict[str, str] = {}
+        header_row: list[object] | None = None
+        for idx, row in enumerate(rows):
+            temp_columns = {_normalize_header(val): val for val in row}
+            try:
+                _ensure_columns(temp_columns, required_titles)
+                header_index = idx
+                columns = temp_columns
+                header_row = row
+                break
+            except Exception:
+                continue
 
-    for _, row in df.iterrows():
-        name = _string_value(row.get(name_col)) if name_col else None
-        if not name:
-            continue
+        if header_index is None or header_row is None:
+            temp_columns = {_normalize_header(val): val for val in rows[0]}
+            _ensure_columns(temp_columns, required_titles)
+            header_index = 0
+            header_row = rows[0]
+            columns = temp_columns
 
-        section = _string_value(row.get(section_col)) if section_col else None
-        category = _string_value(row.get(category_col)) if category_col else None
-        article = _string_value(row.get(article_col)) if article_col else None
-        quantity = _quantity_value(row.get(qty_col)) if qty_col else None
-        unit = _string_value(row.get(unit_col)) if unit_col else None
-        status = _string_value(row.get(status_col)) if status_col else None
+        data_rows = rows[header_index + 1 :]
+        df = pd.DataFrame(data_rows, columns=header_row)
+        df = df.dropna(how="all")
 
-        items.append(
-            {
-                "city": city,
-                "section": section or "Наличие",
-                "category": category or "Общий",
+        items: list[dict] = []
+        for _, row in df.iterrows():
+            article = _string(row.get(columns["артикул"]))
+            name = _string(row.get(columns["наименование"]))
+            if not article and not name:
+                continue
+
+            currency = _string(row.get(columns["валюта"]))
+            if currency:
+                currency = currency.upper()
+
+            item = {
+                "article": article,
+                "name": name,
+                "collection": _string(row.get(columns["коллекция"])),
+                "status": _string(row.get(columns["статус"])),
+                "multiplicity": _string(row.get(columns["кратность"])),
+                "brand_country": _string(row.get(columns["бренд (страна)"])),
+                "unit": _string(row.get(columns["ед."])),
+                "currency": currency,
+                "price_rrc": _number_or_error(row.get(columns["ррц"]), "РРЦ"),
+                "price_opt": _number_or_error(row.get(columns["оптовая"]), "Оптовая"),
+                "image_url": None,
+            }
+            items.append(item)
+
+        return items
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Ошибка импорта каталога фурнитуры", exc_info=True)
+        raise Exception(f"Ошибка при импорте каталога фурнитуры: {exc}") from exc
+
+
+# ---------------------------------- парсинг остатков ----------------------------------
+
+def parse_hardware_stock_msk(stream: SourceType) -> list[dict]:
+    """Парсит остатки фурнитуры для Москвы."""
+
+    try:
+        rows = _load_rows(stream)
+        if not rows:
+            return []
+
+        required_titles = [
+            "Код товара",
+            "Вид номенклатуры",
+            "Тип номенклатуры",
+            "Артикул",
+            "Номенклатура",
+            "Программа",
+            "Наличие",
+            "Ед.",
+            "Доп. инфо.",
+            "Дата прихода",
+        ]
+        optional_reserved = "Резерв"
+
+        header_index = None
+        columns: dict[str, str] = {}
+        header_row: list[object] | None = None
+        for idx, row in enumerate(rows):
+            temp_columns = {_normalize_header(val): val for val in row}
+            try:
+                _ensure_columns(temp_columns, required_titles)
+                header_index = idx
+                columns = temp_columns
+                header_row = row
+                break
+            except Exception:
+                continue
+
+        if header_index is None or header_row is None:
+            temp_columns = {_normalize_header(val): val for val in rows[0]}
+            _ensure_columns(temp_columns, required_titles)
+            header_index = 0
+            header_row = rows[0]
+            columns = temp_columns
+
+        data_rows = rows[header_index + 1 :]
+        df = pd.DataFrame(data_rows, columns=header_row)
+        df = df.dropna(how="all")
+
+        article_map, name_map = _load_catalog_index("hardware_catalog")
+        reserved_idx = columns.get(_normalize_header(optional_reserved))
+
+        items: list[dict] = []
+        for _, row in df.iterrows():
+            name = _string(row.get(columns["номенклатура"]))
+            article = _string(row.get(columns["артикул"]))
+            quantity = _number_or_error(row.get(columns["наличие"]), "Наличие")
+            unit = _string(row.get(columns["ед."]))
+            additional_info = _string(row.get(columns["доп. инфо."]))
+            arrival_date = _string(row.get(columns["дата прихода"]))
+
+            if not name and not article:
+                continue
+
+            catalog_id = _find_catalog_id(article, name, article_map, name_map)
+
+            item = {
+                "catalog_id": catalog_id,
                 "name": name,
                 "article": article,
                 "quantity": quantity,
+                "free_quantity": None,
                 "unit": unit,
-                "status": status,
+                "arrival_date": arrival_date,
+                "reserved": _string(row.get(reserved_idx)) if reserved_idx is not None else None,
+                "additional_info": additional_info,
             }
-        )
+            items.append(item)
 
-    return items
+        return items
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Ошибка импорта остатков фурнитуры (Москва)", exc_info=True)
+        raise Exception(f"Ошибка при импорте остатков фурнитуры Москва: {exc}") from exc
 
 
-def parse_hardware(source: SourceType, city: str = DEFAULT_CITY) -> list[dict]:
-    """Разбирает XLSX с фурнитурой."""
+def parse_hardware_stock_spb(stream: SourceType) -> list[dict]:
+    """Парсит остатки фурнитуры для Санкт-Петербурга."""
 
-    df_source = _reset_stream(source)
-    df = pd.read_excel(df_source, header=10)
-    columns = {_normalize(col): col for col in df.columns}
+    try:
+        rows = _load_rows(stream)
+        if not rows:
+            return []
 
-    article_col = _resolve_column(columns, "Артикул")
-    name_col = _resolve_column(columns, "Наименование")
-    collection_col = _resolve_column(columns, "Коллекция")
-    status_col = _resolve_column(columns, "Статус")
-    multiplicity_col = _resolve_column(columns, "Кратность")
-    brand_col = _resolve_column(columns, "Бренд (Страна)", "Бренд")
-    unit_col = _resolve_column(columns, "Ед.", "Ед")
-    currency_col = _resolve_column(columns, "Валюта")
-    rrc_col = _resolve_column(columns, "РРЦ")
-    opt_col = _resolve_column(columns, "Оптовая", "Опт")
+        base_headers = ["Номенклатура", "Остаток", "Свободный остаток"]
 
-    items: list[dict] = []
+        header_index = None
+        main_header: list[object] | None = None
+        sub_header: list[object] | None = None
+        for idx, row in enumerate(rows):
+            normalized = [_normalize_header(val) for val in row]
+            if all(_normalize_header(title) in normalized for title in base_headers):
+                header_index = idx
+                main_header = row
+                if idx + 1 < len(rows):
+                    sub_header = rows[idx + 1]
+                break
 
-    for _, row in df.iterrows():
-        article = _string_value(row.get(article_col)) if article_col else None
-        if not article:
-            continue
+        if header_index is None or main_header is None:
+            raise Exception("Ошибка: структура таблицы остатков фурнитуры СПБ не распознана.")
 
-        name = _string_value(row.get(name_col)) if name_col else None
-        collection = _string_value(row.get(collection_col)) if collection_col else None
-        status = _string_value(row.get(status_col)) if status_col else None
-        multiplicity = _string_value(row.get(multiplicity_col)) if multiplicity_col else None
-        brand_country = _string_value(row.get(brand_col)) if brand_col else None
-        unit = _string_value(row.get(unit_col)) if unit_col else None
-        currency = _string_value(row.get(currency_col)) if currency_col else None
-        if currency:
-            currency = currency.upper()
+        max_len = max(len(main_header), len(sub_header or []))
+        combined_headers: list[object] = []
+        for i in range(max_len):
+            top = main_header[i] if i < len(main_header) else None
+            bottom = sub_header[i] if sub_header and i < len(sub_header) else None
+            top_str = _string(top)
+            bottom_str = _string(bottom)
 
-        items.append(
-            {
-                "city": city,
+            if bottom_str:
+                combined = f"{top_str or ''} ({bottom_str})".strip()
+            else:
+                combined = top_str or None
+            combined_headers.append(combined)
+
+        normalized_headers = {
+            _normalize_header(val): val
+            for val in combined_headers
+            if val is not None
+        }
+        required_combined = {
+            _normalize_header("Номенклатура"): "Номенклатура",
+            _normalize_header("Остаток (В ед. хранения)"): "Остаток (В ед. хранения)",
+            _normalize_header("Свободный остаток (В ед. хранения)"): "Свободный остаток (В ед. хранения)",
+        }
+
+        missing = [
+            original
+            for norm_key, original in required_combined.items()
+            if norm_key not in normalized_headers
+        ]
+        if missing:
+            raise Exception("Ошибка: структура таблицы остатков фурнитуры СПБ не распознана.")
+
+        data_rows = rows[(header_index + 2 if sub_header else header_index + 1) :]
+        df = pd.DataFrame(data_rows, columns=combined_headers)
+        df = df.dropna(how="all")
+
+        article_map, name_map = _load_catalog_index("hardware_catalog")
+
+        items: list[dict] = []
+        for _, row in df.iterrows():
+            name = _string(row.get(normalized_headers[_normalize_header("Номенклатура")]))
+            if not name:
+                continue
+
+            quantity = _number_or_error(
+                row.get(
+                    normalized_headers[
+                        _normalize_header("Остаток (В ед. хранения)")
+                    ]
+                ),
+                "Остаток (В ед. хранения)",
+            )
+            free_quantity = _number_or_error(
+                row.get(
+                    normalized_headers[
+                        _normalize_header("Свободный остаток (В ед. хранения)")
+                    ]
+                ),
+                "Свободный остаток (В ед. хранения)",
+            )
+
+            catalog_id = _find_catalog_id(None, name, article_map, name_map)
+
+            item = {
+                "catalog_id": catalog_id,
+                "name": name,
+                "article": None,
+                "quantity": quantity,
+                "free_quantity": free_quantity,
+                "unit": "ед. хранения",
+                "arrival_date": None,
+                "reserved": None,
+                "additional_info": None,
+                "city": "spb",
                 "section": "hardware",
-                "category": collection or "Фурнитура",
-                "subcategory": None,
-                "name": name or article,
-                "article": article,
-                "collection": collection,
-                "brand_country": brand_country,
-                "multiplicity": multiplicity,
-                "unit": unit,
-                "currency": currency,
-                "status": status,
-                "price_rrc": _number_value(row.get(rrc_col)) if rrc_col else None,
-                "price_opt": _number_value(row.get(opt_col)) if opt_col else None,
-                "in_stock": None,
             }
+            items.append(item)
+
+        return items
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Ошибка импорта остатков фурнитуры (СПБ)", exc_info=True)
+        raise Exception(f"Ошибка при импорте остатков фурнитуры СПБ: {exc}") from exc
+
+
+def parse_fabrics_stock_msk(stream: SourceType) -> list[dict]:
+    """Парсит остатки тканей для Москвы."""
+
+    try:
+        rows = _load_rows(stream)
+        if not rows:
+            return []
+
+        required_titles = [
+            "Код товара",
+            "Вид номенклатуры",
+            "Тип номенклатуры",
+            "Артикул",
+            "Номенклатура",
+            "Программа",
+            "Наличие",
+            "Ед.",
+            "Доп. инфо.",
+            "Дата прихода",
+        ]
+
+        header_index = None
+        columns: dict[str, str] = {}
+        header_row: list[object] | None = None
+        for idx, row in enumerate(rows):
+            temp_columns = {_normalize_header(val): val for val in row}
+            try:
+                _ensure_columns(temp_columns, required_titles)
+                header_index = idx
+                columns = temp_columns
+                header_row = row
+                break
+            except Exception:
+                continue
+
+        if header_index is None or header_row is None:
+            temp_columns = {_normalize_header(val): val for val in rows[0]}
+            _ensure_columns(temp_columns, required_titles)
+            header_index = 0
+            header_row = rows[0]
+            columns = temp_columns
+
+        data_rows = rows[header_index + 1 :]
+        df = pd.DataFrame(data_rows, columns=header_row)
+        df = df.dropna(how="all")
+
+        article_map, name_map = _load_catalog_index("fabrics_catalog")
+
+        items: list[dict] = []
+        for _, row in df.iterrows():
+            name = _string(row.get(columns["номенклатура"]))
+            article = _string(row.get(columns["артикул"]))
+            if not name and not article:
+                continue
+
+            quantity = _number_or_error(row.get(columns["наличие"]), "Наличие")
+            unit = _string(row.get(columns["ед."]))
+            additional_info = _string(row.get(columns["доп. инфо."]))
+            arrival_date = _string(row.get(columns["дата прихода"]))
+
+            catalog_id = _find_catalog_id(article, name, article_map, name_map)
+
+            item = {
+                "catalog_id": catalog_id,
+                "name": name,
+                "quantity": quantity,
+                "free_quantity": None,
+                "unit": unit,
+                "arrival_date": arrival_date,
+                "reserved": None,
+                "additional_info": additional_info,
+            }
+            items.append(item)
+
+        return items
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Ошибка импорта остатков тканей (Москва)", exc_info=True)
+        raise Exception(f"Ошибка при импорте остатков тканей Москва: {exc}") from exc
+
+
+def parse_fabrics_stock_spb(stream: SourceType) -> list[dict]:
+    """Парсит остатки тканей для Санкт-Петербурга."""
+
+    try:
+        rows = _load_rows(stream)
+        if not rows:
+            return []
+
+        base_headers = ["Номенклатура", "Остаток", "Свободный остаток"]
+
+        header_index = None
+        main_header: list[object] | None = None
+        sub_header: list[object] | None = None
+        for idx, row in enumerate(rows):
+            normalized = [_normalize_header(val) for val in row]
+            if all(_normalize_header(title) in normalized for title in base_headers):
+                header_index = idx
+                main_header = row
+                if idx + 1 < len(rows):
+                    sub_header = rows[idx + 1]
+                break
+
+        if header_index is None or main_header is None:
+            raise Exception(
+                "Ошибка: структура таблицы остатков тканей СПБ не распознана.\n"
+                "Требуемые колонки: Номенклатура, Остаток, Свободный остаток."
+            )
+
+        max_len = max(len(main_header), len(sub_header or []))
+        combined_headers: list[object] = []
+        for i in range(max_len):
+            top = main_header[i] if i < len(main_header) else None
+            bottom = sub_header[i] if sub_header and i < len(sub_header) else None
+            top_str = _string(top)
+            bottom_str = _string(bottom)
+
+            if bottom_str:
+                combined = f"{top_str or ''} ({bottom_str})".strip()
+            else:
+                combined = top_str or None
+            combined_headers.append(combined)
+
+        normalized_headers = {_normalize_header(val): val for val in combined_headers}
+        required_combined = {
+            _normalize_header("Номенклатура"): "Номенклатура",
+            _normalize_header("Остаток (В ед. хранения)"): "Остаток (В ед. хранения)",
+            _normalize_header("Свободный остаток (В ед. хранения)"): "Свободный остаток (В ед. хранения)",
+        }
+
+        missing = [
+            original
+            for norm_key, original in required_combined.items()
+            if norm_key not in normalized_headers
+        ]
+        if missing:
+            raise Exception(
+                "Ошибка: структура таблицы остатков тканей СПБ не распознана.\n"
+                "Требуемые колонки: Номенклатура, Остаток, Свободный остаток."
+            )
+
+        data_rows = rows[(header_index + 2 if sub_header else header_index + 1) :]
+        df = pd.DataFrame(data_rows, columns=combined_headers)
+        df = df.dropna(how="all")
+
+        article_map, name_map = _load_catalog_index("fabrics_catalog")
+
+        items: list[dict] = []
+        for _, row in df.iterrows():
+            name = _string(row.get(normalized_headers[_normalize_header("Номенклатура")]))
+            if not name:
+                continue
+
+            quantity = _number_or_error(
+                row.get(
+                    normalized_headers[
+                        _normalize_header("Остаток (В ед. хранения)")
+                    ]
+                ),
+                "Остаток (В ед. хранения)",
+            )
+            free_quantity = _number_or_error(
+                row.get(
+                    normalized_headers[
+                        _normalize_header("Свободный остаток (В ед. хранения)")
+                    ]
+                ),
+                "Свободный остаток (В ед. хранения)",
+            )
+
+            catalog_id = _find_catalog_id(None, name, article_map, name_map)
+
+            item = {
+                "catalog_id": catalog_id,
+                "name": name,
+                "quantity": quantity,
+                "free_quantity": free_quantity,
+                "unit": "ед. хранения",
+                "arrival_date": None,
+                "reserved": None,
+                "additional_info": None,
+            }
+            items.append(item)
+
+        return items
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Ошибка импорта остатков тканей (СПБ)", exc_info=True)
+        raise Exception(f"Ошибка при импорте остатков тканей СПБ: {exc}") from exc
+
+
+def parse_fabrics(stream: SourceType, city: str | None = None, section: str | None = None):
+    """Совместимость со старым API: возвращает каталог тканей."""
+
+    return parse_fabrics_catalog(stream)
+
+
+def parse_hardware(stream: SourceType, city: str | None = None, section: str | None = None):
+    """Совместимость со старым API: возвращает каталог фурнитуры."""
+
+    return parse_hardware_catalog(stream)
+
+
+def parse_stock(stream: SourceType, city: str | None = None, section: str | None = None):
+    """Заглушка для остатков: требует явного указания раздела."""
+
+    if section is None:
+        raise Exception(
+            "Укажите раздел остатков (fabrics/hardware) для импорта."
         )
 
-    return items
+    normalized = (section or "").lower()
+    if normalized == "fabrics":
+        if city == "msk":
+            return parse_fabrics_stock_msk(stream)
+        return parse_fabrics_stock_spb(stream)
+
+    if normalized == "hardware":
+        if city == "msk":
+            return parse_hardware_stock_msk(stream)
+        return parse_hardware_stock_spb(stream)
+
+    raise Exception("Неизвестный раздел остатков. Ожидается fabrics или hardware.")
+
+
+__all__ = [
+    "parse_fabrics_catalog",
+    "parse_hardware_catalog",
+    "parse_fabrics_stock_spb",
+    "parse_fabrics_stock_msk",
+    "parse_hardware_stock_spb",
+    "parse_hardware_stock_msk",
+    "parse_fabrics",
+    "parse_hardware",
+    "parse_stock",
+    "_string",
+    "_number",
+    "_number_or_error",
+]

@@ -1,0 +1,155 @@
+import os
+
+import aiosqlite
+
+from config import DB_PATH
+
+
+async def init_db() -> None:
+    """Создаёт все необходимые таблицы, если они отсутствуют."""
+
+    db_dir = os.path.dirname(DB_PATH)
+    if db_dir:
+        os.makedirs(db_dir, exist_ok=True)
+
+    create_sql = """
+    CREATE TABLE IF NOT EXISTS products (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        section TEXT NOT NULL,
+        name TEXT,
+        article TEXT,
+        collection TEXT,
+        country TEXT,
+        fabric_type TEXT,
+        segment TEXT,
+        brand_country TEXT,
+        unit TEXT,
+        currency TEXT,
+        status TEXT,
+        price_roll_85_90 REAL,
+        price_piece_85_90 REAL,
+        price_roll_90_95 REAL,
+        price_piece_90_95 REAL,
+        price_roll_95_100 REAL,
+        price_piece_95_100 REAL,
+        price_rrc REAL,
+        price_opt REAL,
+        special TEXT,
+        image_url TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS stock_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        city TEXT NOT NULL,
+        section TEXT NOT NULL,
+        name TEXT,
+        article TEXT,
+        quantity REAL,
+        unit TEXT,
+        status TEXT,
+        extra TEXT,
+        arrival_date TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        tg_id INTEGER UNIQUE NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS settings (
+        key TEXT PRIMARY KEY,
+        value TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS fabrics_catalog (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT,
+        country TEXT,
+        fabric_type TEXT,
+        segment TEXT,
+        wholesale_roll REAL,
+        wholesale_piece REAL,
+        price_roll_85_90 REAL,
+        price_piece_85_90 REAL,
+        price_roll_90_95 REAL,
+        price_piece_90_95 REAL,
+        price_roll_95_100 REAL,
+        price_piece_95_100 REAL,
+        special_status TEXT,
+        image_url TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS hardware_catalog (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        article TEXT,
+        name TEXT,
+        collection TEXT,
+        status TEXT,
+        multiplicity TEXT,
+        brand_country TEXT,
+        unit TEXT,
+        currency TEXT,
+        price_rrc REAL,
+        price_opt REAL,
+        image_url TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS fabrics_stock_spb (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        catalog_id INTEGER,
+        name TEXT,
+        quantity REAL,
+        free_quantity REAL,
+        unit TEXT,
+        arrival_date TEXT,
+        reserved TEXT,
+        additional_info TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS fabrics_stock_msk (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        catalog_id INTEGER,
+        name TEXT,
+        quantity REAL,
+        free_quantity REAL,
+        unit TEXT,
+        arrival_date TEXT,
+        reserved TEXT,
+        additional_info TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS hardware_stock_spb (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        catalog_id INTEGER,
+        name TEXT,
+        article TEXT,
+        quantity REAL,
+        free_quantity REAL,
+        unit TEXT,
+        arrival_date TEXT,
+        reserved TEXT,
+        additional_info TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS hardware_stock_msk (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        catalog_id INTEGER,
+        name TEXT,
+        article TEXT,
+        quantity REAL,
+        free_quantity REAL,
+        unit TEXT,
+        arrival_date TEXT,
+        reserved TEXT,
+        additional_info TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_fabrics_stock_spb_catalog_id ON fabrics_stock_spb(catalog_id);
+    CREATE INDEX IF NOT EXISTS idx_fabrics_stock_msk_catalog_id ON fabrics_stock_msk(catalog_id);
+    CREATE INDEX IF NOT EXISTS idx_hardware_stock_spb_catalog_id ON hardware_stock_spb(catalog_id);
+    CREATE INDEX IF NOT EXISTS idx_hardware_stock_msk_catalog_id ON hardware_stock_msk(catalog_id);
+    """
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.executescript(create_sql)
+        await db.commit()

@@ -1,155 +1,31 @@
 import aiosqlite
 from config import DB_PATH, DEFAULT_CITY
 
-CREATE_SQL = [
-    """
-    CREATE TABLE IF NOT EXISTS products (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      city TEXT NOT NULL DEFAULT 'msk',
-      section TEXT NOT NULL,             -- 'fabrics' | 'hardware'
-      category TEXT NOT NULL,
-      subcategory TEXT,
-      name TEXT NOT NULL,
-      article TEXT,
-      country TEXT,
-      fabric_type TEXT,
-      segment TEXT,
-      collection TEXT,
-      brand_country TEXT,
-      multiplicity TEXT,
-      unit TEXT,
-      currency TEXT,
-      status TEXT,
-      -- ткани: цены по коридорам (могут быть NULL для фурнитуры)
-      price_piece_85_90 REAL,
-      price_roll_85_90  REAL,
-      price_piece_90_95 REAL,
-      price_roll_90_95  REAL,
-      price_piece_95_100 REAL,
-      price_roll_95_100  REAL,
-      -- фурнитура:
-      price_rrc REAL,
-      price_opt REAL,
-      special TEXT,                      -- дополнительная отметка (распродажа, новинка и т.д.)
-      in_stock INTEGER,
-      image_url TEXT
-    );
-    """,
-    "CREATE INDEX IF NOT EXISTS idx_section_cat ON products(section, category);",
-    "CREATE INDEX IF NOT EXISTS idx_city_section_cat ON products(city, section, category);",
-    """
-    CREATE TABLE IF NOT EXISTS stock_items (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      city TEXT NOT NULL DEFAULT 'msk',
-      section TEXT NOT NULL,
-      category TEXT NOT NULL,
-      name TEXT NOT NULL,
-      article TEXT,
-      quantity REAL,
-      unit TEXT,
-      status TEXT
-    );
-    """,
-    "CREATE INDEX IF NOT EXISTS idx_stock_section_cat ON stock_items(section, category);",
-    "CREATE INDEX IF NOT EXISTS idx_stock_city_section_cat ON stock_items(city, section, category);",
-    """
-    CREATE TABLE IF NOT EXISTS settings (
-      key TEXT PRIMARY KEY,
-      value TEXT
-    );
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS users (
-      user_id INTEGER PRIMARY KEY,
-      username TEXT,
-      full_name TEXT,
-      is_blocked INTEGER NOT NULL DEFAULT 0
-    );
-    """,
-    "CREATE INDEX IF NOT EXISTS idx_users_blocked ON users(is_blocked);",
-]
 
-async def init_db() -> None:
-    async with aiosqlite.connect(DB_PATH) as db:
-        for sql in CREATE_SQL:
-            await db.execute(sql)
-        await _ensure_product_columns(db)
-        await _ensure_stock_columns(db)
-        await db.commit()
-
-
-async def _ensure_product_columns(db: aiosqlite.Connection) -> None:
-    """Добавляет отсутствующие колонки в таблицу products."""
-
-    required = {
-        "city": "TEXT DEFAULT 'msk'",
-        "collection": "TEXT",
-        "brand_country": "TEXT",
-        "multiplicity": "TEXT",
-        "unit": "TEXT",
-        "currency": "TEXT",
-        "status": "TEXT",
-    }
-
-    cur = await db.execute("PRAGMA table_info(products)")
-    existing = {row[1] for row in await cur.fetchall()}
-
-    for column, definition in required.items():
-        if column in existing:
-            continue
-        await db.execute(f"ALTER TABLE products ADD COLUMN {column} {definition}")
-
-
-async def _ensure_stock_columns(db: aiosqlite.Connection) -> None:
-    """Добавляет отсутствующие колонки в таблицу stock_items."""
-
-    required = {
-        "city": "TEXT DEFAULT 'msk'",
-        "status": "TEXT",
-    }
-
-    cur = await db.execute("PRAGMA table_info(stock_items)")
-    existing = {row[1] for row in await cur.fetchall()}
-
-    for column, definition in required.items():
-        if column in existing:
-            continue
-        await db.execute(f"ALTER TABLE stock_items ADD COLUMN {column} {definition}")
-
-
-async def upsert_user(user_id: int, username: str | None, full_name: str | None) -> None:
-    """Сохраняет пользователя для рассылок и снимает отметку блокировки."""
+async def upsert_user(tg_id: int) -> None:
+    """Сохраняет Telegram ID пользователя для последующих рассылок."""
 
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
-            """
-            INSERT INTO users(user_id, username, full_name, is_blocked)
-            VALUES(?, ?, ?, 0)
-            ON CONFLICT(user_id) DO UPDATE SET
-                username=excluded.username,
-                full_name=excluded.full_name,
-                is_blocked=0
-            """,
-            (user_id, username, full_name),
+            "INSERT OR IGNORE INTO users(tg_id) VALUES(?)",
+            (tg_id,),
         )
         await db.commit()
 
 
-async def mark_user_blocked(user_id: int) -> None:
-    """Отмечает пользователя как недоступного для дальнейших рассылок."""
+async def mark_user_blocked(tg_id: int) -> None:
+    """Удаляет пользователя из рассылки, если он заблокировал бота."""
 
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("UPDATE users SET is_blocked=1 WHERE user_id=?", (user_id,))
+        await db.execute("DELETE FROM users WHERE tg_id=?", (tg_id,))
         await db.commit()
 
 
 async def fetch_active_users() -> list[int]:
-    """Возвращает идентификаторы пользователей, готовых к рассылке."""
+    """Возвращает список Telegram ID для рассылки."""
 
     async with aiosqlite.connect(DB_PATH) as db:
-        cur = await db.execute(
-            "SELECT user_id FROM users WHERE is_blocked=0 ORDER BY user_id"
-        )
+        cur = await db.execute("SELECT tg_id FROM users ORDER BY id")
         rows = await cur.fetchall()
     return [int(row[0]) for row in rows]
 
@@ -293,3 +169,41 @@ async def fetch_stock_item(pid: int) -> dict:
             return {}
         cols = [c[0] for c in cur.description]
         return dict(zip(cols, row))
+
+
+async def _table_has_column(db: aiosqlite.Connection, table: str, column: str) -> bool:
+    """Проверяет наличие столбца в таблице перед выполнением выборки."""
+
+    cur = await db.execute(f"PRAGMA table_info({table})")
+    columns = [row[1] for row in await cur.fetchall()]
+    return column in columns
+
+
+async def find_catalog_product_by_article(article: str) -> tuple[str, dict] | None:
+    """Ищет товар по артикулу в каталогах тканей и фурнитуры."""
+
+    normalized = (article or "").strip()
+    if not normalized:
+        return None
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT * FROM hardware_catalog WHERE article = ? LIMIT 1",
+            (normalized,),
+        )
+        row = await cur.fetchone()
+        if row:
+            cols = [c[0] for c in cur.description]
+            return "hardware", dict(zip(cols, row))
+
+        if await _table_has_column(db, "fabrics_catalog", "article"):
+            cur = await db.execute(
+                "SELECT * FROM fabrics_catalog WHERE article = ? LIMIT 1",
+                (normalized,),
+            )
+            row = await cur.fetchone()
+            if row:
+                cols = [c[0] for c in cur.description]
+                return "fabrics", dict(zip(cols, row))
+
+    return None
