@@ -174,6 +174,14 @@ def empty_catalog_keyboard(is_admin: bool) -> InlineKeyboardMarkup:
         ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
+
+def cancel_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура отмены для сценариев с состояниями."""
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="Отмена", callback_data="cancel_fsm")]]
+    )
+
 def pager(prefix: str, items: list[tuple[str, str]], page: int, total: int) -> InlineKeyboardMarkup:
     rows = [[InlineKeyboardButton(text=title, callback_data=f"{prefix}:open:{item_id}")]
             for title, item_id in items]

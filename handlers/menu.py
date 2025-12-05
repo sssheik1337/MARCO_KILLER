@@ -17,6 +17,7 @@ from structure.keyboards import (
     empty_catalog_keyboard,
     city_selector,
     kb_stock_select_city,
+    cancel_keyboard,
 )
 from structure.markdown import (
     escape_user,
@@ -92,10 +93,7 @@ async def _show_catalog_status(
     if not count:
         await send_md_safe(
             target,
-            (
-                "Каталог ещё не загружен. Пожалуйста, импортируйте "
-                "прайс-листы в админ-панели."
-            ),
+            "Каталог пока пуст. Позиции появятся позже.",
             reply_markup=await _main_menu(user_id),
         )
         return
@@ -228,7 +226,7 @@ async def _send_catalog_sections(target: Message, user_id: int, page: int = 1) -
         if "no such table" in str(exc).lower():
             await send_md_safe(
                 target,
-                "Каталог ещё не загружен. Пожалуйста, импортируйте прайс-листы в админ-панели.",
+                "Каталог пока пуст. Позиции появятся позже.",
                 reply_markup=await _main_menu(user_id),
             )
             logger.warning("Таблица products недоступна: %s", exc)
@@ -237,7 +235,7 @@ async def _send_catalog_sections(target: Message, user_id: int, page: int = 1) -
     if not sections:
         await send_md_safe(
             target,
-            "Каталог пуст: загрузите XLSX тканей и фурнитуры",
+            "Каталог пока пуст. Позиции появятся позже.",
             reply_markup=empty_catalog_keyboard(_is_admin(user_id)),
         )
         return False
@@ -264,7 +262,7 @@ async def _send_stock_sections(target: Message, user_id: int, page: int = 1) -> 
     if not sections:
         await send_md_safe(
             target,
-            "Наличие пока не загружено: импортируйте XLSX с остатками.",
+            "Данные об остатках пока отсутствуют.",
             reply_markup=await _main_menu(user_id),
         )
         return False
@@ -343,7 +341,7 @@ async def open_catalog_section(cb: CallbackQuery):
     city = _user_city(cb.from_user.id)
     cats = await db_utils.fetch_categories(section, city)
     if not cats:
-        await send_md_safe(cb.message, "Здесь пока пусто.")
+        await send_md_safe(cb.message, "В этом разделе пока нет позиций.")
         await cb.answer()
         return
     enumerated = [(name, str(idx)) for idx, name in enumerate(cats)]
@@ -496,7 +494,7 @@ async def open_stock_section(cb: CallbackQuery):
     city = _user_city(cb.from_user.id)
     cats = await db_utils.fetch_stock_categories(section, city)
     if not cats:
-        await send_md_safe(cb.message, "Здесь пока нет остатков.")
+        await send_md_safe(cb.message, "В этом разделе пока нет позиций.")
         await cb.answer()
         return
     enumerated = [(name, str(idx)) for idx, name in enumerate(cats)]
@@ -758,6 +756,7 @@ async def _start_request(cb: CallbackQuery, state: FSMContext, request_key: str)
     await send_md_safe(
         cb.message,
         _REQUEST_PROMPTS[request_key],
+        reply_markup=cancel_keyboard(),
     )
     await cb.answer()
 
@@ -842,6 +841,7 @@ async def handle_support_request(msg: Message, state: FSMContext):
         await send_md_safe(
             msg,
             "Пожалуйста, отправьте текстовое сообщение или контакт.",
+            reply_markup=cancel_keyboard(),
         )
         return
 
@@ -855,3 +855,13 @@ async def handle_support_request(msg: Message, state: FSMContext):
     )
 
     await state.clear()
+
+
+@router.callback_query(F.data == "cancel_fsm")
+async def cancel_fsm(cb: CallbackQuery, state: FSMContext):
+    """Отменяет текущее состояние и возвращает пользователя в главное меню."""
+
+    await state.clear()
+    menu_markup = await _main_menu(cb.from_user.id)
+    await send_md_safe(cb.message, "Действие отменено.", reply_markup=menu_markup)
+    await cb.answer()
