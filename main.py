@@ -4,6 +4,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import BotCommand
 from config import BOT_TOKEN, LOG_LEVEL
 from handlers import start as start_handlers
 from handlers import menu as menu_handlers
@@ -35,6 +36,9 @@ async def main() -> None:
     dp.include_router(stock_handlers.router)
     dp.include_router(admin_handlers.router)
     dp.include_router(fallback_handlers.router)
+
+    # Устанавливаем описание команды /start, чтобы кнопка меню отображалась рядом с полем ввода
+    await bot.set_my_commands([BotCommand(command="start", description="Главное меню")])
 
     await dp.start_polling(bot)
 
