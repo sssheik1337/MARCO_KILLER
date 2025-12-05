@@ -194,6 +194,25 @@ async def add_stock_items(
     return inserted_count
 
 
+async def fetch_stock_items(city: str, section: str) -> list[dict]:
+    """Возвращает остатки по городу и разделу без дополнительной фильтрации."""
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            """
+            SELECT id, city, section, code, article, name, quantity, unit, extra_info, date_in
+            FROM stock_items
+            WHERE city = ?
+              AND section = ?
+            ORDER BY name
+            """,
+            (city, section),
+        )
+        rows = await cur.fetchall()
+        columns = [col[0] for col in cur.description]
+    return [dict(zip(columns, row)) for row in rows]
+
+
 async def fetch_stock_sections(city: str = DEFAULT_CITY) -> list[str]:
     """Возвращает разделы из таблицы наличия для указанного города."""
 
@@ -207,15 +226,13 @@ async def fetch_stock_sections(city: str = DEFAULT_CITY) -> list[str]:
 
 
 async def fetch_stock_categories(section: str, city: str = DEFAULT_CITY) -> list[str]:
-    """Возвращает категории наличия для раздела и города."""
+    """Возвращает список категорий для раздела и города."""
 
-    async with aiosqlite.connect(DB_PATH) as db:
-        cur = await db.execute(
-            "SELECT DISTINCT category FROM stock_items WHERE section=? AND city=? ORDER BY category",
-            (section, city),
-        )
-        rows = await cur.fetchall()
-    return [row[0] for row in rows]
+    items = await fetch_stock_items(city, section)
+    if not items:
+        return []
+
+    return ["Все позиции"]
 
 
 async def fetch_stock_products_by_category(
@@ -223,13 +240,12 @@ async def fetch_stock_products_by_category(
 ) -> list[tuple[int, str]]:
     """Возвращает товары наличия указанной категории и города."""
 
-    async with aiosqlite.connect(DB_PATH) as db:
-        cur = await db.execute(
-            "SELECT id, name FROM stock_items WHERE section=? AND category=? AND city=? ORDER BY name",
-            (section, category, city),
-        )
-        rows = await cur.fetchall()
-    return [(int(row[0]), row[1]) for row in rows]
+    items = await fetch_stock_items(city, section)
+    return [
+        (int(item.get("id")), item.get("name"))
+        for item in items
+        if item.get("id") is not None and item.get("name")
+    ]
 
 
 async def fetch_stock_item(pid: int) -> dict:
