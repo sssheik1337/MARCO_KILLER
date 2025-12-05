@@ -1,4 +1,5 @@
 """Структуры данных для каталога и остатков."""
+
 from dataclasses import dataclass
 from typing import Literal
 
@@ -21,17 +22,24 @@ class StockItemCatalog:
 
 
 @dataclass
-class StockItemCity:
-    """Элемент остатков по городу."""
+class StockItemRow:
+    """Единичная запись остатка."""
 
-    city: Literal["msk", "spb"]
+    id: int
+    code: str | None
     article: str | None
     name: str
-    category: str | None
-    type: str | None
-    quantity: float | None
-    free_quantity: float | None
-    unit: str | None
-    program: str | None
-    extra: str | None
-    arrival_date: str | None  # без нормализации
+    quantity: float
+    unit: str
+    extra_info: str | None
+    date_in: str | None
+
+
+@dataclass
+class StockItemCity:
+    """Коллекция остатков по городу и разделу."""
+
+    city: Literal["msk", "spb"]
+    section: Literal["fabrics", "hardware"]
+    items: list[StockItemRow]
+

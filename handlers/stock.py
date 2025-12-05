@@ -39,15 +39,18 @@ async def on_stock_select_section(cb: CallbackQuery):
     user_selection["section"] = section
     city_label = "Москва" if city == "msk" else "Санкт-Петербург"
     section_label = "Ткани" if section == "fabrics" else "Фурнитура"
-    items = await load_city_stock(city, section)
-    if not items:
-        await send_md_safe(cb.message, "Данные об остатках пока отсутствуют.")
+    stock = await load_city_stock(city, section)
+    if not stock.items:
+        await send_md_safe(
+            cb.message,
+            "Данные об остатках пока отсутствуют. Пожалуйста, обновите остатки в админ-панели.",
+        )
     else:
         await send_md_safe(
             cb.message,
             (
                 f"Вы выбрали: {city_label}, раздел: {section_label}.\n"
-                f"Загружено позиций: {len(items)}"
+                f"Загружено позиций: {len(stock.items)}"
             ),
         )
     await cb.answer()

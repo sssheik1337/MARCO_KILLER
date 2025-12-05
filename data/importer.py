@@ -659,7 +659,8 @@ def parse_hardware_stock_msk(stream: SourceType) -> list[dict]:
         if not rows:
             return []
 
-        logger.info(f"Импорт {table_type} для города msk")
+        city = "msk"
+        logger.info("Импорт %s для города %s", table_type, city)
 
         required_titles = [
             "Код товара",
@@ -734,7 +735,7 @@ def parse_hardware_stock_msk(stream: SourceType) -> list[dict]:
             }
             items.append(item)
 
-        logger.info(f"Получено валидных записей: {len(items)}")
+        logger.info("[IMPORT DONE] Type=%s City=%s Items=%s", table_type, city, len(items))
 
         return items
     except Exception as exc:  # noqa: BLE001
@@ -751,7 +752,8 @@ def parse_hardware_stock_spb(stream: SourceType) -> list[dict]:
         if not rows:
             return []
 
-        logger.info(f"Импорт {table_type} для города spb")
+        city = "spb"
+        logger.info("Импорт %s для города %s", table_type, city)
 
         base_headers = ["Номенклатура", "Остаток", "Свободный остаток"]
 
@@ -855,7 +857,7 @@ def parse_hardware_stock_spb(stream: SourceType) -> list[dict]:
             }
             items.append(item)
 
-        logger.info(f"Получено валидных записей: {len(items)}")
+        logger.info("[IMPORT DONE] Type=%s City=%s Items=%s", table_type, city, len(items))
 
         return items
     except Exception as exc:  # noqa: BLE001
@@ -872,7 +874,8 @@ def parse_fabrics_stock_msk(stream: SourceType) -> list[dict]:
         if not rows:
             return []
 
-        logger.info(f"Импорт {table_type} для города msk")
+        city = "msk"
+        logger.info("Импорт %s для города %s", table_type, city)
 
         required_titles = [
             "Код товара",
@@ -944,7 +947,7 @@ def parse_fabrics_stock_msk(stream: SourceType) -> list[dict]:
             }
             items.append(item)
 
-        logger.info(f"Получено валидных записей: {len(items)}")
+        logger.info("[IMPORT DONE] Type=%s City=%s Items=%s", table_type, city, len(items))
 
         return items
     except Exception as exc:  # noqa: BLE001
@@ -961,7 +964,8 @@ def parse_fabrics_stock_spb(stream: SourceType) -> list[dict]:
         if not rows:
             return []
 
-        logger.info(f"Импорт {table_type} для города spb")
+        city = "spb"
+        logger.info("Импорт %s для города %s", table_type, city)
 
         base_headers = ["Номенклатура", "Остаток", "Свободный остаток"]
 
@@ -1053,7 +1057,7 @@ def parse_fabrics_stock_spb(stream: SourceType) -> list[dict]:
             }
             items.append(item)
 
-        logger.info(f"Получено валидных записей: {len(items)}")
+        logger.info("[IMPORT DONE] Type=%s City=%s Items=%s", table_type, city, len(items))
 
         return items
     except Exception as exc:  # noqa: BLE001
