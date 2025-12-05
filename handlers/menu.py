@@ -3,10 +3,11 @@ import logging
 from collections import defaultdict
 from typing import Any
 
+import aiosqlite
 from aiogram import Router, F
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup
-from config import PAGE_SIZE, ADMINS, DEFAULT_CITY
+from config import PAGE_SIZE, ADMINS, DEFAULT_CITY, DB_PATH
 from structure.keyboards import (
     catalog_menu,
     main_menu_with_link,
@@ -67,6 +68,45 @@ async def _ask_city(target: Message, action: str) -> None:
     await send_md_safe(target, "Выберите город:", reply_markup=city_selector(action))
 
 
+async def _catalog_items_count(table: str) -> int | None:
+    """Возвращает количество позиций в каталоге или None, если таблицы нет."""
+
+    try:
+        async with aiosqlite.connect(DB_PATH) as db:
+            cur = await db.execute(f"SELECT COUNT(*) FROM {table}")
+            row = await cur.fetchone()
+            return int(row[0]) if row else 0
+    except aiosqlite.Error as exc:
+        if "no such table" in str(exc).lower():
+            return None
+        logger.exception("Ошибка при чтении каталога %s: %s", table, exc)
+        return None
+
+
+async def _show_catalog_status(
+    target: Message, user_id: int, table: str, title: str
+) -> None:
+    """Показывает пользователю статус выбранного каталога."""
+
+    count = await _catalog_items_count(table)
+    if not count:
+        await send_md_safe(
+            target,
+            (
+                "Каталог ещё не загружен. Пожалуйста, импортируйте "
+                "прайс-листы в админ-панели."
+            ),
+            reply_markup=await _main_menu(user_id),
+        )
+        return
+
+    await send_md_safe(
+        target,
+        f"В каталоге {title} доступно позиций: {count}.",
+        reply_markup=await _main_menu(user_id),
+    )
+
+
 # --- настройки обращений ---
 
 _REQUEST_TYPES = {
@@ -123,18 +163,17 @@ async def on_home(cb: CallbackQuery):
     await cb.answer()
 
 
-# --- новое главное меню ---
+async def _show_catalog_menu(target: Message) -> None:
+    """Отображает меню выбора раздела каталога."""
+
+    await send_md_safe(target, "Выберите раздел каталога:", reply_markup=catalog_menu())
 
 
 @router.callback_query(F.data == "catalog")
 async def on_catalog(cb: CallbackQuery):
     """Показывает выбор раздела каталога."""
 
-    await send_md_safe(
-        cb.message,
-        "Выберите раздел каталога:",
-        reply_markup=catalog_menu(),
-    )
+    await _show_catalog_menu(cb.message)
     await cb.answer()
 
 
@@ -142,12 +181,7 @@ async def on_catalog(cb: CallbackQuery):
 async def on_catalog_fabrics(cb: CallbackQuery):
     """Открывает каталог тканей из общего прайс-листа."""
 
-    if profiles.get_city(cb.from_user.id) is None:
-        await _ask_city(cb.message, "catalog")
-        await cb.answer()
-        return
-
-    await _send_catalog_sections(cb.message, cb.from_user.id, 1)
+    await _show_catalog_status(cb.message, cb.from_user.id, "fabrics_catalog", "тканей")
     await cb.answer()
 
 
@@ -155,25 +189,9 @@ async def on_catalog_fabrics(cb: CallbackQuery):
 async def on_catalog_hardware(cb: CallbackQuery):
     """Открывает каталог фурнитуры из общего прайс-листа."""
 
-    if profiles.get_city(cb.from_user.id) is None:
-        await _ask_city(cb.message, "catalog")
-        await cb.answer()
-        return
-
-    await _send_catalog_sections(cb.message, cb.from_user.id, 1)
-    await cb.answer()
-
-
-@router.callback_query(F.data == "menu:price")
-async def on_price(cb: CallbackQuery):
-    """Показывает прайс с текущим курсом и разделами каталога."""
-
-    if profiles.get_city(cb.from_user.id) is None:
-        await _ask_city(cb.message, "catalog")
-        await cb.answer()
-        return
-
-    await _send_catalog_sections(cb.message, cb.from_user.id, 1)
+    await _show_catalog_status(
+        cb.message, cb.from_user.id, "hardware_catalog", "фурнитуры"
+    )
     await cb.answer()
 
 
@@ -204,7 +222,18 @@ async def _send_catalog_sections(target: Message, user_id: int, page: int = 1) -
     """Показывает разделы каталога и возвращает успех отображения."""
 
     city = _user_city(user_id)
-    sections = await db_utils.fetch_sections(city)
+    try:
+        sections = await db_utils.fetch_sections(city)
+    except aiosqlite.Error as exc:
+        if "no such table" in str(exc).lower():
+            await send_md_safe(
+                target,
+                "Каталог ещё не загружен. Пожалуйста, импортируйте прайс-листы в админ-панели.",
+                reply_markup=await _main_menu(user_id),
+            )
+            logger.warning("Таблица products недоступна: %s", exc)
+            return False
+        raise
     if not sections:
         await send_md_safe(
             target,
@@ -267,12 +296,7 @@ def _format_quantity_value(qty: float | None, unit: str | None) -> str:
 
 @router.callback_query(F.data == "menu:catalog")
 async def catalog_root(cb: CallbackQuery):
-    if profiles.get_city(cb.from_user.id) is None:
-        await _ask_city(cb.message, "catalog")
-        await cb.answer()
-        return
-
-    await _send_catalog_sections(cb.message, cb.from_user.id, 1)
+    await _show_catalog_menu(cb.message)
     await cb.answer()
 
 
@@ -294,7 +318,7 @@ async def choose_city(cb: CallbackQuery):
     _, action, city = cb.data.split(":")
     profiles.set_city(cb.from_user.id, city)
     if action == "catalog":
-        await _send_catalog_sections(cb.message, cb.from_user.id, 1)
+        await _show_catalog_menu(cb.message)
     else:
         await _send_stock_sections(cb.message, cb.from_user.id, 1)
     await cb.answer("Город обновлён")

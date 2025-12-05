@@ -11,24 +11,23 @@ def main_menu(is_admin: bool, ready_catalog_url: str | None = None) -> InlineKey
     rows: list[list[InlineKeyboardButton]] = [
         [
             InlineKeyboardButton(text="📚 Каталог", callback_data="catalog"),
-            InlineKeyboardButton(text="💰 Прайс", callback_data="menu:price"),
+            InlineKeyboardButton(text="📦 Наличие", callback_data="stock"),
         ],
         [
-            InlineKeyboardButton(text="🧺 Наличие", callback_data="stock"),
             InlineKeyboardButton(text="📇 Контакты", callback_data="menu:contacts"),
-        ],
-        [
             InlineKeyboardButton(text="🧭 Как проехать", callback_data="menu:route"),
+        ],
+        [
             InlineKeyboardButton(text="📄 Реквизиты", callback_data="menu:requisites"),
-        ],
-        [
             InlineKeyboardButton(text="📞 Заявка на звонок", callback_data="menu:callback"),
-            InlineKeyboardButton(text="❓ Задать вопрос", callback_data="menu:question"),
         ],
         [
+            InlineKeyboardButton(text="❓ Задать вопрос", callback_data="menu:question"),
             InlineKeyboardButton(
                 text="👤 Связь с руководителем", callback_data="menu:boss"
             ),
+        ],
+        [
             InlineKeyboardButton(text="🐞 Сообщить об ошибке", callback_data="menu:bug"),
         ],
         [
