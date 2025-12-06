@@ -30,6 +30,16 @@ class SchemaMismatchError(Exception):
         logger.error(f"[SCHEMA ERROR] type={table_type} missing={self.missing}")
 
 
+class ImportErrorFriendly(Exception):
+    """Единое дружелюбное исключение для ошибок импорта."""
+
+    def __init__(self, title: str, details: str | None = None, template: str | None = None):
+        super().__init__(title)
+        self.title = title
+        self.details = details
+        self.template = template
+
+
 TABLE_SCHEMAS = {
     "fabrics_catalog": {
         "required_columns": [
@@ -113,6 +123,17 @@ TABLE_SCHEMAS = {
 
 
 logger = logging.getLogger(__name__)
+
+
+def _wrap_import_error(table_type: str, exc: Exception) -> ImportErrorFriendly:
+    """Формирует дружелюбное исключение с учётом шаблона таблицы."""
+
+    template = TABLE_SCHEMAS.get(table_type, {}).get("template_path")
+    return ImportErrorFriendly(
+        title=f"Не удалось импортировать таблицу {table_type}",
+        details=str(exc),
+        template=template,
+    )
 
 
 # ---------------------------------- служебные функции ----------------------------------
@@ -237,8 +258,9 @@ def _number_or_error(value: object, column_title: str) -> float | None:
 
     text = _string(value)
     if text not in (None, "", "-", "—"):
-        raise Exception(
-            f"Ошибка: некорректное числовое значение в столбце «{column_title}»."
+        raise ImportErrorFriendly(
+            title="Некорректное значение числа",
+            details=f"Столбец «{column_title}» содержит некорректное значение.",
         )
 
     return None
@@ -263,7 +285,10 @@ def _detect_format(source: SourceType) -> str:
         prefix_bytes = prefix.encode() if isinstance(prefix, str) else prefix
 
     def _xls_not_supported() -> None:
-        raise Exception("Формат XLS не поддерживается. Используйте XLSX")
+        raise ImportErrorFriendly(
+            title="Формат XLS не поддерживается",
+            details="Используйте XLSX или CSV",
+        )
 
     if name:
         lowered = name.lower()
@@ -290,8 +315,9 @@ def _load_xlsx_rows(source: SourceType) -> list[list[object]]:
         workbook = load_workbook(current, data_only=True)
     except Exception as exc:  # noqa: BLE001
         logger.error("Ошибка загрузки XLSX", exc_info=True)
-        raise Exception(
-            "Ошибка при чтении XLSX-файла. Проверьте, что файл не повреждён и соответствует формату XLSX."
+        raise ImportErrorFriendly(
+            title="Ошибка при чтении XLSX-файла",
+            details="Проверьте, что файл не повреждён и соответствует формату XLSX.",
         ) from exc
 
     try:
@@ -327,13 +353,22 @@ def _load_csv_rows(source: SourceType) -> list[list[object]]:
         return df.where(pd.notna(df), None).values.tolist()
     except UnicodeDecodeError as exc:
         logger.error("Ошибка декодирования CSV", exc_info=True)
-        raise Exception("Ошибка чтения CSV: некорректная кодировка файла.") from exc
+        raise ImportErrorFriendly(
+            title="Ошибка чтения CSV",
+            details="Некорректная кодировка файла.",
+        ) from exc
     except pd.errors.ParserError as exc:  # type: ignore[attr-defined]
         logger.error("Ошибка парсинга CSV", exc_info=True)
-        raise Exception("Ошибка: некорректная структура CSV-файла.") from exc
+        raise ImportErrorFriendly(
+            title="Ошибка чтения CSV",
+            details="Некорректная структура CSV-файла.",
+        ) from exc
     except Exception as exc:  # noqa: BLE001
         logger.error("Неизвестная ошибка при чтении CSV", exc_info=True)
-        raise Exception("Ошибка чтения CSV-файла. Проверьте корректность данных.") from exc
+        raise ImportErrorFriendly(
+            title="Ошибка чтения CSV-файла",
+            details="Проверьте корректность данных.",
+        ) from exc
 
 
 def _load_rows(source: SourceType) -> list[list[object]]:
@@ -352,8 +387,9 @@ def _ensure_columns(columns: dict[str, object], required: list[str]) -> None:
 
     for title in required:
         if _normalize_header(title) not in columns:
-            raise Exception(
-                f"Ошибка: отсутствует столбец «{title}». Проверьте разметку таблицы."
+            raise ImportErrorFriendly(
+                title="Загруженная таблица не соответствует формату",
+                details=f"Отсутствует столбец «{title}».",
             )
 
 
@@ -371,7 +407,11 @@ def _validate_headers(table_type: str, headers: list[str]) -> None:
         logger.error(
             f"Ошибка структуры ({table_type}): отсутствуют колонки: {missing}",
         )
-        raise SchemaMismatchError(table_type, missing)
+        raise ImportErrorFriendly(
+            title="Загруженная таблица не соответствует формату",
+            details="Отсутствующие столбцы:\n" + "\n".join(f"• {c}" for c in missing),
+            template=TABLE_SCHEMAS[table_type]["template_path"],
+        )
 
 
 def _row_value(row: list[object], index: int) -> object:
@@ -436,8 +476,10 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
                 break
 
         if header_index is None:
-            raise Exception(
-                "Ошибка: отсутствует столбец «Наименование коллекции». Проверьте разметку таблицы."
+            raise ImportErrorFriendly(
+                title="Загруженная таблица не соответствует формату",
+                details="Отсутствует столбец «Наименование коллекции».",
+                template=TABLE_SCHEMAS[table_type]["template_path"],
             )
 
         header_row = rows[header_index]
@@ -476,8 +518,10 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
             ("отрез (95-100)", ("95_100", "piece")),
         ]:
             if key not in price_columns:
-                raise Exception(
-                    f"Ошибка: отсутствует столбец «{human}». Проверьте разметку таблицы."
+                raise ImportErrorFriendly(
+                    title="Загруженная таблица не соответствует формату",
+                    details=f"Отсутствует столбец «{human}».",
+                    template=TABLE_SCHEMAS[table_type]["template_path"],
                 )
 
         status_index = columns.get(_normalize_header("статус"))
@@ -556,9 +600,11 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
         logger.info(f"Получено валидных записей: {len(items)}")
 
         return items
+    except ImportErrorFriendly:
+        raise
     except Exception as exc:  # noqa: BLE001
         logger.error("Ошибка импорта каталога тканей", exc_info=True)
-        raise Exception(f"Ошибка при импорте каталога тканей: {exc}") from exc
+        raise _wrap_import_error(table_type, exc) from exc
 
 
 def parse_hardware_catalog(stream: SourceType) -> list[dict]:
@@ -643,9 +689,11 @@ def parse_hardware_catalog(stream: SourceType) -> list[dict]:
         logger.info(f"Получено валидных записей: {len(items)}")
 
         return items
+    except ImportErrorFriendly:
+        raise
     except Exception as exc:  # noqa: BLE001
         logger.error("Ошибка импорта каталога фурнитуры", exc_info=True)
-        raise Exception(f"Ошибка при импорте каталога фурнитуры: {exc}") from exc
+        raise _wrap_import_error(table_type, exc) from exc
 
 
 # ---------------------------------- парсинг остатков ----------------------------------
@@ -746,9 +794,11 @@ def parse_hardware_stock_msk(stream: SourceType) -> list[dict]:
         logger.info("[IMPORT DONE] Type=%s City=%s Items=%s", table_type, city, len(items))
 
         return items
+    except ImportErrorFriendly:
+        raise
     except Exception as exc:  # noqa: BLE001
         logger.error("Ошибка импорта остатков фурнитуры (Москва)", exc_info=True)
-        raise Exception(f"Ошибка при импорте остатков фурнитуры Москва: {exc}") from exc
+        raise _wrap_import_error(table_type, exc) from exc
 
 
 def parse_hardware_stock_spb(stream: SourceType) -> list[dict]:
@@ -778,7 +828,11 @@ def parse_hardware_stock_spb(stream: SourceType) -> list[dict]:
                 break
 
         if header_index is None or main_header is None:
-            raise Exception("Ошибка: структура таблицы остатков фурнитуры СПБ не распознана.")
+            raise ImportErrorFriendly(
+                title="Загруженная таблица не соответствует формату",
+                details="Не распознана структура таблицы остатков фурнитуры СПБ.",
+                template=TABLE_SCHEMAS[table_type]["template_path"],
+            )
 
         max_len = max(len(main_header), len(sub_header or []))
         combined_headers: list[object] = []
@@ -873,9 +927,11 @@ def parse_hardware_stock_spb(stream: SourceType) -> list[dict]:
         logger.info("[IMPORT DONE] Type=%s City=%s Items=%s", table_type, city, len(items))
 
         return items
+    except ImportErrorFriendly:
+        raise
     except Exception as exc:  # noqa: BLE001
         logger.error("Ошибка импорта остатков фурнитуры (СПБ)", exc_info=True)
-        raise Exception(f"Ошибка при импорте остатков фурнитуры СПБ: {exc}") from exc
+        raise _wrap_import_error(table_type, exc) from exc
 
 
 def parse_fabrics_stock_msk(stream: SourceType) -> list[dict]:
@@ -931,6 +987,30 @@ def parse_fabrics_stock_msk(stream: SourceType) -> list[dict]:
         df = pd.DataFrame(data_rows, columns=header_row)
         df = df.dropna(how="all")
 
+        # Проверка на попытку загрузить фурнитуру в раздел тканей
+        hardware_markers = [
+            "фурнитура",
+            "светильник",
+            "светильники",
+            "алюминий",
+            "алюминиевые",
+            "пластиковые системы",
+        ]
+        combined_text = (
+            " ".join(str(val).lower() for val in df.get("Вид номенклатуры", []).dropna().tolist())
+            + " "
+            + " ".join(
+                str(val).lower() for val in df.get("Тип номенклатуры", []).dropna().tolist()
+            )
+        )
+
+        if any(marker in combined_text for marker in hardware_markers):
+            raise ImportErrorFriendly(
+                title="Вы загрузили таблицу остатков фурнитуры в раздел остатков тканей",
+                details="Файл содержит данные, относящиеся к фурнитуре.",
+                template="templates/stock_fabrics_msk_example.xlsx",
+            )
+
         items: list[dict] = []
         for _, row in df.iterrows():
             name = _string(row.get(columns["номенклатура"]))
@@ -967,9 +1047,11 @@ def parse_fabrics_stock_msk(stream: SourceType) -> list[dict]:
         logger.info("[IMPORT DONE] Type=%s City=%s Items=%s", table_type, city, len(items))
 
         return items
+    except ImportErrorFriendly:
+        raise
     except Exception as exc:  # noqa: BLE001
         logger.error("Ошибка импорта остатков тканей (Москва)", exc_info=True)
-        raise Exception(f"Ошибка при импорте остатков тканей Москва: {exc}") from exc
+        raise _wrap_import_error(table_type, exc) from exc
 
 
 def parse_fabrics_stock_spb(stream: SourceType) -> list[dict]:
@@ -999,9 +1081,13 @@ def parse_fabrics_stock_spb(stream: SourceType) -> list[dict]:
                 break
 
         if header_index is None or main_header is None:
-            raise Exception(
-                "Ошибка: структура таблицы остатков тканей СПБ не распознана.\n"
-                "Требуемые колонки: Номенклатура, Остаток, Свободный остаток."
+            raise ImportErrorFriendly(
+                title="Загруженная таблица не соответствует формату",
+                details=(
+                    "Структура таблицы остатков тканей СПБ не распознана.\n"
+                    "Требуемые колонки: Номенклатура, Остаток, Свободный остаток."
+                ),
+                template=TABLE_SCHEMAS[table_type]["template_path"],
             )
 
         max_len = max(len(main_header), len(sub_header or []))
@@ -1082,9 +1168,11 @@ def parse_fabrics_stock_spb(stream: SourceType) -> list[dict]:
         logger.info("[IMPORT DONE] Type=%s City=%s Items=%s", table_type, city, len(items))
 
         return items
+    except ImportErrorFriendly:
+        raise
     except Exception as exc:  # noqa: BLE001
         logger.error("Ошибка импорта остатков тканей (СПБ)", exc_info=True)
-        raise Exception(f"Ошибка при импорте остатков тканей СПБ: {exc}") from exc
+        raise _wrap_import_error(table_type, exc) from exc
 
 
 def parse_fabrics(stream: SourceType, city: str | None = None, section: str | None = None):
@@ -1103,8 +1191,9 @@ def parse_stock(stream: SourceType, city: str | None = None, section: str | None
     """Заглушка для остатков: требует явного указания раздела."""
 
     if section is None:
-        raise Exception(
-            "Укажите раздел остатков (fabrics/hardware) для импорта."
+        raise ImportErrorFriendly(
+            title="Не указан раздел остатков",
+            details="Укажите раздел остатков (fabrics/hardware) для импорта.",
         )
 
     normalized = (section or "").lower()
@@ -1118,7 +1207,10 @@ def parse_stock(stream: SourceType, city: str | None = None, section: str | None
             return parse_hardware_stock_msk(stream)
         return parse_hardware_stock_spb(stream)
 
-    raise Exception("Неизвестный раздел остатков. Ожидается fabrics или hardware.")
+    raise ImportErrorFriendly(
+        title="Неизвестный раздел остатков",
+        details="Ожидается fabrics или hardware.",
+    )
 
 
 __all__ = [
@@ -1134,6 +1226,6 @@ __all__ = [
     "_string",
     "_number",
     "_number_or_error",
-    "SchemaMismatchError",
+    "ImportErrorFriendly",
     "TABLE_SCHEMAS",
 ]

@@ -24,7 +24,7 @@ from data.db_utils import (
     set_setting,
 )
 from data import importer
-from data.importer import SchemaMismatchError
+from data.importer import ImportErrorFriendly
 import aiosqlite
 from config import DB_PATH
 from structure.markdown import send_md_safe, edit_md_safe, message_to_markdown, escape_user, send_md_safe_to_chat
@@ -462,7 +462,17 @@ async def import_xlsx(msg: Message):
         return
 
     try:
-        items = parser(stream, **parser_kwargs)
+        try:
+            items = parser(stream, **parser_kwargs)
+        except ImportErrorFriendly:
+            raise
+        except Exception as exc:
+            logging.exception("Ошибка разбора файла для раздела %s", section)
+            raise ImportErrorFriendly(
+                title="Не удалось обработать файл",
+                details=str(exc),
+                template=importer.TABLE_SCHEMAS.get(target_key, {}).get("template_path"),
+            ) from exc
         if items:
             logging.info(
                 f"[IMPORT DONE] Type={target_key} City={city} Items={len(items)}"
@@ -471,128 +481,115 @@ async def import_xlsx(msg: Message):
             logging.warning(
                 f"[IMPORT WARNING] Parsed 0 items for {target_key} ({city})"
             )
-    except SchemaMismatchError as e:
-        schema = importer.TABLE_SCHEMAS[e.table_type]
-        template = schema["template_path"]
 
+        async with aiosqlite.connect(DB_PATH) as db:
+            try:
+                await db.execute("BEGIN")
+
+                if section in {"fabrics", "hardware"} and target_key.startswith("stock_"):
+                    import_count = await add_stock_items(db, items, city, section)
+                else:
+                    product_sql = (
+                        "INSERT INTO products("  # noqa: ISC003
+                        "city,section,category,subcategory,name,article,country,fabric_type,segment,"
+                        "collection,brand_country,multiplicity,unit,currency,status,"
+                        "price_piece_85_90,price_roll_85_90,price_piece_90_95,price_roll_90_95,price_piece_95_100,price_roll_95_100,"
+                        "price_rrc,price_opt,special,in_stock,image_url) "
+                        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+                    )
+
+                    payload = [
+                        (
+                            item.get("city", city),
+                            item.get("section", section),
+                            item.get("category"),
+                            item.get("subcategory"),
+                            item.get("name"),
+                            item.get("article"),
+                            item.get("country"),
+                            item.get("fabric_type"),
+                            item.get("segment"),
+                            item.get("collection"),
+                            item.get("brand_country"),
+                            item.get("multiplicity"),
+                            item.get("unit"),
+                            item.get("currency"),
+                            item.get("status"),
+                            item.get("price_piece_85_90"),
+                            item.get("price_roll_85_90"),
+                            item.get("price_piece_90_95"),
+                            item.get("price_roll_90_95"),
+                            item.get("price_piece_95_100"),
+                            item.get("price_roll_95_100"),
+                            item.get("price_rrc"),
+                            item.get("price_opt"),
+                            item.get("special"),
+                            item.get("in_stock"),
+                            item.get("image_url"),
+                        )
+                        for item in items
+                    ]
+
+                    await db.execute(
+                        "DELETE FROM products WHERE section=? AND city=?",
+                        (section, city),
+                    )
+                    if payload:
+                        await db.executemany(product_sql, payload)
+                    import_count = len(payload)
+            except Exception as exc:
+                if db.in_transaction:
+                    await db.rollback()
+                logging.exception("Ошибка импорта раздела %s", section)
+                raise ImportErrorFriendly(
+                    title="Импорт прерван из-за ошибки",
+                    details=str(exc),
+                    template=importer.TABLE_SCHEMAS.get(target_key, {}).get("template_path"),
+                ) from exc
+            else:
+                row = None
+                if section == "fabrics" and not target_key.startswith("stock_"):
+                    cursor = await db.execute(
+                        "SELECT * FROM products WHERE section=? AND city=? AND name LIKE ?",
+                        ("fabrics", city, "%BISON%"),
+                    )
+                    row = await cursor.fetchone()
+                    if row is None:
+                        logging.warning(
+                            "Не найдена коллекция BISON после импорта, выводим первую запись раздела тканей."
+                        )
+                        cursor = await db.execute(
+                            "SELECT * FROM products WHERE section=? AND city=? LIMIT 1",
+                            ("fabrics", city),
+                        )
+                    row = await cursor.fetchone()
+                    if row is not None:
+                        columns = [desc[0] for desc in cursor.description]
+                        snapshot = {column: row[idx] for idx, column in enumerate(columns)}
+                        logging.info("Запись ткани после импорта: %s", snapshot)
+                    else:
+                        logging.warning(
+                            "После импорта раздела тканей записи не найдены."
+                        )
+                if not target_key.startswith("stock_"):
+                    await db.commit()
+
+        await set_setting("import_target", "")
+        await send_md_safe(
+            msg,
+            f"Импортировано {import_count} позиций для раздела {target_config['title']}",
+            reply_markup=import_result_keyboard(),
+        )
+    except ImportErrorFriendly as e:
         text = (
-            f"Ошибка! Загруженная таблица не соответствует формату раздела «{e.table_type}».\n"
-            f"Отсутствующие столбцы:\n"
-            + "\n".join(f"• {c}" for c in e.missing)
-            + "\n\nПожалуйста, используйте корректный шаблон."
+            f"Ошибка! {e.title}.\n\n"
+            + (f"{e.details}\n\n" if e.details else "")
+            + "Пожалуйста, используйте корректный шаблон."
         )
 
         await msg.answer(text)
 
-        try:
-            await msg.answer_document(FSInputFile(template))
-        except Exception as ex:  # noqa: BLE001
-            logging.error(f"Не удалось отправить шаблон {template}: {ex}")
+        if e.template:
+            await msg.answer_document(FSInputFile(e.template))
 
         return
-    except Exception as exc:
-        logging.exception("Ошибка разбора файла для раздела %s", section)
-        await send_md_safe(
-            msg,
-            f"Не удалось обработать файл: {escape_user(str(exc))}",
-        )
-        return
-
-    async with aiosqlite.connect(DB_PATH) as db:
-        try:
-            await db.execute("BEGIN")
-
-            if section in {"fabrics", "hardware"} and target_key.startswith("stock_"):
-                import_count = await add_stock_items(db, items, city, section)
-            else:
-                product_sql = (
-                    "INSERT INTO products("  # noqa: ISC003
-                    "city,section,category,subcategory,name,article,country,fabric_type,segment,"
-                    "collection,brand_country,multiplicity,unit,currency,status,"
-                    "price_piece_85_90,price_roll_85_90,price_piece_90_95,price_roll_90_95,price_piece_95_100,price_roll_95_100,"
-                    "price_rrc,price_opt,special,in_stock,image_url) "
-                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
-                )
-
-                payload = [
-                    (
-                        item.get("city", city),
-                        item.get("section", section),
-                        item.get("category"),
-                        item.get("subcategory"),
-                        item.get("name"),
-                        item.get("article"),
-                        item.get("country"),
-                        item.get("fabric_type"),
-                        item.get("segment"),
-                        item.get("collection"),
-                        item.get("brand_country"),
-                        item.get("multiplicity"),
-                        item.get("unit"),
-                        item.get("currency"),
-                        item.get("status"),
-                        item.get("price_piece_85_90"),
-                        item.get("price_roll_85_90"),
-                        item.get("price_piece_90_95"),
-                        item.get("price_roll_90_95"),
-                        item.get("price_piece_95_100"),
-                        item.get("price_roll_95_100"),
-                        item.get("price_rrc"),
-                        item.get("price_opt"),
-                        item.get("special"),
-                        item.get("in_stock"),
-                        item.get("image_url"),
-                    )
-                    for item in items
-                ]
-
-                await db.execute(
-                    "DELETE FROM products WHERE section=? AND city=?",
-                    (section, city),
-                )
-                if payload:
-                    await db.executemany(product_sql, payload)
-                import_count = len(payload)
-        except Exception as exc:
-            if db.in_transaction:
-                await db.rollback()
-            logging.exception("Ошибка импорта раздела %s", section)
-            await send_md_safe(
-                msg,
-                f"Импорт прерван из-за ошибки: {escape_user(str(exc))}",
-            )
-            return
-        else:
-            row = None
-            if section == "fabrics" and not target_key.startswith("stock_"):
-                cursor = await db.execute(
-                    "SELECT * FROM products WHERE section=? AND city=? AND name LIKE ?",
-                    ("fabrics", city, "%BISON%"),
-                )
-                row = await cursor.fetchone()
-                if row is None:
-                    logging.warning(
-                        "Не найдена коллекция BISON после импорта, выводим первую запись раздела тканей."
-                    )
-                    cursor = await db.execute(
-                        "SELECT * FROM products WHERE section=? AND city=? LIMIT 1",
-                        ("fabrics", city),
-                    )
-                row = await cursor.fetchone()
-                if row is not None:
-                    columns = [desc[0] for desc in cursor.description]
-                    snapshot = {column: row[idx] for idx, column in enumerate(columns)}
-                    logging.info("Запись ткани после импорта: %s", snapshot)
-                else:
-                    logging.warning(
-                        "После импорта раздела тканей записи не найдены."
-                    )
-            if not target_key.startswith("stock_"):
-                await db.commit()
-
-    await set_setting("import_target", "")
-    await send_md_safe(
-        msg,
-        f"Импортировано {import_count} позиций для раздела {target_config['title']}",
-        reply_markup=import_result_keyboard(),
-    )
