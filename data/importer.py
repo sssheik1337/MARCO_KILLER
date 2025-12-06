@@ -357,12 +357,18 @@ def _load_xlsx_rows(source: SourceType) -> list[list[object]]:
 
     current = _reset_stream(source)
     try:
-        workbook = load_workbook(current, data_only=True)
-    except Exception as exc:  # noqa: BLE001
-        logger.error("Ошибка загрузки XLSX", exc_info=True)
+        workbook = load_workbook(current, data_only=True, read_only=True)
+    except KeyError as e:
         raise ImportErrorFriendly(
-            title="Ошибка при чтении XLSX-файла",
-            details="Проверьте, что файл не повреждён и соответствует формату XLSX.",
+            reason="bad_xlsx",
+            preview=[str(e)],
+            total=0,
+        ) from e
+    except Exception as exc:  # noqa: BLE001
+        raise ImportErrorFriendly(
+            reason="bad_xlsx",
+            preview=[str(exc)],
+            total=0,
         ) from exc
 
     try:

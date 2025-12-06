@@ -641,6 +641,15 @@ async def import_xlsx(msg: Message):
                 reply_markup=import_result_keyboard(),
             )
     except ImportErrorFriendly as e:
+        if getattr(e, "reason", None) == "bad_xlsx":
+            await send_md_safe(
+                msg,
+                "Ошибка: файл XLSX повреждён или сохранён в неподдерживаемом режиме Excel.\n"
+                "Пожалуйста, откройте таблицу в Excel и сохраните через:\n"
+                "Файл → Сохранить как → Excel (*.xlsx) (ОБЫЧНЫЙ, не Strict OpenXML).",
+            )
+            return
+
         text = (
             f"Ошибка! {e.title}.\n\n"
             + (f"{e.details}\n\n" if e.details else "")
