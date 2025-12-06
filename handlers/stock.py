@@ -343,7 +343,14 @@ async def on_stock_types(cb: CallbackQuery):
 async def on_stock_collections(cb: CallbackQuery):
     """Пагинация по коллекциям СПБ для раздела тканей."""
 
-    _, city, section, page_str = cb.data.split(":")
+    parts = cb.data.split(":")
+
+    # Ожидаем формат stock:collections:<city>:<section>:<page>
+    if len(parts) != 5:
+        await cb.answer("Некорректные данные", show_alert=True)
+        return
+
+    _, _, city, section, page_str = parts
     if city == "spb" and section == "fabrics":
         await _show_spb_collections(cb.message, cb.from_user.id, city, section, int(page_str))
     await cb.answer()
