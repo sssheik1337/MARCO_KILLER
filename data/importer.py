@@ -151,9 +151,35 @@ def classify_row_for_section(section: str, row: dict) -> bool:
     unit = str(row.get("Ед.") or row.get("Ед") or row.get("unit") or "").strip().lower()
 
     if section == "fabrics":
-        if unit in ("м", "м.", "метр", "метры", "m", "ед. хранения", "шт"):
+        allowed_units_fabrics = {
+            "м",
+            "м.",
+            "метр",
+            "метры",
+            "m",
+            "ед. хранения",
+            "шт",
+            "банк",
+        }
+
+        kind_text = str(row.get("Вид номенклатуры") or row.get("kind") or "").strip().lower()
+
+        if "технические материалы" in kind_text:
             return True
-        return False
+
+        hardware_markers = {
+            "фурнитура",
+            "аксессуар",
+            "светильник",
+            "система",
+            "петля",
+            "направляющая",
+        }
+
+        if any(marker in kind_text for marker in hardware_markers) and unit not in allowed_units_fabrics:
+            return False
+
+        return True
 
     if section == "hardware":
         if unit in ("шт", "компл", "комплект", "боб", "ед. хранения"):
