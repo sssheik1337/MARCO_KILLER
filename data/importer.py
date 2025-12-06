@@ -934,8 +934,8 @@ def parse_hardware_stock_spb(stream: SourceType) -> list[dict]:
         raise _wrap_import_error(table_type, exc) from exc
 
 
-def parse_fabrics_stock_msk(stream: SourceType) -> list[dict]:
-    """Парсит остатки тканей для Москвы."""
+def parse_fabrics_stock_msk(stream: SourceType) -> dict:
+    """Парсит остатки тканей для Москвы с мягкой фильтрацией посторонних строк."""
 
     try:
         table_type = "stock_fabrics_msk"
@@ -987,31 +987,10 @@ def parse_fabrics_stock_msk(stream: SourceType) -> list[dict]:
         df = pd.DataFrame(data_rows, columns=header_row)
         df = df.dropna(how="all")
 
-        # Проверка на попытку загрузить фурнитуру в раздел тканей
-        hardware_markers = [
-            "фурнитура",
-            "светильник",
-            "светильники",
-            "алюминий",
-            "алюминиевые",
-            "пластиковые системы",
-        ]
-        combined_text = (
-            " ".join(str(val).lower() for val in df.get("Вид номенклатуры", []).dropna().tolist())
-            + " "
-            + " ".join(
-                str(val).lower() for val in df.get("Тип номенклатуры", []).dropna().tolist()
-            )
-        )
-
-        if any(marker in combined_text for marker in hardware_markers):
-            raise ImportErrorFriendly(
-                title="Вы загрузили таблицу остатков фурнитуры в раздел остатков тканей",
-                details="Файл содержит данные, относящиеся к фурнитуре.",
-                template="templates/stock_fabrics_msk_example.xlsx",
-            )
+        skip_keywords = ["фурнитура", "светиль", "алюм", "профиль", "система", "деталь"]
 
         items: list[dict] = []
+        skipped: list[str] = []
         for _, row in df.iterrows():
             name = _string(row.get(columns["номенклатура"]))
             article = _string(row.get(columns["артикул"]))
@@ -1019,6 +998,13 @@ def parse_fabrics_stock_msk(stream: SourceType) -> list[dict]:
             if not name and not article:
                 logger.warning("Запись пропущена: нет артикула и наименования")
                 continue
+
+            if name:
+                lowered = name.lower()
+                if any(marker in lowered for marker in skip_keywords):
+                    logger.warning("Запись пропущена: посторонняя позиция")
+                    skipped.append(name)
+                    continue
 
             quantity = _number_or_error(row.get(columns["наличие"]), "Наличие")
             unit = _string(row.get(columns["ед."]))
@@ -1046,7 +1032,7 @@ def parse_fabrics_stock_msk(stream: SourceType) -> list[dict]:
 
         logger.info("[IMPORT DONE] Type=%s City=%s Items=%s", table_type, city, len(items))
 
-        return items
+        return {"items": items, "imported": len(items), "skipped": skipped}
     except ImportErrorFriendly:
         raise
     except Exception as exc:  # noqa: BLE001
@@ -1054,8 +1040,8 @@ def parse_fabrics_stock_msk(stream: SourceType) -> list[dict]:
         raise _wrap_import_error(table_type, exc) from exc
 
 
-def parse_fabrics_stock_spb(stream: SourceType) -> list[dict]:
-    """Парсит остатки тканей для Санкт-Петербурга."""
+def parse_fabrics_stock_spb(stream: SourceType) -> dict:
+    """Парсит остатки тканей для Санкт-Петербурга с мягкой фильтрацией посторонних строк."""
 
     try:
         table_type = "stock_fabrics_spb"
@@ -1128,13 +1114,22 @@ def parse_fabrics_stock_spb(stream: SourceType) -> list[dict]:
         df = pd.DataFrame(data_rows, columns=combined_headers)
         df = df.dropna(how="all")
 
+        skip_keywords = ["фурнитура", "светиль", "алюм", "профиль", "система", "деталь"]
+
         items: list[dict] = []
+        skipped: list[str] = []
         for _, row in df.iterrows():
             name = _string(row.get(normalized_headers[_normalize_header("Номенклатура")]))
             code_column = normalized_headers.get(_normalize_header("Код товара"))
             code = _string(row.get(code_column)) if code_column else None
             if not name:
                 logger.warning("Запись пропущена: нет наименования")
+                continue
+
+            lowered = name.lower()
+            if any(marker in lowered for marker in skip_keywords):
+                logger.warning("Запись пропущена: посторонняя позиция")
+                skipped.append(name)
                 continue
 
             quantity = _number_or_error(
@@ -1167,7 +1162,7 @@ def parse_fabrics_stock_spb(stream: SourceType) -> list[dict]:
 
         logger.info("[IMPORT DONE] Type=%s City=%s Items=%s", table_type, city, len(items))
 
-        return items
+        return {"items": items, "imported": len(items), "skipped": skipped}
     except ImportErrorFriendly:
         raise
     except Exception as exc:  # noqa: BLE001

@@ -27,7 +27,7 @@ from data import importer
 from data.importer import ImportErrorFriendly
 import aiosqlite
 from config import DB_PATH
-from formatter import send_md_safe
+from formatter import escape_md, send_md_safe
 from structure.markdown import edit_md_safe, message_to_markdown, escape_user, send_md_safe_to_chat
 from structure.keyboards import usd_keyboard, import_result_keyboard
 from structure.states import BroadcastState
@@ -464,7 +464,7 @@ async def import_xlsx(msg: Message):
 
     try:
         try:
-            items = parser(stream, **parser_kwargs)
+            parsed_result = parser(stream, **parser_kwargs)
         except ImportErrorFriendly:
             raise
         except Exception as exc:
@@ -474,9 +474,19 @@ async def import_xlsx(msg: Message):
                 details=str(exc),
                 template=importer.TABLE_SCHEMAS.get(target_key, {}).get("template_path"),
             ) from exc
-        if items:
+
+        skipped_rows: list[str] = []
+        if isinstance(parsed_result, dict):
+            items = parsed_result.get("items", [])
+            imported_count = parsed_result.get("imported", len(items))
+            skipped_rows = parsed_result.get("skipped", []) or []
+        else:
+            items = parsed_result
+            imported_count = len(items)
+
+        if imported_count:
             logging.info(
-                f"[IMPORT DONE] Type={target_key} City={city} Items={len(items)}"
+                f"[IMPORT DONE] Type={target_key} City={city} Items={imported_count}"
             )
         else:
             logging.warning(
@@ -576,11 +586,28 @@ async def import_xlsx(msg: Message):
                     await db.commit()
 
         await set_setting("import_target", "")
-        await send_md_safe(
-            msg,
-            f"Импортировано {import_count} позиций для раздела {target_config['title']}",
-            reply_markup=import_result_keyboard(),
-        )
+
+        if skipped_rows:
+            skipped_lines = [
+                f"{idx}) {escape_md(name)}" for idx, name in enumerate(skipped_rows, start=1)
+            ]
+            skipped_text = "\n".join(
+                [
+                    "⚠️ Обнаружены посторонние позиции, не относящиеся к тканям:",
+                    "",
+                    *skipped_lines,
+                    "",
+                    "Эти строки были пропущены.",
+                    f"Импорт завершён: добавлено {import_count} позиций.",
+                ]
+            )
+            await send_md_safe(msg, skipped_text, reply_markup=import_result_keyboard())
+        else:
+            await send_md_safe(
+                msg,
+                f"Импортировано {import_count} позиций для раздела {target_config['title']}",
+                reply_markup=import_result_keyboard(),
+            )
     except ImportErrorFriendly as e:
         text = (
             f"Ошибка! {e.title}.\n\n"
