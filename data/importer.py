@@ -1158,7 +1158,7 @@ def parse_fabrics_stock_msk(stream: SourceType) -> dict:
 
 
 def parse_fabrics_stock_spb(stream: SourceType) -> dict:
-    """Парсит остатки тканей для Санкт-Петербурга с мягкой фильтрацией посторонних строк."""
+    """Парсит остатки тканей для Санкт-Петербурга без фильтрации строк."""
 
     try:
         table_type = "stock_fabrics_spb"
@@ -1207,7 +1207,9 @@ def parse_fabrics_stock_spb(stream: SourceType) -> dict:
                 combined = top_str or None
             combined_headers.append(combined)
 
-        normalized_headers = {_normalize_header(val): val for val in combined_headers}
+        normalized_headers = {
+            _normalize_header(val): val for val in combined_headers if val is not None
+        }
 
         headers: list[str] = []
         for value in combined_headers:
@@ -1231,59 +1233,34 @@ def parse_fabrics_stock_spb(stream: SourceType) -> dict:
         df = pd.DataFrame(data_rows, columns=combined_headers)
         df = df.dropna(how="all")
 
-        records = df.to_dict(orient="records")
-        foreign_rows: list[dict] = []
         items: list[dict] = []
-        for record in records:
-            row = dict(record)
-            row.setdefault("Ед.", "ед. хранения")
-            if not classify_row_for_section("fabrics", row):
-                foreign_rows.append(row)
-                continue
+        name_key = normalized_headers[_normalize_header("Номенклатура")]
+        quantity_key = normalized_headers.get(
+            _normalize_header("Остаток (В ед. хранения)")
+        ) or normalized_headers[_normalize_header("Остаток")]
+        free_key = normalized_headers.get(
+            _normalize_header("Свободный остаток (В ед. хранения)")
+        ) or normalized_headers[_normalize_header("Свободный остаток")]
 
-            name = _string(row.get(normalized_headers[_normalize_header("Номенклатура")]))
-            code_column = normalized_headers.get(_normalize_header("Код товара"))
-            code = _string(row.get(code_column)) if code_column else None
-            if not name:
-                logger.warning("Запись пропущена: нет наименования")
-                continue
+        for record in df.to_dict(orient="records"):
+            name = record.get(name_key)
+            quantity = record.get(quantity_key)
+            free_quantity = record.get(free_key)
 
-            quantity = _number_or_error(
-                row.get(
-                    normalized_headers[
-                        _normalize_header("Остаток (В ед. хранения)")
-                    ]
-                ),
-                "Остаток (В ед. хранения)",
-            )
-
-            if quantity is None:
-                logger.warning("Запись пропущена: не указано количество")
-                continue
-
-            item = {
-                "city": "spb",
-                "section": "fabrics",
-                "kind": None,
-                "item_type": None,
-                "code": code,
-                "article": None,
-                "category": None,
-                "name": name,
-                "quantity": quantity,
-                "unit": "ед. хранения",
-                "extra_info": None,
-            }
-            items.append(item)
-
-        if foreign_rows:
-            ratio = len(foreign_rows) / max(len(records), 1)
-            preview = [_string(r.get("Номенклатура")) for r in foreign_rows[:MAX_PREVIEW]]
-            if len(foreign_rows) <= 20 and ratio < 0.10:
-                return ParsedResult(items=items, warnings=preview)
-
-            raise ImportErrorFriendly(
-                reason="wrong_section", preview=preview, total=len(foreign_rows)
+            items.append(
+                {
+                    "city": city,
+                    "section": "fabrics",
+                    "name": name if name is not None else "",
+                    "code": None,
+                    "quantity": quantity,
+                    "free_quantity": free_quantity,
+                    "unit": "м",
+                    "kind": None,
+                    "item_type": None,
+                    "article": None,
+                    "extra_info": None,
+                }
             )
 
         logger.info("[IMPORT DONE] Type=%s City=%s Items=%s", table_type, city, len(items))

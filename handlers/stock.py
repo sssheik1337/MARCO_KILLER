@@ -96,7 +96,12 @@ async def send_stock_page(message: Message, stock: StockItemCity, page: int) -> 
     lines: list[str] = []
 
     for offset, item in enumerate(page_items, start=start_index):
-        item_lines: list[str] = [f"{offset}) *{escape_md(item.name)}*"]
+        item_lines: list[str] = []
+
+        if stock.city == "spb" and stock.section == "fabrics":
+            item_lines.append(f"{offset}) `{escape_md(item.name)}`")
+        else:
+            item_lines.append(f"{offset}) *{escape_md(item.name)}*")
 
         if item.code:
             code_line = f"Код: `{escape_md(item.code)}`"
@@ -104,12 +109,18 @@ async def send_stock_page(message: Message, stock: StockItemCity, page: int) -> 
             code_line = "Код: —"
         item_lines.append(code_line)
 
-        if item.quantity is not None and item.unit:
-            item_lines.append(f"Наличие: {item.quantity} {item.unit}")
+        if stock.city == "spb" and stock.section == "fabrics":
+            qty_text = "" if item.quantity is None else str(item.quantity)
+            free_text = "" if getattr(item, "free_quantity", None) is None else str(item.free_quantity)
+            item_lines.append(f"Остаток: {qty_text} {item.unit or ''}".rstrip())
+            item_lines.append(f"Свободный: {free_text} {item.unit or ''}".rstrip())
+        else:
+            if item.quantity is not None and item.unit:
+                item_lines.append(f"Наличие: {item.quantity} {item.unit}")
 
-        max_roll = _parse_max_roll(item.extra_info)
-        if max_roll is not None:
-            item_lines.append(f"Макс.рулон: {max_roll}")
+            max_roll = _parse_max_roll(item.extra_info)
+            if max_roll is not None:
+                item_lines.append(f"Макс.рулон: {max_roll}")
 
         lines.append("\n".join(item_lines))
 

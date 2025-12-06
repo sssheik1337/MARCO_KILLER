@@ -33,7 +33,8 @@ class StockItemRow:
     code: str | None
     article: str | None
     name: str
-    quantity: float | None
+    quantity: float | str | None
+    free_quantity: float | str | None
     unit: str | None
     extra_info: str | None
     date_in: str | None

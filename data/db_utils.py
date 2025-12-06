@@ -144,6 +144,7 @@ async def add_stock_items(
         "article",
         "name",
         "quantity",
+        "free_quantity",
         "unit",
         "extra_info",
         "date_in",
@@ -156,25 +157,31 @@ async def add_stock_items(
     for item in items:
         name = item.get("name")
         article = item.get("article")
-        if not name and not article:
+        if name is None and article is None:
             logger.warning("Запись пропущена: отсутствуют артикул и наименование")
             continue
 
         quantity = item.get("quantity")
         unit = item.get("unit")
-        if quantity is None or unit is None:
+        city_value = item.get("city", city)
+        section_value = item.get("section", section)
+        if unit is None:
+            logger.warning("Запись пропущена: нет количества или единицы измерения")
+            continue
+        if quantity is None and not (city_value == "spb" and section_value == "fabrics"):
             logger.warning("Запись пропущена: нет количества или единицы измерения")
             continue
 
         values = [
-            item.get("city", city),
-            item.get("section", section),
+            city_value,
+            section_value,
             item.get("kind") or None,
             item.get("item_type") or None,
             item.get("code") or None,
             article or None,
             name,
             quantity,
+            item.get("free_quantity"),
             unit,
             item.get("extra_info") or item.get("status") or None,
             item.get("date_incoming") or item.get("date_in") or None,
@@ -204,7 +211,7 @@ async def fetch_stock_items(city: str, section: str) -> list[dict]:
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(
             """
-            SELECT city, section, kind, item_type, code, article, name, quantity, unit, extra_info, date_in
+            SELECT city, section, kind, item_type, code, article, name, quantity, free_quantity, unit, extra_info, date_in
             FROM stock_items
             WHERE city = ?
               AND section = ?
