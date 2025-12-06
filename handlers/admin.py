@@ -434,7 +434,7 @@ async def import_xlsx(msg: Message):
 
     target_config = _IMPORT_TARGETS.get(target_key)
     if not target_config:
-        await send_md_safe(msg, "Неизвестный раздел импорта.")
+        await msg.answer("Неизвестный раздел импорта.", parse_mode=None)
         await set_setting("import_target", "")
         return
 
@@ -443,7 +443,7 @@ async def import_xlsx(msg: Message):
     parser = target_config.get("parser")
     parser_kwargs = target_config.get("parser_kwargs", {})
     if parser is None:
-        await send_md_safe(msg, "Не найден обработчик для выбранного импорта.")
+        await msg.answer("Не найден обработчик для выбранного импорта.", parse_mode=None)
         await set_setting("import_target", "")
         return
 
@@ -452,16 +452,16 @@ async def import_xlsx(msg: Message):
     file_name = msg.document.file_name or ""
     ext = Path(file_name).suffix.lower()
     if ext == ".xls":
-        await send_md_safe(
-            msg,
+        await msg.answer(
             "Ошибка: формат XLS не поддерживается. Используйте XLSX",
+            parse_mode=None,
         )
         await set_setting("import_target", "")
         return
     if ext not in {".xlsx", ".csv"}:
-        await send_md_safe(
-            msg,
+        await msg.answer(
             "Ошибка: поддерживаются только файлы XLSX или CSV.",
+            parse_mode=None,
         )
         await set_setting("import_target", "")
         return
@@ -479,11 +479,12 @@ async def import_xlsx(msg: Message):
                     + "\n".join(f"• {p}" for p in preview)
                     + "\n\nПожалуйста, используйте корректный шаблон."
                 )
-                await send_md_safe(msg, text)
+                await msg.answer(text, parse_mode=None)
                 template_path = f"templates/{target_key}_example.xlsx"
                 if not os.path.exists(template_path):
                     await msg.answer(
-                        "Шаблон отсутствует на сервере. Обратитесь к разработчику."
+                        "Шаблон отсутствует на сервере. Обратитесь к разработчику.",
+                        parse_mode=None,
                     )
                     await set_setting("import_target", "")
                     return
@@ -524,7 +525,7 @@ async def import_xlsx(msg: Message):
                 + "\n".join(f"• {row}" for row in preview[:20])
                 + ("\n… остальные скрыты" if len(preview) > 20 else "")
             )
-            await msg.answer(text)
+            await msg.answer(text, parse_mode=None)
             await set_setting("import_target", "")
             return
 
@@ -658,6 +659,7 @@ async def import_xlsx(msg: Message):
                 "Ошибка: файл XLSX повреждён или сохранён в неподдерживаемом режиме Excel.\n"
                 "Пожалуйста, откройте таблицу в Excel и сохраните через:\n"
                 "Файл → Сохранить как → Excel (*.xlsx) (ОБЫЧНЫЙ, не Strict OpenXML).",
+                parse_mode=None,
             )
             await set_setting("import_target", "")
             return
@@ -668,7 +670,7 @@ async def import_xlsx(msg: Message):
                 "Ошибка: в таблице отсутствуют обязательные столбцы:\n"
                 + "\n".join(f"• {col}" for col in missing_cols)
             )
-            await msg.answer(text)
+            await msg.answer(text, parse_mode=None)
             await set_setting("import_target", "")
             return
 
@@ -678,13 +680,14 @@ async def import_xlsx(msg: Message):
             + "Пожалуйста, используйте корректный шаблон."
         )
 
-        await send_md_safe(msg, text)
+        await msg.answer(text, parse_mode=None)
 
         if e.template:
             template_path = e.template
             if not os.path.exists(template_path):
                 await msg.answer(
-                    "Шаблон отсутствует на сервере. Обратитесь к разработчику."
+                    "Шаблон отсутствует на сервере. Обратитесь к разработчику.",
+                    parse_mode=None,
                 )
                 await set_setting("import_target", "")
                 return
