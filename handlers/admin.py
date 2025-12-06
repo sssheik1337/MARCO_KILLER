@@ -24,7 +24,7 @@ from data.db_utils import (
     set_setting,
 )
 from data import importer
-from data.importer import ImportErrorFriendly
+from data.importer import ImportErrorFriendly, ImportWarningFriendly
 import aiosqlite
 from config import DB_PATH
 from formatter import escape_md, send_md_safe
@@ -463,9 +463,28 @@ async def import_xlsx(msg: Message):
         return
 
     try:
+        warning_info: ImportWarningFriendly | None = None
         try:
             parsed_result = parser(stream, **parser_kwargs)
-        except ImportErrorFriendly:
+        except ImportWarningFriendly as w:
+            warning_info = w
+            parsed_result = getattr(w, "items", [])
+        except ImportErrorFriendly as e:
+            if getattr(e, "reason", None) == "wrong_section":
+                preview = [p or "—" for p in (e.preview or [])]
+                text = (
+                    "Ошибка: загруженная таблица не соответствует выбранному разделу.\n"
+                    f"Обнаружено посторонних записей: {e.total}\n"
+                    f"Примеры (первые {len(preview)}):\n"
+                    + "\n".join(f"• {p}" for p in preview)
+                    + "\n\nПожалуйста, используйте корректный шаблон."
+                )
+                await send_md_safe(msg, text)
+                await msg.answer_document(
+                    FSInputFile(f"templates/{target_key}_example.xlsx")
+                )
+                await set_setting("import_target", "")
+                return
             raise
         except Exception as exc:
             logging.exception("Ошибка разбора файла для раздела %s", section)
@@ -587,7 +606,20 @@ async def import_xlsx(msg: Message):
 
         await set_setting("import_target", "")
 
-        if skipped_rows:
+        if warning_info is not None:
+            preview = [p or "—" for p in (warning_info.preview or [])]
+            warning_text = "\n".join(
+                [
+                    "Импорт выполнен, но обнаружены посторонние записи.",
+                    f"Всего: {warning_info.count}",
+                    f"Показаны первые {len(preview)}:",
+                    *[f"• {escape_md(p)}" for p in preview if p],
+                    "",
+                    f"Импорт завершён: добавлено {import_count} позиций.",
+                ]
+            )
+            await send_md_safe(msg, warning_text, reply_markup=import_result_keyboard())
+        elif skipped_rows:
             skipped_lines = [
                 f"{idx}) {escape_md(name)}" for idx, name in enumerate(skipped_rows, start=1)
             ]

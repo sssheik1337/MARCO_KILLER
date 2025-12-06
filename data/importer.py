@@ -30,14 +30,36 @@ class SchemaMismatchError(Exception):
         logger.error(f"[SCHEMA ERROR] type={table_type} missing={self.missing}")
 
 
-class ImportErrorFriendly(Exception):
-    """Единое дружелюбное исключение для ошибок импорта."""
+class ImportWarningFriendly(Exception):
+    """Дружелюбное предупреждение о проблемах импорта без его отмены."""
 
-    def __init__(self, title: str, details: str | None = None, template: str | None = None):
-        super().__init__(title)
+    def __init__(self, reason: str, preview: list, count: int):
+        super().__init__(reason)
+        self.reason = reason
+        self.preview = preview
+        self.count = count
+        self.items: list[dict] = []
+
+
+class ImportErrorFriendly(Exception):
+    """Дружелюбное исключение для ошибок импорта (унифицированное)."""
+
+    def __init__(
+        self,
+        title: str | None = None,
+        details: str | None = None,
+        template: str | None = None,
+        reason: str | None = None,
+        preview: list | None = None,
+        total: int | None = None,
+    ):
+        super().__init__(title or reason)
         self.title = title
         self.details = details
         self.template = template
+        self.reason = reason
+        self.preview = preview or []
+        self.total = total
 
 
 TABLE_SCHEMAS = {
@@ -123,6 +145,29 @@ TABLE_SCHEMAS = {
 
 
 logger = logging.getLogger(__name__)
+
+
+def classify_row_for_section(section: str, row: dict) -> bool:
+    """Проверяет, соответствует ли строка разделу остатков (ткани/фурнитура)."""
+
+    unit = str(row.get("Ед.") or row.get("Ед") or row.get("unit") or "").strip().lower()
+
+    if section == "fabrics":
+        if unit in ("м", "м.", "метр", "метры", "m", "ед. хранения", "шт"):
+            return True
+        return False
+
+    if section == "hardware":
+        if unit in ("шт", "компл", "комплект", "боб", "ед. хранения"):
+            return True
+        if unit in ("м", "m", "метры"):
+            return False
+        return True
+
+    return True
+
+
+MAX_PREVIEW = 10
 
 
 def _wrap_import_error(table_type: str, exc: Exception) -> ImportErrorFriendly:
@@ -755,8 +800,15 @@ def parse_hardware_stock_msk(stream: SourceType) -> list[dict]:
         article_map, name_map = _load_catalog_index("hardware_catalog")
         reserved_idx = columns.get(_normalize_header(optional_reserved))
 
+        records = df.to_dict(orient="records")
+        foreign_rows: list[dict] = []
         items: list[dict] = []
-        for _, row in df.iterrows():
+        for record in records:
+            row = dict(record)
+            if not classify_row_for_section("hardware", row):
+                foreign_rows.append(row)
+                continue
+
             name = _string(row.get(columns["номенклатура"]))
             article = _string(row.get(columns["артикул"]))
             quantity = _number_or_error(row.get(columns["наличие"]), "Наличие")
@@ -790,6 +842,18 @@ def parse_hardware_stock_msk(stream: SourceType) -> list[dict]:
                 "extra_info": additional_info,
             }
             items.append(item)
+
+        if foreign_rows:
+            ratio = len(foreign_rows) / max(len(records), 1)
+            preview = [_string(r.get("Номенклатура")) for r in foreign_rows[:MAX_PREVIEW]]
+            if len(foreign_rows) <= 20 and ratio < 0.10:
+                warning = ImportWarningFriendly("foreign", preview, len(foreign_rows))
+                warning.items = items
+                raise warning
+
+            raise ImportErrorFriendly(
+                reason="wrong_section", preview=preview, total=len(foreign_rows)
+            )
 
         logger.info("[IMPORT DONE] Type=%s City=%s Items=%s", table_type, city, len(items))
 
@@ -878,8 +942,16 @@ def parse_hardware_stock_spb(stream: SourceType) -> list[dict]:
 
         article_map, name_map = _load_catalog_index("hardware_catalog")
 
+        records = df.to_dict(orient="records")
+        foreign_rows: list[dict] = []
         items: list[dict] = []
-        for _, row in df.iterrows():
+        for record in records:
+            row = dict(record)
+            row.setdefault("Ед.", "ед. хранения")
+            if not classify_row_for_section("hardware", row):
+                foreign_rows.append(row)
+                continue
+
             name = _string(row.get(normalized_headers[_normalize_header("Номенклатура")]))
             code_column = normalized_headers.get(_normalize_header("Код товара"))
             code = _string(row.get(code_column)) if code_column else None
@@ -923,6 +995,18 @@ def parse_hardware_stock_spb(stream: SourceType) -> list[dict]:
                 "section": "hardware",
             }
             items.append(item)
+
+        if foreign_rows:
+            ratio = len(foreign_rows) / max(len(records), 1)
+            preview = [_string(r.get("Номенклатура")) for r in foreign_rows[:MAX_PREVIEW]]
+            if len(foreign_rows) <= 20 and ratio < 0.10:
+                warning = ImportWarningFriendly("foreign", preview, len(foreign_rows))
+                warning.items = items
+                raise warning
+
+            raise ImportErrorFriendly(
+                reason="wrong_section", preview=preview, total=len(foreign_rows)
+            )
 
         logger.info("[IMPORT DONE] Type=%s City=%s Items=%s", table_type, city, len(items))
 
@@ -987,24 +1071,21 @@ def parse_fabrics_stock_msk(stream: SourceType) -> dict:
         df = pd.DataFrame(data_rows, columns=header_row)
         df = df.dropna(how="all")
 
-        skip_keywords = ["фурнитура", "светиль", "алюм", "профиль", "система", "деталь"]
-
+        records = df.to_dict(orient="records")
+        foreign_rows: list[dict] = []
         items: list[dict] = []
-        skipped: list[str] = []
-        for _, row in df.iterrows():
+        for record in records:
+            row = dict(record)
+            if not classify_row_for_section("fabrics", row):
+                foreign_rows.append(row)
+                continue
+
             name = _string(row.get(columns["номенклатура"]))
             article = _string(row.get(columns["артикул"]))
             code = _string(row.get(columns["код товара"]))
             if not name and not article:
                 logger.warning("Запись пропущена: нет артикула и наименования")
                 continue
-
-            if name:
-                lowered = name.lower()
-                if any(marker in lowered for marker in skip_keywords):
-                    logger.warning("Запись пропущена: посторонняя позиция")
-                    skipped.append(name)
-                    continue
 
             quantity = _number_or_error(row.get(columns["наличие"]), "Наличие")
             unit = _string(row.get(columns["ед."]))
@@ -1030,9 +1111,21 @@ def parse_fabrics_stock_msk(stream: SourceType) -> dict:
             }
             items.append(item)
 
+        if foreign_rows:
+            ratio = len(foreign_rows) / max(len(records), 1)
+            preview = [_string(r.get("Номенклатура")) for r in foreign_rows[:MAX_PREVIEW]]
+            if len(foreign_rows) <= 20 and ratio < 0.10:
+                warning = ImportWarningFriendly("foreign", preview, len(foreign_rows))
+                warning.items = items
+                raise warning
+
+            raise ImportErrorFriendly(
+                reason="wrong_section", preview=preview, total=len(foreign_rows)
+            )
+
         logger.info("[IMPORT DONE] Type=%s City=%s Items=%s", table_type, city, len(items))
 
-        return {"items": items, "imported": len(items), "skipped": skipped}
+        return {"items": items, "imported": len(items), "skipped": []}
     except ImportErrorFriendly:
         raise
     except Exception as exc:  # noqa: BLE001
@@ -1114,22 +1207,21 @@ def parse_fabrics_stock_spb(stream: SourceType) -> dict:
         df = pd.DataFrame(data_rows, columns=combined_headers)
         df = df.dropna(how="all")
 
-        skip_keywords = ["фурнитура", "светиль", "алюм", "профиль", "система", "деталь"]
-
+        records = df.to_dict(orient="records")
+        foreign_rows: list[dict] = []
         items: list[dict] = []
-        skipped: list[str] = []
-        for _, row in df.iterrows():
+        for record in records:
+            row = dict(record)
+            row.setdefault("Ед.", "ед. хранения")
+            if not classify_row_for_section("fabrics", row):
+                foreign_rows.append(row)
+                continue
+
             name = _string(row.get(normalized_headers[_normalize_header("Номенклатура")]))
             code_column = normalized_headers.get(_normalize_header("Код товара"))
             code = _string(row.get(code_column)) if code_column else None
             if not name:
                 logger.warning("Запись пропущена: нет наименования")
-                continue
-
-            lowered = name.lower()
-            if any(marker in lowered for marker in skip_keywords):
-                logger.warning("Запись пропущена: посторонняя позиция")
-                skipped.append(name)
                 continue
 
             quantity = _number_or_error(
@@ -1160,9 +1252,21 @@ def parse_fabrics_stock_spb(stream: SourceType) -> dict:
             }
             items.append(item)
 
+        if foreign_rows:
+            ratio = len(foreign_rows) / max(len(records), 1)
+            preview = [_string(r.get("Номенклатура")) for r in foreign_rows[:MAX_PREVIEW]]
+            if len(foreign_rows) <= 20 and ratio < 0.10:
+                warning = ImportWarningFriendly("foreign", preview, len(foreign_rows))
+                warning.items = items
+                raise warning
+
+            raise ImportErrorFriendly(
+                reason="wrong_section", preview=preview, total=len(foreign_rows)
+            )
+
         logger.info("[IMPORT DONE] Type=%s City=%s Items=%s", table_type, city, len(items))
 
-        return {"items": items, "imported": len(items), "skipped": skipped}
+        return {"items": items, "imported": len(items), "skipped": []}
     except ImportErrorFriendly:
         raise
     except Exception as exc:  # noqa: BLE001
@@ -1221,6 +1325,7 @@ __all__ = [
     "_string",
     "_number",
     "_number_or_error",
+    "ImportWarningFriendly",
     "ImportErrorFriendly",
     "TABLE_SCHEMAS",
 ]
