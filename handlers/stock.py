@@ -349,6 +349,88 @@ async def on_stock_collections(cb: CallbackQuery):
     await cb.answer()
 
 
+@router.callback_query(F.data.regexp(r"^scol:"))
+async def on_stock_collections_with_colon(cb: CallbackQuery) -> None:
+    """Обработка колбэков коллекций с именами, содержащими двоеточия."""
+
+    parts = cb.data.split(":")
+
+    # Ожидаем минимум: scol:city:section:collection
+    if len(parts) < 4:
+        await cb.answer("Некорректные данные", show_alert=True)
+        return
+
+    city = parts[1]
+    section = parts[2]
+
+    # collection может содержать двоеточия, поэтому собираем всё между section и page/open
+    # ищем позицию маркеров page или open
+    try:
+        idx = next(i for i, p in enumerate(parts) if p in ("page", "open"))
+    except StopIteration:
+        await cb.answer("Некорректный формат callback data", show_alert=True)
+        return
+
+    collection = ":".join(parts[3:idx])
+    action = parts[idx]
+
+    page = 1
+    if action == "page":
+        try:
+            page = int(parts[idx + 1])
+        except (ValueError, IndexError):
+            page = 1
+
+    selection = _STOCK_SELECTIONS[cb.from_user.id]
+    selection["city"] = city
+    selection["section"] = section
+    selection.setdefault("kind_map", {})
+    selection.setdefault("collection_page", page)
+
+    used = set(selection["kind_map"].keys())
+    slug = _slugify(collection, used)
+    selection["kind_map"][slug] = collection
+
+    if action == "page":
+        await _show_spb_collections(cb.message, cb.from_user.id, city, section, page)
+        await cb.answer()
+        return
+
+    stock = await load_city_stock(city, section)
+    filtered_items = [item for item in stock.items if item.collection == collection]
+
+    back_callback = f"stock:collections:{city}:{section}:{selection.get('collection_page', 1)}"
+
+    if not filtered_items:
+        markup = build_stock_list_keyboard(
+            city=city,
+            section=section,
+            kind_slug=slug,
+            type_slug=None,
+            page=1,
+            total_pages=1,
+            back_callback=back_callback,
+            flat=True,
+        )
+        await send_md_safe(cb.message, "В выбранной категории пока нет остатков.", reply_markup=markup)
+        await cb.answer()
+        return
+
+    filtered_stock = StockItemCity(
+        city=city,
+        section=section,
+        items=filtered_items,
+        kind=collection,
+        item_type=None,
+        kind_slug=slug,
+        type_slug=None,
+        back_callback=back_callback,
+    )
+
+    await send_stock_page(cb.message, filtered_stock, page)
+    await cb.answer()
+
+
 @router.callback_query(F.data.regexp(r"^stock:kindlist:(msk|spb):(fabrics|hardware)$"))
 async def on_stock_kind_list(cb: CallbackQuery):
     """Возврат к списку видов."""
