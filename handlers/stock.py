@@ -430,7 +430,7 @@ async def on_stock_collections_with_colon(cb: CallbackQuery) -> None:
         kind=collection,
         item_type=None,
         kind_slug=slug,
-        type_slug=None,
+        type_slug="all",
         back_callback=back_callback,
     )
 
