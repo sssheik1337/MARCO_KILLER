@@ -23,7 +23,7 @@ CITY_TITLES = {"msk": "Москва", "spb": "Санкт-Петербург"}
 SECTION_TITLES = {"fabrics": "Ткани", "hardware": "Фурнитура"}
 
 TYPE_PAGE_SIZE = 10
-ITEM_PAGE_SIZE = 10
+ITEM_PAGE_SIZE = 5
 
 _STOCK_SELECTIONS: dict[int, dict] = defaultdict(dict)
 
@@ -56,6 +56,24 @@ def _match_slug(title: str | None, expected: str) -> bool:
     return _slugify(title, set()) == expected
 
 
+def _parse_max_roll(extra_info: str | None) -> str | None:
+    """Выделяет значение максимального рулона из строки."""
+
+    if not extra_info:
+        return None
+
+    normalized = extra_info.replace(",", ".")
+    match = re.search(r"(?::\s*|\s)(\d+(?:\.\d+)?)", normalized)
+    if match:
+        return match.group(1)
+
+    fallback = re.search(r"(\d+(?:\.\d+)?)", normalized)
+    if fallback:
+        return fallback.group(1)
+
+    return None
+
+
 async def send_stock_page(message: Message, stock: StockItemCity, page: int) -> None:
     """Отображает страницу остатков с пагинацией."""
 
@@ -80,22 +98,22 @@ async def send_stock_page(message: Message, stock: StockItemCity, page: int) -> 
     for offset, item in enumerate(page_items, start=start_index):
         item_lines: list[str] = [f"{offset}) *{escape_md(item.name)}*"]
 
-        code_value = escape_md(item.code or "—")
-        item_lines.append(f"Код: `{code_value}`")
+        code_value = (
+            f"`{escape_md(item.code)}`" if item.code else escape_md("отсутствует")
+        )
+        item_lines.append(f"Код: {code_value}")
 
         if item.quantity is not None and item.unit:
-            qty = f"{item.quantity:g}"
-            item_lines.append(
-                f"Наличие: {escape_md(qty)} {escape_md(item.unit)}"
-            )
+            item_lines.append(f"Наличие: {item.quantity} {item.unit}")
 
-        if item.extra_info:
-            item_lines.append(escape_md(item.extra_info))
+        max_roll = _parse_max_roll(item.extra_info)
+        if max_roll is not None:
+            item_lines.append(f"Макс.рулон: {max_roll}")
 
         lines.append("\n".join(item_lines))
 
-    city_label = CITY_TITLES.get(stock.city, stock.city)
-    section_label = SECTION_TITLES.get(stock.section, stock.section)
+    city_label = escape_md(CITY_TITLES.get(stock.city, stock.city))
+    section_label = escape_md(SECTION_TITLES.get(stock.section, stock.section))
 
     header: list[str] = [f"{section_label} • {city_label}"]
     if stock.kind:
