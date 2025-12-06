@@ -11,6 +11,7 @@ from data.stock_models import StockItemCity
 from services.pagination import slice_page
 from structure.keyboards import (
     build_stock_list_keyboard,
+    build_spb_collections_keyboard,
     build_types_keyboard,
     kb_stock_kinds,
     kb_stock_sections,
@@ -103,11 +104,12 @@ async def send_stock_page(message: Message, stock: StockItemCity, page: int) -> 
         else:
             item_lines.append(f"{offset}) *{escape_md(item.name)}*")
 
-        if item.code:
-            code_line = f"Код: `{escape_md(item.code)}`"
-        else:
-            code_line = "Код: —"
-        item_lines.append(code_line)
+        if not (stock.city == "spb" and stock.section == "fabrics"):
+            if item.code:
+                code_line = f"Код: `{escape_md(item.code)}`"
+            else:
+                code_line = "Код: —"
+            item_lines.append(code_line)
 
         if stock.city == "spb" and stock.section == "fabrics":
             qty_text = "" if item.quantity is None else str(item.quantity)
@@ -129,7 +131,10 @@ async def send_stock_page(message: Message, stock: StockItemCity, page: int) -> 
 
     header: list[str] = [f"{section_label} • {city_label}"]
     if stock.kind:
-        header.append(f"Вид: {escape_md(stock.kind)}")
+        if stock.city == "spb" and stock.section == "fabrics":
+            header.append(f"Коллекция: {escape_md(stock.kind)}")
+        else:
+            header.append(f"Вид: {escape_md(stock.kind)}")
     if stock.item_type:
         header.append(f"Тип: {escape_md(stock.item_type)}")
     header.append(f"Страница {page}/{total_pages}")
@@ -150,6 +155,62 @@ async def send_stock_page(message: Message, stock: StockItemCity, page: int) -> 
         await edit_md_safe(message, text, reply_markup=markup)
     except Exception:
         await send_md_safe(message, text, reply_markup=markup)
+
+
+async def _show_spb_collections(
+    message: Message, user_id: int, city: str, section: str, page: int
+) -> None:
+    """Показывает коллекции остатков СПБ с пагинацией."""
+
+    stock = await load_city_stock(city, section)
+    selection = _STOCK_SELECTIONS[user_id]
+    selection["city"] = city
+    selection["section"] = section
+    selection.pop("type_map", None)
+
+    collections = sorted(
+        {item.kind for item in stock.items if item.kind}, key=lambda value: value.lower()
+    )
+
+    if not stock.items:
+        stock.back_callback = f"stock_section:{city}:{section}"
+        stock.kind_slug = None
+        stock.type_slug = None
+        await send_stock_page(message, stock, 1)
+        return
+
+    if not collections:
+        stock.back_callback = f"stock_section:{city}:{section}"
+        stock.kind_slug = None
+        stock.type_slug = None
+        await send_stock_page(message, stock, 1)
+        return
+
+    used: set[str] = set()
+    selection["kind_map"] = {}
+    selection["collection_page"] = page
+    collection_rows: list[tuple[str, str]] = []
+    for collection in collections:
+        slug = _slugify(collection, used)
+        selection["kind_map"][slug] = collection
+        collection_rows.append((collection, slug))
+
+    page_rows, current_page, total_pages = slice_page(
+        collection_rows, page, TYPE_PAGE_SIZE
+    )
+
+    text = (
+        f"{escape_md(SECTION_TITLES.get(section, section))} • {escape_md(CITY_TITLES.get(city, city))}\n"
+        f"Выберите коллекцию.\nСтраница {current_page}/{total_pages}"
+    )
+
+    await send_md_safe(
+        message,
+        text,
+        reply_markup=build_spb_collections_keyboard(
+            city, section, page_rows, current_page, total_pages
+        ),
+    )
 
 
 async def _show_kinds(message: Message, user_id: int, city: str, section: str) -> None:
@@ -211,7 +272,10 @@ async def on_stock_select_section(cb: CallbackQuery):
     """Фиксирует выбор раздела остатков и открывает список видов."""
 
     _, city, section = cb.data.split(":")
-    await _show_kinds(cb.message, cb.from_user.id, city, section)
+    if city == "spb" and section == "fabrics":
+        await _show_spb_collections(cb.message, cb.from_user.id, city, section, 1)
+    else:
+        await _show_kinds(cb.message, cb.from_user.id, city, section)
     await cb.answer()
 
 
@@ -275,6 +339,16 @@ async def on_stock_types(cb: CallbackQuery):
     await cb.answer()
 
 
+@router.callback_query(F.data.regexp(r"^stock:collections:(msk|spb):(fabrics|hardware):\d+$"))
+async def on_stock_collections(cb: CallbackQuery):
+    """Пагинация по коллекциям СПБ для раздела тканей."""
+
+    _, city, section, page_str = cb.data.split(":")
+    if city == "spb" and section == "fabrics":
+        await _show_spb_collections(cb.message, cb.from_user.id, city, section, int(page_str))
+    await cb.answer()
+
+
 @router.callback_query(F.data.regexp(r"^stock:kindlist:(msk|spb):(fabrics|hardware)$"))
 async def on_stock_kind_list(cb: CallbackQuery):
     """Возврат к списку видов."""
@@ -315,6 +389,16 @@ async def on_stock_list(cb: CallbackQuery):
     ]
 
     if not filtered_items:
+        back_callback = (
+            f"stock:collections:{city}:{section}:{selection.get('collection_page', 1)}"
+            if city == "spb" and section == "fabrics"
+            else (
+                f"stock:types:{city}:{section}:{kind_slug}:1"
+                if kind_slug != "all"
+                else f"stock_section:{city}:{section}"
+            )
+        )
+
         markup = build_stock_list_keyboard(
             city=city,
             section=section,
@@ -322,12 +406,22 @@ async def on_stock_list(cb: CallbackQuery):
             type_slug=None if type_slug == "all" else type_slug,
             page=1,
             total_pages=1,
-            back_callback=f"stock:types:{city}:{section}:{kind_slug}:1" if kind_slug != "all" else f"stock_section:{city}:{section}",
+            back_callback=back_callback,
             flat=kind_slug == "all",
         )
         await send_md_safe(cb.message, "В выбранной категории пока нет остатков.", reply_markup=markup)
         await cb.answer()
         return
+
+    back_callback = (
+        f"stock:collections:{city}:{section}:{_STOCK_SELECTIONS[cb.from_user.id].get('collection_page', 1)}"
+        if city == "spb" and section == "fabrics"
+        else (
+            f"stock:types:{city}:{section}:{kind_slug}:1"
+            if kind_slug != "all"
+            else f"stock_section:{city}:{section}"
+        )
+    )
 
     filtered_stock = StockItemCity(
         city=city,
@@ -337,7 +431,7 @@ async def on_stock_list(cb: CallbackQuery):
         item_type=type_title,
         kind_slug=None if kind_slug == "all" else kind_slug,
         type_slug=None if type_slug == "all" else type_slug,
-        back_callback=f"stock:types:{city}:{section}:{kind_slug}:1" if kind_slug != "all" else f"stock_section:{city}:{section}",
+        back_callback=back_callback,
     )
 
     await send_stock_page(cb.message, filtered_stock, int(page_str))

@@ -30,6 +30,7 @@ class StockItemRow:
     section: str
     kind: str | None
     item_type: str | None
+    collection: str | None
     code: str | None
     article: str | None
     name: str

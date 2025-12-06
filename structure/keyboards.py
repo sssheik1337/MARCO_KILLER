@@ -186,6 +186,50 @@ def build_types_keyboard(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def build_spb_collections_keyboard(
+    city: str,
+    section: str,
+    collections: list[tuple[str, str]],
+    page: int,
+    total_pages: int,
+) -> InlineKeyboardMarkup:
+    """Клавиатура выбора коллекции для СПБ с пагинацией."""
+
+    rows: list[list[InlineKeyboardButton]] = [
+        [
+            InlineKeyboardButton(
+                text=title,
+                callback_data=f"stock:list:{city}:{section}:{slug}:all:1",
+            )
+        ]
+        for title, slug in collections
+    ]
+
+    nav_row: list[InlineKeyboardButton] = []
+    if page > 1:
+        nav_row.append(
+            InlineKeyboardButton(
+                text="◀ Назад",
+                callback_data=f"stock:collections:{city}:{section}:{page - 1}",
+            )
+        )
+
+    nav_row.append(InlineKeyboardButton(text="🏠 Главное меню", callback_data="home"))
+
+    if page < total_pages:
+        nav_row.append(
+            InlineKeyboardButton(
+                text="Вперёд ▶",
+                callback_data=f"stock:collections:{city}:{section}:{page + 1}",
+            )
+        )
+
+    rows.append(nav_row)
+    rows.append([InlineKeyboardButton(text="⬅ Назад", callback_data=f"stock_section:{city}:{section}")])
+
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def build_stock_list_keyboard(
     city: str,
     section: str,
