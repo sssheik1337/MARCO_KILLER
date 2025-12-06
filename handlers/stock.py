@@ -98,10 +98,11 @@ async def send_stock_page(message: Message, stock: StockItemCity, page: int) -> 
     for offset, item in enumerate(page_items, start=start_index):
         item_lines: list[str] = [f"{offset}) *{escape_md(item.name)}*"]
 
-        code_value = (
-            f"`{escape_md(item.code)}`" if item.code else escape_md("отсутствует")
-        )
-        item_lines.append(f"Код: {code_value}")
+        if item.code:
+            code_line = f"Код: `{escape_md(item.code)}`"
+        else:
+            code_line = "Код: —"
+        item_lines.append(code_line)
 
         if item.quantity is not None and item.unit:
             item_lines.append(f"Наличие: {item.quantity} {item.unit}")

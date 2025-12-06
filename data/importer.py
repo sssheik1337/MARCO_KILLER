@@ -827,6 +827,8 @@ def parse_hardware_stock_spb(stream: SourceType) -> list[dict]:
         items: list[dict] = []
         for _, row in df.iterrows():
             name = _string(row.get(normalized_headers[_normalize_header("Номенклатура")]))
+            code_column = normalized_headers.get(_normalize_header("Код товара"))
+            code = _string(row.get(code_column)) if code_column else None
             if not name:
                 logger.warning("Запись пропущена: нет наименования")
                 continue
@@ -854,6 +856,7 @@ def parse_hardware_stock_spb(stream: SourceType) -> list[dict]:
                 "catalog_id": catalog_id,
                 "kind": None,
                 "item_type": None,
+                "code": code,
                 "name": name,
                 "article": None,
                 "quantity": quantity,
@@ -932,6 +935,7 @@ def parse_fabrics_stock_msk(stream: SourceType) -> list[dict]:
         for _, row in df.iterrows():
             name = _string(row.get(columns["номенклатура"]))
             article = _string(row.get(columns["артикул"]))
+            code = _string(row.get(columns["код товара"]))
             if not name and not article:
                 logger.warning("Запись пропущена: нет артикула и наименования")
                 continue
@@ -951,6 +955,7 @@ def parse_fabrics_stock_msk(stream: SourceType) -> list[dict]:
                 "section": "fabrics",
                 "kind": kind,
                 "item_type": item_type,
+                "code": code,
                 "article": article,
                 "name": name,
                 "quantity": quantity,
@@ -1040,6 +1045,8 @@ def parse_fabrics_stock_spb(stream: SourceType) -> list[dict]:
         items: list[dict] = []
         for _, row in df.iterrows():
             name = _string(row.get(normalized_headers[_normalize_header("Номенклатура")]))
+            code_column = normalized_headers.get(_normalize_header("Код товара"))
+            code = _string(row.get(code_column)) if code_column else None
             if not name:
                 logger.warning("Запись пропущена: нет наименования")
                 continue
@@ -1062,6 +1069,7 @@ def parse_fabrics_stock_spb(stream: SourceType) -> list[dict]:
                 "section": "fabrics",
                 "kind": None,
                 "item_type": None,
+                "code": code,
                 "article": None,
                 "category": None,
                 "name": name,
