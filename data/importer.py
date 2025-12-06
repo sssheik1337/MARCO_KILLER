@@ -5,6 +5,7 @@ import io
 import logging
 import re
 import sqlite3
+from dataclasses import dataclass
 from typing import BinaryIO, Union
 
 import chardet
@@ -30,17 +31,6 @@ class SchemaMismatchError(Exception):
         logger.error(f"[SCHEMA ERROR] type={table_type} missing={self.missing}")
 
 
-class ImportWarningFriendly(Exception):
-    """Дружелюбное предупреждение о проблемах импорта без его отмены."""
-
-    def __init__(self, reason: str, preview: list, count: int):
-        super().__init__(reason)
-        self.reason = reason
-        self.preview = preview
-        self.count = count
-        self.items: list[dict] = []
-
-
 class ImportErrorFriendly(Exception):
     """Дружелюбное исключение для ошибок импорта (унифицированное)."""
 
@@ -60,6 +50,14 @@ class ImportErrorFriendly(Exception):
         self.reason = reason
         self.preview = preview or []
         self.total = total
+
+
+@dataclass
+class ParsedResult:
+    """Результат разбора с валидными строками и предупреждениями."""
+
+    items: list[dict]
+    warnings: list[str]
 
 
 TABLE_SCHEMAS = {
@@ -459,8 +457,8 @@ def _validate_headers(table_type: str, headers: list[str]) -> None:
             f"Ошибка структуры ({table_type}): отсутствуют колонки: {missing}",
         )
         raise ImportErrorFriendly(
-            title="Загруженная таблица не соответствует формату",
-            details="Отсутствующие столбцы:\n" + "\n".join(f"• {c}" for c in missing),
+            reason="missing_columns",
+            preview=missing,
             template=TABLE_SCHEMAS[table_type]["template_path"],
         )
 
@@ -853,9 +851,7 @@ def parse_hardware_stock_msk(stream: SourceType) -> list[dict]:
             ratio = len(foreign_rows) / max(len(records), 1)
             preview = [_string(r.get("Номенклатура")) for r in foreign_rows[:MAX_PREVIEW]]
             if len(foreign_rows) <= 20 and ratio < 0.10:
-                warning = ImportWarningFriendly("foreign", preview, len(foreign_rows))
-                warning.items = items
-                raise warning
+                return ParsedResult(items=items, warnings=preview)
 
             raise ImportErrorFriendly(
                 reason="wrong_section", preview=preview, total=len(foreign_rows)
@@ -1006,9 +1002,7 @@ def parse_hardware_stock_spb(stream: SourceType) -> list[dict]:
             ratio = len(foreign_rows) / max(len(records), 1)
             preview = [_string(r.get("Номенклатура")) for r in foreign_rows[:MAX_PREVIEW]]
             if len(foreign_rows) <= 20 and ratio < 0.10:
-                warning = ImportWarningFriendly("foreign", preview, len(foreign_rows))
-                warning.items = items
-                raise warning
+                return ParsedResult(items=items, warnings=preview)
 
             raise ImportErrorFriendly(
                 reason="wrong_section", preview=preview, total=len(foreign_rows)
@@ -1121,9 +1115,7 @@ def parse_fabrics_stock_msk(stream: SourceType) -> dict:
             ratio = len(foreign_rows) / max(len(records), 1)
             preview = [_string(r.get("Номенклатура")) for r in foreign_rows[:MAX_PREVIEW]]
             if len(foreign_rows) <= 20 and ratio < 0.10:
-                warning = ImportWarningFriendly("foreign", preview, len(foreign_rows))
-                warning.items = items
-                raise warning
+                return ParsedResult(items=items, warnings=preview)
 
             raise ImportErrorFriendly(
                 reason="wrong_section", preview=preview, total=len(foreign_rows)
@@ -1262,9 +1254,7 @@ def parse_fabrics_stock_spb(stream: SourceType) -> dict:
             ratio = len(foreign_rows) / max(len(records), 1)
             preview = [_string(r.get("Номенклатура")) for r in foreign_rows[:MAX_PREVIEW]]
             if len(foreign_rows) <= 20 and ratio < 0.10:
-                warning = ImportWarningFriendly("foreign", preview, len(foreign_rows))
-                warning.items = items
-                raise warning
+                return ParsedResult(items=items, warnings=preview)
 
             raise ImportErrorFriendly(
                 reason="wrong_section", preview=preview, total=len(foreign_rows)
@@ -1331,7 +1321,6 @@ __all__ = [
     "_string",
     "_number",
     "_number_or_error",
-    "ImportWarningFriendly",
     "ImportErrorFriendly",
     "TABLE_SCHEMAS",
 ]

@@ -1,4 +1,5 @@
 import logging
+import os
 from pathlib import Path
 
 from aiogram import Router, F
@@ -24,7 +25,7 @@ from data.db_utils import (
     set_setting,
 )
 from data import importer
-from data.importer import ImportErrorFriendly, ImportWarningFriendly
+from data.importer import ImportErrorFriendly, ParsedResult
 import aiosqlite
 from config import DB_PATH
 from formatter import escape_md, send_md_safe
@@ -93,6 +94,9 @@ _IMPORT_TARGETS = {
         "parser": importer.parse_hardware_stock_spb,
     },
 }
+
+# Человекочитаемые названия для сообщений об импорте
+HUMAN_NAME = {key: cfg["title"] for key, cfg in _IMPORT_TARGETS.items()}
 
 
 _BROADCAST_TYPES = {
@@ -463,12 +467,8 @@ async def import_xlsx(msg: Message):
         return
 
     try:
-        warning_info: ImportWarningFriendly | None = None
         try:
             parsed_result = parser(stream, **parser_kwargs)
-        except ImportWarningFriendly as w:
-            warning_info = w
-            parsed_result = getattr(w, "items", [])
         except ImportErrorFriendly as e:
             if getattr(e, "reason", None) == "wrong_section":
                 preview = [p or "—" for p in (e.preview or [])]
@@ -480,9 +480,15 @@ async def import_xlsx(msg: Message):
                     + "\n\nПожалуйста, используйте корректный шаблон."
                 )
                 await send_md_safe(msg, text)
-                await msg.answer_document(
-                    FSInputFile(f"templates/{target_key}_example.xlsx")
-                )
+                template_path = f"templates/{target_key}_example.xlsx"
+                if not os.path.exists(template_path):
+                    await msg.answer(
+                        "Шаблон отсутствует на сервере. Обратитесь к разработчику."
+                    )
+                    await set_setting("import_target", "")
+                    return
+
+                await msg.answer_document(FSInputFile(template_path))
                 await set_setting("import_target", "")
                 return
             raise
@@ -495,13 +501,32 @@ async def import_xlsx(msg: Message):
             ) from exc
 
         skipped_rows: list[str] = []
-        if isinstance(parsed_result, dict):
+        warnings: list[str] = []
+        if isinstance(parsed_result, ParsedResult):
+            items = parsed_result.items
+            imported_count = len(items)
+            warnings = parsed_result.warnings
+        elif isinstance(parsed_result, dict):
             items = parsed_result.get("items", [])
             imported_count = parsed_result.get("imported", len(items))
             skipped_rows = parsed_result.get("skipped", []) or []
         else:
             items = parsed_result
             imported_count = len(items)
+
+        if warnings:
+            preview = [w or "—" for w in warnings]
+            text = (
+                "⚠️ В таблице найдены строки, которые не относятся к разделу "
+                f"{HUMAN_NAME[target_key]}.\n"
+                "Импорт прерван.\n\n"
+                "Примеры несовпадающих строк:\n"
+                + "\n".join(f"• {row}" for row in preview[:20])
+                + ("\n… остальные скрыты" if len(preview) > 20 else "")
+            )
+            await msg.answer(text)
+            await set_setting("import_target", "")
+            return
 
         if imported_count:
             logging.info(
@@ -606,20 +631,7 @@ async def import_xlsx(msg: Message):
 
         await set_setting("import_target", "")
 
-        if warning_info is not None:
-            preview = [p or "—" for p in (warning_info.preview or [])]
-            warning_text = "\n".join(
-                [
-                    "Импорт выполнен, но обнаружены посторонние записи.",
-                    f"Всего: {warning_info.count}",
-                    f"Показаны первые {len(preview)}:",
-                    *[f"• {escape_md(p)}" for p in preview if p],
-                    "",
-                    f"Импорт завершён: добавлено {import_count} позиций.",
-                ]
-            )
-            await send_md_safe(msg, warning_text, reply_markup=import_result_keyboard())
-        elif skipped_rows:
+        if skipped_rows:
             skipped_lines = [
                 f"{idx}) {escape_md(name)}" for idx, name in enumerate(skipped_rows, start=1)
             ]
@@ -642,12 +654,22 @@ async def import_xlsx(msg: Message):
             )
     except ImportErrorFriendly as e:
         if getattr(e, "reason", None) == "bad_xlsx":
-            await send_md_safe(
-                msg,
+            await msg.answer(
                 "Ошибка: файл XLSX повреждён или сохранён в неподдерживаемом режиме Excel.\n"
                 "Пожалуйста, откройте таблицу в Excel и сохраните через:\n"
                 "Файл → Сохранить как → Excel (*.xlsx) (ОБЫЧНЫЙ, не Strict OpenXML).",
             )
+            await set_setting("import_target", "")
+            return
+
+        if getattr(e, "reason", None) == "missing_columns":
+            missing_cols = e.preview or []
+            text = (
+                "Ошибка: в таблице отсутствуют обязательные столбцы:\n"
+                + "\n".join(f"• {col}" for col in missing_cols)
+            )
+            await msg.answer(text)
+            await set_setting("import_target", "")
             return
 
         text = (
@@ -659,6 +681,15 @@ async def import_xlsx(msg: Message):
         await send_md_safe(msg, text)
 
         if e.template:
-            await msg.answer_document(FSInputFile(e.template))
+            template_path = e.template
+            if not os.path.exists(template_path):
+                await msg.answer(
+                    "Шаблон отсутствует на сервере. Обратитесь к разработчику."
+                )
+                await set_setting("import_target", "")
+                return
 
+            await msg.answer_document(FSInputFile(template_path))
+
+        await set_setting("import_target", "")
         return
