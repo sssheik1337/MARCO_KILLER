@@ -27,7 +27,8 @@ from data import importer
 from data.importer import ImportErrorFriendly
 import aiosqlite
 from config import DB_PATH
-from structure.markdown import send_md_safe, edit_md_safe, message_to_markdown, escape_user, send_md_safe_to_chat
+from formatter import send_md_safe
+from structure.markdown import edit_md_safe, message_to_markdown, escape_user, send_md_safe_to_chat
 from structure.keyboards import usd_keyboard, import_result_keyboard
 from structure.states import BroadcastState
 from services.exchange import current_range, refresh_range
@@ -587,7 +588,7 @@ async def import_xlsx(msg: Message):
             + "Пожалуйста, используйте корректный шаблон."
         )
 
-        await msg.answer(text)
+        await send_md_safe(msg, text)
 
         if e.template:
             await msg.answer_document(FSInputFile(e.template))
