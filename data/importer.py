@@ -542,23 +542,9 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
             return []
 
         logger.info(f"Импорт {table_type} для города -")
-
-        header_index: int | None = None
-        for idx, row in enumerate(rows):
-            normalized = [_normalize_header(cell) for cell in row]
-            if "наименование коллекции" in normalized:
-                header_index = idx
-                break
-
-        if header_index is None:
-            raise ImportErrorFriendly(
-                reason="missing_columns",
-                preview=["Наименование коллекции"],
-                template=TABLE_SCHEMAS[table_type]["template_path"],
-            )
-
-        header_row = rows[header_index]
-        top_row = rows[header_index - 1] if header_index > 0 else [None] * len(header_row)
+        # Нижний уровень заголовков — строка R5 (индекс 4), верхний — строка R4 (индекс 3)
+        header_row = rows[4] if len(rows) > 4 else []
+        top_row = rows[3] if len(rows) > 3 else []
 
         def _clean_header(value: object) -> str:
             """Нормализует текст заголовка: удаляет скобки, пробелы и приводит к верхнему регистру."""
@@ -582,9 +568,10 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
             "СТАТУС": "special_status",
         }
 
-        for idx, bottom_value in enumerate(header_row):
+        max_len = max(len(header_row), len(top_row))
+        for idx in range(max_len):
             top_norm = _clean_header(_row_value(top_row, idx))
-            bottom_norm = _clean_header(bottom_value)
+            bottom_norm = _clean_header(_row_value(header_row, idx))
 
             if top_norm and bottom_norm:
                 combined = f"{bottom_norm}_{top_norm}"
@@ -600,10 +587,15 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
                 columns[canonical] = idx
                 headers_for_validation.append(canonical)
 
+        # Статус располагается в колонке R5C21, даже если заголовок не задан
+        if "special_status" not in columns and len(header_row) > 20:
+            columns["special_status"] = 20
+            headers_for_validation.append("special_status")
+
         _validate_headers(table_type, headers_for_validation)
 
         items: list[dict] = []
-        for row in rows[header_index + 1 :]:
+        for row in rows[5:]:
             name = _string(_row_value(row, columns["name"])) if "name" in columns else None
             if not name:
                 continue
