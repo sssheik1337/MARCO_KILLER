@@ -532,7 +532,7 @@ def _find_catalog_id(
 # ---------------------------------- парсинг каталогов ----------------------------------
 
 def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
-    """Парсит общий каталог тканей."""
+    """Парсит каталог тканей с двухуровневой шапкой и склейкой диапазонов цен."""
 
     try:
         table_type = "fabrics_catalog"
@@ -542,10 +542,10 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
 
         logger.info(f"Импорт {table_type} для города -")
 
-        header_index = None
+        header_index: int | None = None
         for idx, row in enumerate(rows):
-            first_cell = _normalize_header(_row_value(row, 0))
-            if first_cell == "наименование коллекции":
+            headers_normalized = [_normalize_header(cell) for cell in row]
+            if "наименование коллекции" in headers_normalized:
                 header_index = idx
                 break
 
@@ -559,114 +559,97 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
         header_row = rows[header_index]
         top_row = rows[header_index - 1] if header_index > 0 else [None] * len(header_row)
 
+        # Склеиваем верхний и нижний уровень шапки в итоговые названия колонок
         columns: dict[str, int] = {}
-        for idx, value in enumerate(header_row):
-            columns[_normalize_header(value)] = idx
+        headers_for_validation: list[str] = []
 
-        required_columns = [
-            "Наименование коллекции",
-            "Страна",
-            "Тип ткани",
-            "сегмент",
-            "Оптовая от ролика",
-            "Оптовая в отрез",
-        ]
-        _ensure_columns(columns, required_columns)
+        for idx, bottom_value in enumerate(header_row):
+            top_value = _string(_row_value(top_row, idx)) or ""
+            bottom_text = _string(bottom_value) or ""
 
-        price_columns: dict[tuple[str, str], int] = {}
-        range_map = {"85-90": "85_90", "90-95": "90_95", "95-100": "95_100"}
-        for idx, bottom in enumerate(header_row):
-            bottom_norm = _normalize_header(bottom)
-            top_text = _string(_row_value(top_row, idx)) or ""
-            range_key = range_map.get(top_text.strip())
-            if bottom_norm in {"ролик", "отрез"} and range_key:
-                kind = "roll" if bottom_norm == "ролик" else "piece"
-                price_columns[(range_key, kind)] = idx
+            top_norm = "_".join(top_value.strip().upper().replace("-", "_").split())
+            bottom_norm = "_".join(bottom_text.strip().upper().replace("-", "_").split())
 
-        for human, key in [
-            ("РОЛИК (85-90)", ("85_90", "roll")),
-            ("отрез (85-90)", ("85_90", "piece")),
-            ("РОЛИК (90-95)", ("90_95", "roll")),
-            ("отрез (90-95)", ("90_95", "piece")),
-            ("РОЛИК (95-100)", ("95_100", "roll")),
-            ("отрез (95-100)", ("95_100", "piece")),
-        ]:
-            if key not in price_columns:
-                raise ImportErrorFriendly(
-                    title="Загруженная таблица не соответствует формату",
-                    details=f"Отсутствует столбец «{human}».",
-                    template=TABLE_SCHEMAS[table_type]["template_path"],
-                )
+            if top_norm and bottom_norm:
+                combined = f"{bottom_norm}_{top_norm}"
+            else:
+                combined = bottom_text.strip()
 
-        status_index = columns.get(_normalize_header("статус"))
-        special_index = status_index
-        if special_index is None:
-            for idx, value in enumerate(header_row):
-                if value is None or str(value).strip() == "":
-                    special_index = idx
-                    break
+            # Приводим к целевым именам для проверки структуры
+            if combined:
+                header_name = combined.upper().replace(" ", "_").replace("-", "_")
+            else:
+                header_name = ""
 
-        headers = [
-            "Наименование коллекции",
-            "Страна",
-            "Тип ткани",
-            "сегмент",
-        ]
-        for range_key in ("85_90", "90_95", "95_100"):
-            if (range_key, "roll") in price_columns:
-                headers.append(f"РОЛИК_{range_key}")
-            if (range_key, "piece") in price_columns:
-                headers.append(f"ОТРЕЗ_{range_key}")
-        if special_index is not None:
-            headers.append("статус")
+            # Базовые поля оставляем в человеческом виде
+            base_map = {
+                "НАИМЕНОВАНИЕ КОЛЛЕКЦИИ": "Наименование коллекции",
+                "СТРАНА": "Страна",
+                "ТИП ТКАНИ": "Тип ткани",
+                "СЕГМЕНТ": "сегмент",
+                "ОПТОВАЯ ОТ РОЛИКА": "Оптовая от ролика",
+                "ОПТОВАЯ В ОТРЕЗ": "Оптовая в отрез",
+                "СТАТУС": "статус",
+            }
 
-        _validate_headers(table_type, headers)
+            if header_name in base_map:
+                canonical = base_map[header_name]
+            else:
+                canonical = header_name
+
+            if canonical:
+                columns[canonical] = idx
+                headers_for_validation.append(canonical)
+
+        _validate_headers(table_type, headers_for_validation)
 
         items: list[dict] = []
         for row in rows[header_index + 1 :]:
-            name = _string(_row_value(row, columns["наименование коллекции"]))
+            name = _string(_row_value(row, columns["Наименование коллекции"]))
             if not name:
                 logger.warning("Запись пропущена: нет наименования строки")
                 continue
 
             item = {
                 "name": name,
-                "country": _string(_row_value(row, columns["страна"])),
-                "fabric_type": _string(_row_value(row, columns["тип ткани"])),
+                "country": _string(_row_value(row, columns["Страна"])),
+                "fabric_type": _string(_row_value(row, columns["Тип ткани"])),
                 "segment": _string(_row_value(row, columns["сегмент"])),
                 "wholesale_roll": _number_or_error(
-                    _row_value(row, columns["оптовая от ролика"]),
+                    _row_value(row, columns["Оптовая от ролика"]),
                     "Оптовая от ролика",
                 ),
                 "wholesale_piece": _number_or_error(
-                    _row_value(row, columns["оптовая в отрез"]),
+                    _row_value(row, columns["Оптовая в отрез"]),
                     "Оптовая в отрез",
                 ),
                 "price_roll_85_90": _number_or_error(
-                    _row_value(row, price_columns[("85_90", "roll")]),
-                    "РОЛИК (85-90)",
+                    _row_value(row, columns["РОЛИК_85_90"]),
+                    "РОЛИК_85_90",
                 ),
                 "price_piece_85_90": _number_or_error(
-                    _row_value(row, price_columns[("85_90", "piece")]),
-                    "отрез (85-90)",
+                    _row_value(row, columns["ОТРЕЗ_85_90"]),
+                    "ОТРЕЗ_85_90",
                 ),
                 "price_roll_90_95": _number_or_error(
-                    _row_value(row, price_columns[("90_95", "roll")]),
-                    "РОЛИК (90-95)",
+                    _row_value(row, columns["РОЛИК_90_95"]),
+                    "РОЛИК_90_95",
                 ),
                 "price_piece_90_95": _number_or_error(
-                    _row_value(row, price_columns[("90_95", "piece")]),
-                    "отрез (90-95)",
+                    _row_value(row, columns["ОТРЕЗ_90_95"]),
+                    "ОТРЕЗ_90_95",
                 ),
                 "price_roll_95_100": _number_or_error(
-                    _row_value(row, price_columns[("95_100", "roll")]),
-                    "РОЛИК (95-100)",
+                    _row_value(row, columns["РОЛИК_95_100"]),
+                    "РОЛИК_95_100",
                 ),
                 "price_piece_95_100": _number_or_error(
-                    _row_value(row, price_columns[("95_100", "piece")]),
-                    "отрез (95-100)",
+                    _row_value(row, columns["ОТРЕЗ_95_100"]),
+                    "ОТРЕЗ_95_100",
                 ),
-                "special_status": _string(_row_value(row, special_index)) if special_index is not None else None,
+                "special_status": _string(_row_value(row, columns["статус"]))
+                if "статус" in columns
+                else None,
                 "image_url": None,
             }
             items.append(item)
