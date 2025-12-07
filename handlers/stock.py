@@ -87,7 +87,7 @@ async def send_stock_page(message: Message, stock: StockItemCity, page: int) -> 
             page=1,
             total_pages=1,
             back_callback=stock.back_callback,
-            flat=True,
+            flat=not (stock.kind_slug or stock.type_slug),
         )
         await send_md_safe(message, "Данные об остатках пока отсутствуют.", reply_markup=markup)
         return
@@ -148,7 +148,7 @@ async def send_stock_page(message: Message, stock: StockItemCity, page: int) -> 
         page=page,
         total_pages=total_pages,
         back_callback=stock.back_callback,
-        flat=not stock.kind_slug or not stock.type_slug,
+        flat=not (stock.kind_slug or stock.type_slug),
     )
 
     try:
@@ -497,7 +497,7 @@ async def on_stock_list(cb: CallbackQuery):
             page=1,
             total_pages=1,
             back_callback=back_callback,
-            flat=kind_slug == "all",
+            flat=kind_slug == "all" and type_slug == "all",
         )
         await send_md_safe(cb.message, "В выбранной категории пока нет остатков.", reply_markup=markup)
         await cb.answer()
