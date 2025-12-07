@@ -76,6 +76,7 @@ TABLE_SCHEMAS = {
             "ОТРЕЗ_90_95",
             "РОЛИК_95_100",
             "ОТРЕЗ_95_100",
+            "special_status",
         ],
         "template_path": "templates/fabrics_catalog_example.xlsx",
     },
@@ -542,6 +543,7 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
             return []
 
         logger.info(f"Импорт {table_type} для города -")
+
         # Нижний уровень заголовков — строка R5 (индекс 4), верхний — строка R4 (индекс 3)
         header_row = rows[4] if len(rows) > 4 else []
         top_row = rows[3] if len(rows) > 3 else []
@@ -587,10 +589,28 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
                 columns[canonical] = idx
                 headers_for_validation.append(canonical)
 
-        # Статус располагается в колонке R5C21, даже если заголовок не задан
-        if "special_status" not in columns and len(header_row) > 20:
+        # Колонка статуса располагается в R5C21 даже без явного заголовка
+        if "special_status" not in columns:
             columns["special_status"] = 20
             headers_for_validation.append("special_status")
+
+        # Проверяем обязательные столбцы согласно актуальной шапке
+        required_headers = [
+            "name",
+            "fabric_type",
+            "ОТРЕЗ_85_90",
+            "ОТРЕЗ_90_95",
+            "ОТРЕЗ_95_100",
+            "special_status",
+        ]
+
+        missing = [col for col in required_headers if col not in columns]
+        if missing:
+            raise ImportErrorFriendly(
+                reason="missing_columns",
+                preview=missing,
+                template=TABLE_SCHEMAS[table_type]["template_path"],
+            )
 
         _validate_headers(table_type, headers_for_validation)
 
@@ -602,15 +622,15 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
 
             item = {
                 "name": name,
-                "country": _string(_row_value(row, columns["country"])),
-                "fabric_type": _string(_row_value(row, columns["fabric_type"])),
-                "segment": _string(_row_value(row, columns["segment"])),
+                "country": _string(_row_value(row, columns.get("country", -1))),
+                "fabric_type": _string(_row_value(row, columns.get("fabric_type", -1))),
+                "segment": _string(_row_value(row, columns.get("segment", -1))),
                 "wholesale_roll": _number_or_error(
-                    _row_value(row, columns["wholesale_roll"]),
+                    _row_value(row, columns.get("wholesale_roll", -1)),
                     "wholesale_roll",
                 ),
                 "wholesale_piece": _number_or_error(
-                    _row_value(row, columns["wholesale_piece"]),
+                    _row_value(row, columns.get("wholesale_piece", -1)),
                     "wholesale_piece",
                 ),
                 "price_roll_85_90": _number_or_error(
