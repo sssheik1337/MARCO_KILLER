@@ -466,6 +466,29 @@ async def import_xlsx(msg: Message):
         await set_setting("import_target", "")
         return
 
+    if target_key == "stock_hardware_spb":
+        try:
+            result = importer.parse_hardware_stock_spb(stream)
+        except ImportErrorFriendly as e:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            logging.exception("Ошибка сохранения файла остатков фурнитуры СПБ")
+            raise ImportErrorFriendly(
+                title="Не удалось сохранить файл остатков фурнитуры СПБ",
+                details=str(exc),
+                template=None,
+            ) from exc
+
+        saved_path = result.get("saved_path") if isinstance(result, dict) else None
+        file_note = f" ({Path(saved_path).name})" if saved_path else ""
+        await msg.answer(
+            f"Файл остатков фурнитуры СПБ сохранён{file_note}.",
+            parse_mode=None,
+            reply_markup=import_result_keyboard(),
+        )
+        await set_setting("import_target", "")
+        return
+
     try:
         try:
             parsed_result = parser(stream, **parser_kwargs)

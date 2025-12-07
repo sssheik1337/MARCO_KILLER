@@ -6,6 +6,7 @@ import logging
 import re
 import sqlite3
 from dataclasses import dataclass
+from pathlib import Path
 from typing import BinaryIO, Union
 
 import chardet
@@ -891,155 +892,34 @@ def parse_hardware_stock_msk(stream: SourceType) -> list[dict]:
         raise _wrap_import_error(table_type, exc) from exc
 
 
-def parse_hardware_stock_spb(stream: SourceType) -> list[dict]:
-    """Парсит остатки фурнитуры для Санкт-Петербурга."""
+def parse_hardware_stock_spb(stream: SourceType) -> dict:
+    """Сохраняет файл остатков фурнитуры СПБ без разбора содержимого."""
+
+    target_dir = Path("data/stocks/spb/hardware")
+    target_dir.mkdir(parents=True, exist_ok=True)
+    file_path = target_dir / "hardware_stock_spb.xlsx"
 
     try:
-        table_type = "stock_hardware_spb"
-        rows = _load_rows(stream)
-        if not rows:
-            return []
+        # Удаляем предыдущий файл, если он был сохранён ранее
+        if file_path.exists():
+            file_path.unlink()
 
-        city = "spb"
-        logger.info("Импорт %s для города %s", table_type, city)
+        if hasattr(stream, "seek"):
+            stream.seek(0)
+        with open(file_path, "wb") as f:
+            f.write(stream.read())
 
-        base_headers = ["Номенклатура", "Остаток", "Свободный остаток"]
-
-        header_index = None
-        main_header: list[object] | None = None
-        sub_header: list[object] | None = None
-        for idx, row in enumerate(rows):
-            normalized = [_normalize_header(val) for val in row]
-            if all(_normalize_header(title) in normalized for title in base_headers):
-                header_index = idx
-                main_header = row
-                if idx + 1 < len(rows):
-                    sub_header = rows[idx + 1]
-                break
-
-        if header_index is None or main_header is None:
-            raise ImportErrorFriendly(
-                title="Загруженная таблица не соответствует формату",
-                details="Не распознана структура таблицы остатков фурнитуры СПБ.",
-                template=TABLE_SCHEMAS[table_type]["template_path"],
-            )
-
-        max_len = max(len(main_header), len(sub_header or []))
-        combined_headers: list[object] = []
-        for i in range(max_len):
-            top = main_header[i] if i < len(main_header) else None
-            bottom = sub_header[i] if sub_header and i < len(sub_header) else None
-            top_str = _string(top)
-            bottom_str = _string(bottom)
-
-            if bottom_str:
-                combined = f"{top_str or ''} ({bottom_str})".strip()
-            else:
-                combined = top_str or None
-            combined_headers.append(combined)
-
-        normalized_headers = {
-            _normalize_header(val): val
-            for val in combined_headers
-            if val is not None
-        }
-
-        headers: list[str] = []
-        for value in combined_headers:
-            normalized = _normalize_header(value)
-            if normalized == _normalize_header("Номенклатура"):
-                headers.append("Номенклатура")
-            elif normalized in {
-                _normalize_header("Остаток (В ед. хранения)"),
-                _normalize_header("Остаток"),
-            }:
-                headers.append("Остаток")
-            elif normalized in {
-                _normalize_header("Свободный остаток (В ед. хранения)"),
-                _normalize_header("Свободный остаток"),
-            }:
-                headers.append("Свободный остаток")
-
-        _validate_headers(table_type, headers)
-
-        data_rows = rows[(header_index + 2 if sub_header else header_index + 1) :]
-        df = pd.DataFrame(data_rows, columns=combined_headers)
-        df = df.dropna(how="all")
-
-        article_map, name_map = _load_catalog_index("hardware_catalog")
-
-        records = df.to_dict(orient="records")
-        foreign_rows: list[dict] = []
-        items: list[dict] = []
-        for record in records:
-            row = dict(record)
-            row.setdefault("Ед.", "ед. хранения")
-            if not classify_row_for_section("hardware", row):
-                foreign_rows.append(row)
-                continue
-
-            name = _string(row.get(normalized_headers[_normalize_header("Номенклатура")]))
-            code_column = normalized_headers.get(_normalize_header("Код товара"))
-            code = _string(row.get(code_column)) if code_column else None
-            if not name:
-                logger.warning("Запись пропущена: нет наименования")
-                continue
-
-            quantity = _number_or_error(
-                row.get(
-                    normalized_headers[
-                        _normalize_header("Остаток (В ед. хранения)")
-                    ]
-                ),
-                "Остаток (В ед. хранения)",
-            )
-            free_quantity = _number_or_error(
-                row.get(
-                    normalized_headers[
-                        _normalize_header("Свободный остаток (В ед. хранения)")
-                    ]
-                ),
-                "Свободный остаток (В ед. хранения)",
-            )
-
-            catalog_id = _find_catalog_id(None, name, article_map, name_map)
-
-            item = {
-                "catalog_id": catalog_id,
-                "kind": None,
-                "item_type": None,
-                "code": code,
-                "name": name,
-                "article": None,
-                "quantity": quantity,
-                "free_quantity": free_quantity,
-                "unit": "ед. хранения",
-                "arrival_date": None,
-                "reserved": None,
-                "extra_info": None,
-                "city": "spb",
-                "section": "hardware",
-            }
-            items.append(item)
-
-        if foreign_rows:
-            ratio = len(foreign_rows) / max(len(records), 1)
-            preview = [_string(r.get("Номенклатура")) for r in foreign_rows[:MAX_PREVIEW]]
-            if len(foreign_rows) <= 20 and ratio < 0.10:
-                return ParsedResult(items=items, warnings=preview)
-
-            raise ImportErrorFriendly(
-                reason="wrong_section", preview=preview, total=len(foreign_rows)
-            )
-
-        logger.info("[IMPORT DONE] Type=%s City=%s Items=%s", table_type, city, len(items))
-
-        return items
-    except ImportErrorFriendly:
-        raise
+        logger.info(
+            "Файл остатков фурнитуры СПБ сохранён без разбора: %s", file_path
+        )
+        return {"items": [], "imported": 0, "saved_path": str(file_path)}
     except Exception as exc:  # noqa: BLE001
-        logger.error("Ошибка импорта остатков фурнитуры (СПБ)", exc_info=True)
-        raise _wrap_import_error(table_type, exc) from exc
+        logger.error("Не удалось сохранить файл остатков фурнитуры СПБ", exc_info=True)
+        raise ImportErrorFriendly(
+            title="Не удалось сохранить файл остатков фурнитуры СПБ",
+            details=str(exc),
+            template=None,
+        ) from exc
 
 
 def parse_fabrics_stock_msk(stream: SourceType) -> dict:
