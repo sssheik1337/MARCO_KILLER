@@ -28,7 +28,7 @@ SECTION_TITLES = {"fabrics": "Ткани", "hardware": "Фурнитура"}
 
 TYPE_PAGE_SIZE = 10
 ITEM_PAGE_SIZE = 5
-HARDWARE_ITEM_PAGE_SIZE = 10
+HARDWARE_ITEM_PAGE_SIZE = 5
 
 _STOCK_SELECTIONS: dict[int, dict] = defaultdict(dict)
 
@@ -139,11 +139,8 @@ async def send_stock_page(message: Message, stock: StockItemCity, page: int) -> 
 
             qty_value = "" if item.quantity is None else item.quantity
             item_lines.append(f"Наличие: {qty_value}")
-            unit_value = escape_md(item.unit) if item.unit else ""
+            unit_value = item.unit or ""
             item_lines.append(f"Ед.: {unit_value}")
-
-            if item.extra_info:
-                item_lines.append(f"Доп.: {escape_md(item.extra_info)}")
         else:
             item_lines.append(f"{offset}) *{escape_md(item.name)}*")
             if item.quantity is not None and item.unit:
