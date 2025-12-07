@@ -10,6 +10,9 @@ from data.stock_interface import load_city_stock
 from data.stock_models import StockItemCity
 from services.pagination import slice_page
 from structure.keyboards import (
+    build_hardware_items_keyboard,
+    build_hardware_kinds_keyboard,
+    build_hardware_types_keyboard,
     build_stock_list_keyboard,
     build_spb_collections_keyboard,
     build_types_keyboard,
@@ -25,6 +28,7 @@ SECTION_TITLES = {"fabrics": "Ткани", "hardware": "Фурнитура"}
 
 TYPE_PAGE_SIZE = 10
 ITEM_PAGE_SIZE = 5
+HARDWARE_ITEM_PAGE_SIZE = 10
 
 _STOCK_SELECTIONS: dict[int, dict] = defaultdict(dict)
 
@@ -79,21 +83,37 @@ async def send_stock_page(message: Message, stock: StockItemCity, page: int) -> 
     """Отображает страницу остатков с пагинацией."""
 
     if not stock.items:
-        markup = build_stock_list_keyboard(
-            city=stock.city,
-            section=stock.section,
-            kind_slug=stock.kind_slug,
-            type_slug=stock.type_slug,
-            page=1,
-            total_pages=1,
-            back_callback=stock.back_callback,
-            flat=not (stock.kind_slug or stock.type_slug),
-        )
+        if stock.section == "hardware" and stock.city == "msk":
+            markup = build_hardware_items_keyboard(
+                city=stock.city,
+                kind_slug=stock.kind_slug or "all",
+                type_slug=stock.type_slug or "all",
+                page=1,
+                total_pages=1,
+                back_callback=stock.back_callback,
+            )
+        else:
+            markup = build_stock_list_keyboard(
+                city=stock.city,
+                section=stock.section,
+                kind_slug=stock.kind_slug,
+                type_slug=stock.type_slug,
+                page=1,
+                total_pages=1,
+                back_callback=stock.back_callback,
+                flat=not (stock.kind_slug or stock.type_slug),
+            )
         await send_md_safe(message, "Данные об остатках пока отсутствуют.", reply_markup=markup)
         return
 
-    page_items, page, total_pages = slice_page(stock.items, page, ITEM_PAGE_SIZE)
-    start_index = (page - 1) * ITEM_PAGE_SIZE + 1
+    page_size = (
+        HARDWARE_ITEM_PAGE_SIZE
+        if stock.section == "hardware" and stock.city == "msk"
+        else ITEM_PAGE_SIZE
+    )
+
+    page_items, page, total_pages = slice_page(stock.items, page, page_size)
+    start_index = (page - 1) * page_size + 1
     lines: list[str] = []
 
     for offset, item in enumerate(page_items, start=start_index):
@@ -101,22 +121,31 @@ async def send_stock_page(message: Message, stock: StockItemCity, page: int) -> 
 
         if stock.city == "spb" and stock.section == "fabrics":
             item_lines.append(f"{offset}) `{escape_md(item.name)}`")
-        else:
-            item_lines.append(f"{offset}) *{escape_md(item.name)}*")
-
-        if not (stock.city == "spb" and stock.section == "fabrics"):
-            if item.code:
-                code_line = f"Код: `{escape_md(item.code)}`"
-            else:
-                code_line = "Код: —"
-            item_lines.append(code_line)
-
-        if stock.city == "spb" and stock.section == "fabrics":
             qty_text = "" if item.quantity is None else str(item.quantity)
             free_text = "" if getattr(item, "free_quantity", None) is None else str(item.free_quantity)
             item_lines.append(f"Остаток: {qty_text} {item.unit or ''}".rstrip())
             item_lines.append(f"Свободный: {free_text} {item.unit or ''}".rstrip())
+        elif stock.section == "hardware" and stock.city == "msk":
+            item_lines.append(f"{offset}) *{escape_md(item.name)}*")
+            if item.code:
+                item_lines.append(f"Код: `{escape_md(item.code)}`")
+            else:
+                item_lines.append("Код: отсутствует")
+
+            if item.article:
+                item_lines.append(f"Артикул: `{escape_md(item.article)}`")
+            else:
+                item_lines.append("Артикул: отсутствует")
+
+            qty_value = "" if item.quantity is None else item.quantity
+            item_lines.append(f"Наличие: {qty_value}")
+            unit_value = escape_md(item.unit) if item.unit else ""
+            item_lines.append(f"Ед.: {unit_value}")
+
+            if item.extra_info:
+                item_lines.append(f"Доп.: {escape_md(item.extra_info)}")
         else:
+            item_lines.append(f"{offset}) *{escape_md(item.name)}*")
             if item.quantity is not None and item.unit:
                 item_lines.append(f"Наличие: {item.quantity} {item.unit}")
 
@@ -140,21 +169,83 @@ async def send_stock_page(message: Message, stock: StockItemCity, page: int) -> 
     header.append(f"Страница {page}/{total_pages}")
 
     text = "\n\n".join(["\n".join(header), *lines])
-    markup = build_stock_list_keyboard(
-        city=stock.city,
-        section=stock.section,
-        kind_slug=stock.kind_slug,
-        type_slug=stock.type_slug,
-        page=page,
-        total_pages=total_pages,
-        back_callback=stock.back_callback,
-        flat=not (stock.kind_slug or stock.type_slug),
-    )
+    if stock.section == "hardware" and stock.city == "msk":
+        markup = build_hardware_items_keyboard(
+            city=stock.city,
+            kind_slug=stock.kind_slug or "all",
+            type_slug=stock.type_slug or "all",
+            page=page,
+            total_pages=total_pages,
+            back_callback=stock.back_callback,
+        )
+    else:
+        markup = build_stock_list_keyboard(
+            city=stock.city,
+            section=stock.section,
+            kind_slug=stock.kind_slug,
+            type_slug=stock.type_slug,
+            page=page,
+            total_pages=total_pages,
+            back_callback=stock.back_callback,
+            flat=not (stock.kind_slug or stock.type_slug),
+        )
 
     try:
         await edit_md_safe(message, text, reply_markup=markup)
     except Exception:
         await send_md_safe(message, text, reply_markup=markup)
+
+
+async def _show_hardware_kinds(message: Message, user_id: int, city: str, page: int) -> None:
+    """Показывает список видов номенклатуры фурнитуры с пагинацией."""
+
+    section = "hardware"
+    stock = await load_city_stock(city, section)
+    selection = _STOCK_SELECTIONS[user_id]
+    selection["city"] = city
+    selection["section"] = section
+    selection.pop("hw_type_map", None)
+
+    kinds = sorted({item.kind for item in stock.items if item.kind})
+
+    stock.back_callback = f"stock_section:{city}:{section}"
+    stock.kind_slug = None
+    stock.type_slug = None
+
+    if not stock.items:
+        await send_stock_page(message, stock, 1)
+        return
+
+    if not kinds:
+        await send_stock_page(message, stock, 1)
+        return
+
+    used: set[str] = set()
+    selection["hw_kind_map"] = {}
+    selection["hw_kind_page"] = page
+    kind_rows: list[tuple[str, str]] = []
+    for kind in kinds:
+        slug = _slugify(kind, used)
+        selection["hw_kind_map"][slug] = kind
+        kind_rows.append((kind, slug))
+
+    page_rows, current_page, total_pages = slice_page(kind_rows, page, TYPE_PAGE_SIZE)
+
+    text = (
+        f"{escape_md(SECTION_TITLES.get(section, section))} • {escape_md(CITY_TITLES.get(city, city))}\n"
+        f"Выберите вид номенклатуры.\nСтраница {current_page}/{total_pages}"
+    )
+
+    await send_md_safe(
+        message,
+        text,
+        reply_markup=build_hardware_kinds_keyboard(
+            city=city,
+            kinds=page_rows,
+            page=current_page,
+            total_pages=total_pages,
+        ),
+    )
 
 
 async def _show_spb_collections(
@@ -274,8 +365,157 @@ async def on_stock_select_section(cb: CallbackQuery):
     _, city, section = cb.data.split(":")
     if city == "spb" and section == "fabrics":
         await _show_spb_collections(cb.message, cb.from_user.id, city, section, 1)
+    elif city == "msk" and section == "hardware":
+        await _show_hardware_kinds(cb.message, cb.from_user.id, city, 1)
     else:
         await _show_kinds(cb.message, cb.from_user.id, city, section)
+    await cb.answer()
+
+
+@router.callback_query(F.data.regexp(r"^stock:msk:hardware:kinds:\d+$"))
+async def on_stock_kinds_hardware(cb: CallbackQuery):
+    """Показывает виды номенклатуры фурнитуры с пагинацией."""
+
+    parts = cb.data.split(":")
+    page_str = parts[-1]
+    await _show_hardware_kinds(cb.message, cb.from_user.id, "msk", int(page_str))
+    await cb.answer()
+
+
+@router.callback_query(F.data.regexp(r"^stock:msk:hardware:types:.+"))
+async def on_stock_types_hardware(cb: CallbackQuery):
+    """Показывает типы номенклатуры для выбранного вида фурнитуры."""
+
+    parts = cb.data.split(":")
+    if len(parts) < 6:
+        await cb.answer("Некорректные данные", show_alert=True)
+        return
+
+    _, city, section, _, kind_slug, page_str = parts
+    selection = _STOCK_SELECTIONS[cb.from_user.id]
+    selection["city"] = city
+    selection["section"] = section
+    selection["hw_kind_slug"] = kind_slug
+
+    stock = await load_city_stock(city, section)
+    kind_map = selection.get("hw_kind_map", {})
+    selected_kind = kind_map.get(kind_slug)
+    if not selected_kind:
+        selected_kind = next((item.kind for item in stock.items if _match_slug(item.kind, kind_slug)), None)
+
+    if not selected_kind:
+        await send_md_safe(cb.message, "Данные об остатках пока отсутствуют.", reply_markup=kb_stock_sections(city))
+        await cb.answer()
+        return
+
+    types = sorted({item.item_type for item in stock.items if item.kind == selected_kind and item.item_type})
+    if not types:
+        kinds = [(title, slug) for slug, title in kind_map.items()]
+        page_rows, current_kind_page, total_kind_pages = slice_page(
+            kinds, selection.get("hw_kind_page", 1), TYPE_PAGE_SIZE
+        )
+        await send_md_safe(
+            cb.message,
+            "Нет остатков в выбранной группе.",
+            reply_markup=build_hardware_kinds_keyboard(
+                city, page_rows, current_kind_page, total_kind_pages
+            ),
+        )
+        await cb.answer()
+        return
+
+    used: set[str] = set()
+    selection.setdefault("hw_type_map", {})
+    selection["hw_type_map"][kind_slug] = {}
+    selection["hw_type_page"] = int(page_str)
+    type_rows: list[tuple[str, str]] = []
+    for item_type in types:
+        slug = _slugify(item_type, used)
+        selection["hw_type_map"][kind_slug][slug] = item_type
+        type_rows.append((item_type, slug))
+
+    page_rows, current_page, total_pages = slice_page(type_rows, int(page_str), TYPE_PAGE_SIZE)
+
+    text = (
+        f"{escape_md(SECTION_TITLES.get(section, section))} • {escape_md(CITY_TITLES.get(city, city))}\n"
+        f"Вид: {escape_md(selected_kind)}\n"
+        f"Выберите тип номенклатуры.\nСтраница {current_page}/{total_pages}"
+    )
+
+    await send_md_safe(
+        cb.message,
+        text,
+        reply_markup=build_hardware_types_keyboard(
+            city=city,
+            kind_slug=kind_slug,
+            types=page_rows,
+            page=current_page,
+            total_pages=total_pages,
+        ),
+    )
+    await cb.answer()
+
+
+@router.callback_query(F.data.regexp(r"^stock:msk:hardware:items:.+"))
+async def on_stock_items_hardware(cb: CallbackQuery):
+    """Отображает товары выбранного типа фурнитуры с пагинацией."""
+
+    parts = cb.data.split(":")
+    if len(parts) < 7:
+        await cb.answer("Некорректные данные", show_alert=True)
+        return
+
+    _, city, section, _, kind_slug, type_slug, page_str = parts
+    selection = _STOCK_SELECTIONS[cb.from_user.id]
+    selection["city"] = city
+    selection["section"] = section
+
+    stock = await load_city_stock(city, section)
+    kind_title = selection.get("hw_kind_map", {}).get(kind_slug)
+    if kind_title is None:
+        kind_title = next((item.kind for item in stock.items if _match_slug(item.kind, kind_slug)), None)
+
+    type_title = selection.get("hw_type_map", {}).get(kind_slug, {}).get(type_slug)
+    if type_title is None:
+        type_title = next((item.item_type for item in stock.items if _match_slug(item.item_type, type_slug)), None)
+
+    filtered_items = [
+        item
+        for item in stock.items
+        if (kind_title is None or item.kind == kind_title)
+        and (type_title is None or item.item_type == type_title)
+    ]
+
+    back_callback = f"stock:msk:hardware:types:{kind_slug}:{selection.get('hw_type_page', 1)}"
+
+    if not filtered_items:
+        await send_md_safe(
+            cb.message,
+            "В выбранной категории пока нет остатков.",
+            reply_markup=build_hardware_items_keyboard(
+                city=city,
+                kind_slug=kind_slug,
+                type_slug=type_slug,
+                page=1,
+                total_pages=1,
+                back_callback=back_callback,
+            ),
+        )
+        await cb.answer()
+        return
+
+    filtered_stock = StockItemCity(
+        city=city,
+        section=section,
+        items=filtered_items,
+        kind=kind_title,
+        item_type=type_title,
+        kind_slug=kind_slug,
+        type_slug=type_slug,
+        back_callback=back_callback,
+    )
+
+    await send_stock_page(cb.message, filtered_stock, int(page_str))
     await cb.answer()
 
 

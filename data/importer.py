@@ -182,7 +182,7 @@ def classify_row_for_section(section: str, row: dict) -> bool:
         return True
 
     if section == "hardware":
-        # Для фурнитуры не фильтруем по единицам измерения, пропускаем все непустые строки
+        # Для фурнитуры пропускаем все непустые строки без дополнительной фильтрации
         has_value = any(str(value).strip() for value in row.values() if value is not None)
         return bool(has_value)
 
