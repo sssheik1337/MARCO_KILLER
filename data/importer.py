@@ -182,11 +182,9 @@ def classify_row_for_section(section: str, row: dict) -> bool:
         return True
 
     if section == "hardware":
-        if unit in ("шт", "компл", "комплект", "боб", "ед. хранения"):
-            return True
-        if unit in ("м", "m", "метры"):
-            return False
-        return True
+        # Для фурнитуры не фильтруем по единицам измерения, пропускаем все непустые строки
+        has_value = any(str(value).strip() for value in row.values() if value is not None)
+        return bool(has_value)
 
     return True
 
