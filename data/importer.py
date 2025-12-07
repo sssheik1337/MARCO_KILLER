@@ -64,17 +64,18 @@ class ParsedResult:
 TABLE_SCHEMAS = {
     "fabrics_catalog": {
         "required_columns": [
-            "Наименование коллекции",
-            "Страна",
-            "Тип ткани",
-            "сегмент",
+            "name",
+            "country",
+            "fabric_type",
+            "segment",
+            "wholesale_roll",
+            "wholesale_piece",
             "РОЛИК_85_90",
             "ОТРЕЗ_85_90",
             "РОЛИК_90_95",
             "ОТРЕЗ_90_95",
             "РОЛИК_95_100",
             "ОТРЕЗ_95_100",
-            "статус",
         ],
         "template_path": "templates/fabrics_catalog_example.xlsx",
     },
@@ -532,7 +533,7 @@ def _find_catalog_id(
 # ---------------------------------- парсинг каталогов ----------------------------------
 
 def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
-    """Парсит каталог тканей с двухуровневой шапкой и склейкой диапазонов цен."""
+    """Парсит каталог тканей с поддержкой двухуровневой шапки."""
 
     try:
         table_type = "fabrics_catalog"
@@ -544,58 +545,56 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
 
         header_index: int | None = None
         for idx, row in enumerate(rows):
-            headers_normalized = [_normalize_header(cell) for cell in row]
-            if "наименование коллекции" in headers_normalized:
+            normalized = [_normalize_header(cell) for cell in row]
+            if "наименование коллекции" in normalized:
                 header_index = idx
                 break
 
         if header_index is None:
             raise ImportErrorFriendly(
-                title="Загруженная таблица не соответствует формату",
-                details="Отсутствует столбец «Наименование коллекции».",
+                reason="missing_columns",
+                preview=["Наименование коллекции"],
                 template=TABLE_SCHEMAS[table_type]["template_path"],
             )
 
         header_row = rows[header_index]
         top_row = rows[header_index - 1] if header_index > 0 else [None] * len(header_row)
 
-        # Склеиваем верхний и нижний уровень шапки в итоговые названия колонок
+        def _clean_header(value: object) -> str:
+            """Нормализует текст заголовка: удаляет скобки, пробелы и приводит к верхнему регистру."""
+
+            text = _string(value) or ""
+            text = re.sub(r"[()\[\]]", "", text)
+            text = text.replace("-", "_")
+            text = "_".join(text.strip().split())
+            return text.upper()
+
         columns: dict[str, int] = {}
         headers_for_validation: list[str] = []
 
-        for idx, bottom_value in enumerate(header_row):
-            top_value = _string(_row_value(top_row, idx)) or ""
-            bottom_text = _string(bottom_value) or ""
+        base_map = {
+            "НАИМЕНОВАНИЕ_КОЛЛЕКЦИИ": "name",
+            "СТРАНА": "country",
+            "ТИП_ТКАНИ": "fabric_type",
+            "СЕГМЕНТ": "segment",
+            "ОПТОВАЯ_ОТ_РОЛИКА": "wholesale_roll",
+            "ОПТОВАЯ_В_ОТРЕЗ": "wholesale_piece",
+            "СТАТУС": "special_status",
+        }
 
-            top_norm = "_".join(top_value.strip().upper().replace("-", "_").split())
-            bottom_norm = "_".join(bottom_text.strip().upper().replace("-", "_").split())
+        for idx, bottom_value in enumerate(header_row):
+            top_norm = _clean_header(_row_value(top_row, idx))
+            bottom_norm = _clean_header(bottom_value)
 
             if top_norm and bottom_norm:
                 combined = f"{bottom_norm}_{top_norm}"
             else:
-                combined = bottom_text.strip()
+                combined = bottom_norm or top_norm
 
-            # Приводим к целевым именам для проверки структуры
-            if combined:
-                header_name = combined.upper().replace(" ", "_").replace("-", "_")
+            if combined in base_map:
+                canonical = base_map[combined]
             else:
-                header_name = ""
-
-            # Базовые поля оставляем в человеческом виде
-            base_map = {
-                "НАИМЕНОВАНИЕ КОЛЛЕКЦИИ": "Наименование коллекции",
-                "СТРАНА": "Страна",
-                "ТИП ТКАНИ": "Тип ткани",
-                "СЕГМЕНТ": "сегмент",
-                "ОПТОВАЯ ОТ РОЛИКА": "Оптовая от ролика",
-                "ОПТОВАЯ В ОТРЕЗ": "Оптовая в отрез",
-                "СТАТУС": "статус",
-            }
-
-            if header_name in base_map:
-                canonical = base_map[header_name]
-            else:
-                canonical = header_name
+                canonical = combined
 
             if canonical:
                 columns[canonical] = idx
@@ -605,23 +604,22 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
 
         items: list[dict] = []
         for row in rows[header_index + 1 :]:
-            name = _string(_row_value(row, columns["Наименование коллекции"]))
+            name = _string(_row_value(row, columns["name"])) if "name" in columns else None
             if not name:
-                logger.warning("Запись пропущена: нет наименования строки")
                 continue
 
             item = {
                 "name": name,
-                "country": _string(_row_value(row, columns["Страна"])),
-                "fabric_type": _string(_row_value(row, columns["Тип ткани"])),
-                "segment": _string(_row_value(row, columns["сегмент"])),
+                "country": _string(_row_value(row, columns["country"])),
+                "fabric_type": _string(_row_value(row, columns["fabric_type"])),
+                "segment": _string(_row_value(row, columns["segment"])),
                 "wholesale_roll": _number_or_error(
-                    _row_value(row, columns["Оптовая от ролика"]),
-                    "Оптовая от ролика",
+                    _row_value(row, columns["wholesale_roll"]),
+                    "wholesale_roll",
                 ),
                 "wholesale_piece": _number_or_error(
-                    _row_value(row, columns["Оптовая в отрез"]),
-                    "Оптовая в отрез",
+                    _row_value(row, columns["wholesale_piece"]),
+                    "wholesale_piece",
                 ),
                 "price_roll_85_90": _number_or_error(
                     _row_value(row, columns["РОЛИК_85_90"]),
@@ -647,8 +645,8 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
                     _row_value(row, columns["ОТРЕЗ_95_100"]),
                     "ОТРЕЗ_95_100",
                 ),
-                "special_status": _string(_row_value(row, columns["статус"]))
-                if "статус" in columns
+                "special_status": _string(_row_value(row, columns.get("special_status", -1)))
+                if "special_status" in columns
                 else None,
                 "image_url": None,
             }
