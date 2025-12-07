@@ -350,6 +350,7 @@ async def on_stock_collections(cb: CallbackQuery):
         await cb.answer("Некорректные данные", show_alert=True)
         return
 
+    # Первые два сегмента соответствуют префиксу "stock" и типу действия "collections"
     _, _, city, section, page_str = parts
     if city == "spb" and section == "fabrics":
         await _show_spb_collections(cb.message, cb.from_user.id, city, section, int(page_str))
