@@ -72,9 +72,12 @@ async def set_setting(key: str, value: str) -> None:
         await db.commit()
 
 async def fetch_sections(city: str = DEFAULT_CITY) -> list[str]:
-    """Возвращает список разделов каталога для указанного города."""
+    """Возвращает разделы каталога для выбранного города и общих записей (city='all')."""
 
-    sql = "SELECT DISTINCT section FROM products WHERE city=? ORDER BY section"
+    sql = (
+        "SELECT DISTINCT section FROM products "
+        "WHERE city IN (?, 'all') ORDER BY section"
+    )
     params: tuple = (city,)
 
     async with aiosqlite.connect(DB_PATH) as db:
@@ -84,10 +87,11 @@ async def fetch_sections(city: str = DEFAULT_CITY) -> list[str]:
 
 
 async def fetch_categories(section: str, city: str = DEFAULT_CITY) -> list[str]:
-    """Возвращает категории для выбранного раздела и города."""
+    """Возвращает категории по разделу и городу с учётом общих записей."""
 
     base_sql = (
-        "SELECT DISTINCT category FROM products WHERE section=? AND city=? ORDER BY category"
+        "SELECT DISTINCT category FROM products "
+        "WHERE section=? AND city IN (?, 'all') ORDER BY category"
     )
     params: tuple = (section, city)
 
@@ -102,10 +106,11 @@ async def fetch_products_by_category(
     category: str,
     city: str = DEFAULT_CITY,
 ) -> list[tuple[int, str]]:
-    """Возвращает товары выбранной категории и города."""
+    """Возвращает товары выбранной категории для города и общих записей."""
 
     sql = (
-        "SELECT id, name FROM products WHERE section=? AND category=? AND city=? ORDER BY name"
+        "SELECT id, name FROM products "
+        "WHERE section=? AND category=? AND city IN (?, 'all') ORDER BY name"
     )
     params: tuple = (section, category, city)
 

@@ -69,8 +69,25 @@ async def _ask_city(target: Message, action: str) -> None:
     await send_md_safe(target, "Выберите город:", reply_markup=city_selector(action))
 
 
-async def _catalog_items_count(table: str) -> int | None:
-    """Возвращает количество позиций в каталоге или None, если таблицы нет."""
+async def _catalog_items_count(table: str, city: str | None = None) -> int | None:
+    """Возвращает количество позиций каталога, учитывая город для fabrics_catalog."""
+
+    if table == "fabrics_catalog":
+        city_filter = (city or DEFAULT_CITY).strip().lower()
+        try:
+            async with aiosqlite.connect(DB_PATH) as db:
+                cur = await db.execute(
+                    "SELECT COUNT(*) FROM products WHERE section=? AND city IN (?, 'all')",
+                    (table, city_filter),
+                )
+                row = await cur.fetchone()
+                return int(row[0]) if row else 0
+        except aiosqlite.Error as exc:
+            if "no such table" in str(exc).lower():
+                logger.warning("Таблица products недоступна: %s", exc)
+                return None
+            logger.exception("Ошибка при чтении каталога %s: %s", table, exc)
+            return None
 
     try:
         async with aiosqlite.connect(DB_PATH) as db:
@@ -89,7 +106,7 @@ async def _show_catalog_status(
 ) -> None:
     """Показывает пользователю статус выбранного каталога."""
 
-    count = await _catalog_items_count(table)
+    count = await _catalog_items_count(table, _user_city(user_id))
     if not count:
         await send_md_safe(
             target,
