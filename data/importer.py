@@ -633,6 +633,10 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
                 logger.debug("Строка пропущена: отсутствует 'Наименование коллекции' в %s", row)
                 continue
 
+            raw_status = _string(_row_value(row, status_idx))
+            # Статус всегда активен, даже если колонка пустая
+            status_value = "активен"
+
             item = {
                 "city": "all",
                 "section": "fabrics_catalog",
@@ -648,7 +652,7 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
                 "multiplicity": None,
                 "unit": None,
                 "currency": None,
-                "status": None,
+                "status": status_value,
                 "price_piece_85_90": _number_or_error(
                     _row_value(row, price_positions["price_piece_85_90"]),
                     "price_piece_85_90",
@@ -675,8 +679,8 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
                 ),
                 "price_rrc": None,
                 "price_opt": None,
-                "special": _string(_row_value(row, status_idx)),
-                "in_stock": None,
+                "special": raw_status,
+                "in_stock": 999,
                 "image_url": None,
             }
             items.append(item)
