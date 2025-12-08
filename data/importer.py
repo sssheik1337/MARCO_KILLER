@@ -634,43 +634,49 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
                 continue
 
             item = {
+                "city": "all",
+                "section": "fabrics_catalog",
+                "category": None,
+                "subcategory": None,
                 "name": name,
+                "article": None,
                 "country": _string(_row_value(row, base_positions["country"])),
                 "fabric_type": _string(_row_value(row, base_positions["fabric_type"])),
                 "segment": _string(_row_value(row, base_positions["segment"])),
-                "wholesale_roll": _number_or_error(
-                    _row_value(row, base_positions["wholesale_roll"]),
-                    "wholesale_roll",
-                ),
-                "wholesale_piece": _number_or_error(
-                    _row_value(row, base_positions["wholesale_piece"]),
-                    "wholesale_piece",
+                "collection": None,
+                "brand_country": None,
+                "multiplicity": None,
+                "unit": None,
+                "currency": None,
+                "status": None,
+                "price_piece_85_90": _number_or_error(
+                    _row_value(row, price_positions["price_piece_85_90"]),
+                    "price_piece_85_90",
                 ),
                 "price_roll_85_90": _number_or_error(
                     _row_value(row, price_positions["price_roll_85_90"]),
                     "price_roll_85_90",
                 ),
-                "price_piece_85_90": _number_or_error(
-                    _row_value(row, price_positions["price_piece_85_90"]),
-                    "price_piece_85_90",
+                "price_piece_90_95": _number_or_error(
+                    _row_value(row, price_positions["price_piece_90_95"]),
+                    "price_piece_90_95",
                 ),
                 "price_roll_90_95": _number_or_error(
                     _row_value(row, price_positions["price_roll_90_95"]),
                     "price_roll_90_95",
                 ),
-                "price_piece_90_95": _number_or_error(
-                    _row_value(row, price_positions["price_piece_90_95"]),
-                    "price_piece_90_95",
+                "price_piece_95_100": _number_or_error(
+                    _row_value(row, price_positions["price_piece_95_100"]),
+                    "price_piece_95_100",
                 ),
                 "price_roll_95_100": _number_or_error(
                     _row_value(row, price_positions["price_roll_95_100"]),
                     "price_roll_95_100",
                 ),
-                "price_piece_95_100": _number_or_error(
-                    _row_value(row, price_positions["price_piece_95_100"]),
-                    "price_piece_95_100",
-                ),
-                "special_status": _string(_row_value(row, status_idx)),
+                "price_rrc": None,
+                "price_opt": None,
+                "special": _string(_row_value(row, status_idx)),
+                "in_stock": None,
                 "image_url": None,
             }
             items.append(item)
