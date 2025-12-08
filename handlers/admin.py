@@ -1,5 +1,6 @@
 import logging
 import os
+import sqlite3
 from pathlib import Path
 
 from aiogram import Router, F
@@ -489,6 +490,8 @@ async def import_xlsx(msg: Message):
         await set_setting("import_target", "")
         return
 
+    target_section = section
+    target_city = city
     try:
         try:
             parsed_result = parser(stream, **parser_kwargs)
@@ -568,6 +571,26 @@ async def import_xlsx(msg: Message):
                 if section in {"fabrics", "hardware"} and target_key.startswith("stock_"):
                     import_count = await add_stock_items(db, items, city, section)
                 else:
+                    products_exist_cursor = await db.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table' AND name='products'"
+                    )
+                    products_exists = await products_exist_cursor.fetchone()
+                    if not products_exists:
+                        logging.error("Таблица products не найдена, импорт каталога прерван")
+                        if db.in_transaction:
+                            await db.rollback()
+                        await msg.answer(
+                            "Импорт каталога невозможен: таблица products отсутствует.",
+                            parse_mode=None,
+                        )
+                        await set_setting("import_target", "")
+                        return
+
+                    target_section = (
+                        "fabrics_catalog" if target_key == "fabrics_catalog" else section
+                    )
+                    target_city = city or "Санкт-Петербург"
+
                     product_sql = (
                         "INSERT INTO products("  # noqa: ISC003
                         "city,section,category,subcategory,name,article,country,fabric_type,segment,"
@@ -577,45 +600,62 @@ async def import_xlsx(msg: Message):
                         "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
                     )
 
-                    payload = [
-                        (
-                            item.get("city", city),
-                            item.get("section", section),
-                            item.get("category"),
-                            item.get("subcategory"),
-                            item.get("name"),
-                            item.get("article"),
-                            item.get("country"),
-                            item.get("fabric_type"),
-                            item.get("segment"),
-                            item.get("collection"),
-                            item.get("brand_country"),
-                            item.get("multiplicity"),
-                            item.get("unit"),
-                            item.get("currency"),
-                            item.get("status"),
-                            item.get("price_piece_85_90"),
-                            item.get("price_roll_85_90"),
-                            item.get("price_piece_90_95"),
-                            item.get("price_roll_90_95"),
-                            item.get("price_piece_95_100"),
-                            item.get("price_roll_95_100"),
-                            item.get("price_rrc"),
-                            item.get("price_opt"),
-                            item.get("special"),
-                            item.get("in_stock"),
-                            item.get("image_url"),
+                    payload = []
+                    for item in items:
+                        status_value = (
+                            item.get("special_status")
+                            if target_key == "fabrics_catalog"
+                            else item.get("status")
                         )
-                        for item in items
-                    ]
+                        payload.append(
+                            (
+                                item.get("city", target_city),
+                                item.get("section", target_section),
+                                item.get("category"),
+                                item.get("subcategory"),
+                                item.get("name"),
+                                item.get("article"),
+                                item.get("country"),
+                                item.get("fabric_type"),
+                                item.get("segment"),
+                                item.get("collection"),
+                                item.get("brand_country"),
+                                item.get("multiplicity"),
+                                item.get("unit"),
+                                item.get("currency"),
+                                status_value,
+                                item.get("price_piece_85_90"),
+                                item.get("price_roll_85_90"),
+                                item.get("price_piece_90_95"),
+                                item.get("price_roll_90_95"),
+                                item.get("price_piece_95_100"),
+                                item.get("price_roll_95_100"),
+                                item.get("price_rrc"),
+                                item.get("price_opt"),
+                                item.get("special"),
+                                item.get("in_stock"),
+                                item.get("image_url"),
+                            )
+                        )
 
-                    await db.execute(
-                        "DELETE FROM products WHERE section=? AND city=?",
-                        (section, city),
-                    )
-                    if payload:
-                        await db.executemany(product_sql, payload)
-                    import_count = len(payload)
+                    try:
+                        await db.execute(
+                            "DELETE FROM products WHERE section=? AND city=?",
+                            (target_section, target_city),
+                        )
+                        if payload:
+                            await db.executemany(product_sql, payload)
+                        import_count = len(payload)
+                    except sqlite3.OperationalError as exc:
+                        logging.error("Ошибка при записи каталога в products: %s", exc)
+                        if db.in_transaction:
+                            await db.rollback()
+                        await msg.answer(
+                            "Импорт каталога невозможен: ошибка структуры таблицы products.",
+                            parse_mode=None,
+                        )
+                        await set_setting("import_target", "")
+                        return
             except Exception as exc:
                 if db.in_transaction:
                     await db.rollback()
@@ -627,10 +667,12 @@ async def import_xlsx(msg: Message):
                 ) from exc
             else:
                 row = None
-                if section == "fabrics" and not target_key.startswith("stock_"):
+                if target_section in {"fabrics", "fabrics_catalog"} and not target_key.startswith(
+                    "stock_"
+                ):
                     cursor = await db.execute(
                         "SELECT * FROM products WHERE section=? AND city=? AND name LIKE ?",
-                        ("fabrics", city, "%BISON%"),
+                        (target_section, target_city, "%BISON%"),
                     )
                     row = await cursor.fetchone()
                     if row is None:
@@ -639,7 +681,7 @@ async def import_xlsx(msg: Message):
                         )
                         cursor = await db.execute(
                             "SELECT * FROM products WHERE section=? AND city=? LIMIT 1",
-                            ("fabrics", city),
+                            (target_section, target_city),
                         )
                     row = await cursor.fetchone()
                     if row is not None:
