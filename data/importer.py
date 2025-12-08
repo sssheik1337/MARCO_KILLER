@@ -633,8 +633,8 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
                 logger.debug("Строка пропущена: отсутствует 'Наименование коллекции' в %s", row)
                 continue
 
+            # Статус из исходного столбца переносится в special, а поле status всегда «активен»
             raw_status = _string(_row_value(row, status_idx))
-            # Статус всегда активен, даже если колонка пустая
             status_value = "активен"
 
             item = {
@@ -679,7 +679,7 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
                 ),
                 "price_rrc": None,
                 "price_opt": None,
-                "special": raw_status,
+                "special": raw_status if raw_status else None,
                 "in_stock": 999,
                 "image_url": None,
             }
