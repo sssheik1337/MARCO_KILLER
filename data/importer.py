@@ -543,6 +543,7 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
             return []
 
         logger.info(f"Импорт {table_type} для города -")
+        logger.debug("Всего сырых строк в файле: %s", len(rows))
 
         header_index = None
         for idx, row in enumerate(rows):
@@ -559,6 +560,7 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
             )
 
         header_row = rows[header_index]
+        logger.debug("Строка заголовков (нижний уровень): %s", header_row)
 
         # Собираем позиции основных полей по нижней строке шапки
         base_positions: dict[str, int] = {}
@@ -575,6 +577,12 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
             normalized = _normalize_header(cell)
             if normalized in base_map and base_map[normalized] not in base_positions:
                 base_positions[base_map[normalized]] = idx
+                logger.debug(
+                    "Поле %s интерпретировано из колонки %s (индекс %s)",
+                    base_map[normalized],
+                    cell,
+                    idx,
+                )
 
         required_base = list(base_map.values())
         missing_base = [key for key in required_base if key not in base_positions]
@@ -606,6 +614,7 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
         for offset, key in enumerate(price_keys):
             col_idx = start_idx + offset
             price_positions[key] = col_idx
+            logger.debug("Колонка цены %s расположена в индексе %s", key, col_idx)
 
         # Колонка статуса всегда в R5C21 (индекс 20)
         status_idx = 20
@@ -615,11 +624,13 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
                 preview=["special_status"],
                 template=TABLE_SCHEMAS[table_type]["template_path"],
             )
+        logger.debug("Колонка статуса взята по индексу %s", status_idx)
 
         items: list[dict] = []
         for row in rows[header_index + 1 :]:
             name = _string(_row_value(row, base_positions["name"]))
             if not name:
+                logger.debug("Строка пропущена: отсутствует 'Наименование коллекции' в %s", row)
                 continue
 
             item = {
@@ -663,8 +674,10 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
                 "image_url": None,
             }
             items.append(item)
+            logger.debug("Строка добавлена: %s", item)
 
         logger.info(f"Получено валидных записей: {len(items)}")
+        logger.debug("Итоговое количество валидных строк каталога: %s", len(items))
 
         return items
     except ImportErrorFriendly:
