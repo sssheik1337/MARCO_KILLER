@@ -630,29 +630,24 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
         for row in rows[header_index + 1 :]:
             name = _string(_row_value(row, base_positions["name"]))
             if not name:
-                logger.debug("Строка пропущена: отсутствует 'Наименование коллекции' в %s", row)
+                logger.debug(
+                    "Строка пропущена: отсутствует 'Наименование коллекции' в %s",
+                    row,
+                )
                 continue
 
-            # Статус из исходного столбца переносится в special, а поле status всегда «активен»
             raw_status = _string(_row_value(row, status_idx))
-            status_value = "активен"
 
             item = {
                 "city": "all",
-                "section": "fabrics_catalog",
-                "category": None,
+                "section": "fabrics",
+                "category": _string(_row_value(row, base_positions["segment"])),
                 "subcategory": None,
                 "name": name,
-                "article": None,
                 "country": _string(_row_value(row, base_positions["country"])),
                 "fabric_type": _string(_row_value(row, base_positions["fabric_type"])),
                 "segment": _string(_row_value(row, base_positions["segment"])),
-                "collection": None,
-                "brand_country": None,
-                "multiplicity": None,
-                "unit": None,
-                "currency": None,
-                "status": status_value,
+                "status": "активен",
                 "price_piece_85_90": _number_or_error(
                     _row_value(row, price_positions["price_piece_85_90"]),
                     "price_piece_85_90",
@@ -677,8 +672,6 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
                     _row_value(row, price_positions["price_roll_95_100"]),
                     "price_roll_95_100",
                 ),
-                "price_rrc": None,
-                "price_opt": None,
                 "special": raw_status if raw_status else None,
                 "in_stock": 999,
                 "image_url": None,

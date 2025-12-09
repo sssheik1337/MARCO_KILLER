@@ -87,11 +87,12 @@ async def fetch_sections(city: str = DEFAULT_CITY) -> list[str]:
 
 
 async def fetch_categories(section: str, city: str = DEFAULT_CITY) -> list[str]:
-    """Возвращает категории по разделу и городу с учётом общих записей."""
+    """Возвращает список сегментов по разделу и городу, игнорируя подкатегории."""
 
     base_sql = (
         "SELECT DISTINCT category FROM products "
-        "WHERE section=? AND city IN (?, 'all') ORDER BY category"
+        "WHERE section=? AND category IS NOT NULL AND category != '' "
+        "AND city IN (?, 'all') ORDER BY category"
     )
     params: tuple = (section, city)
 
@@ -101,12 +102,12 @@ async def fetch_categories(section: str, city: str = DEFAULT_CITY) -> list[str]:
     return [r[0] for r in rows]
 
 
-async def fetch_products_by_category(
+async def fetch_items_by_category(
     section: str,
     category: str,
     city: str = DEFAULT_CITY,
 ) -> list[tuple[int, str]]:
-    """Возвращает товары выбранной категории для города и общих записей."""
+    """Возвращает товары выбранного сегмента с учётом общих записей по городу."""
 
     sql = (
         "SELECT id, name FROM products "

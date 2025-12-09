@@ -195,8 +195,24 @@ async def on_catalog(cb: CallbackQuery):
 @router.callback_query(F.data == "catalog:fabrics")
 async def on_catalog_fabrics(cb: CallbackQuery):
     """Открывает каталог тканей из общего прайс-листа."""
+    city = _user_city(cb.from_user.id)
+    categories = await db_utils.fetch_categories("fabrics", city)
+    if not categories:
+        await send_md_safe(
+            cb.message,
+            "Каталог пока пуст. Позиции появятся позже.",
+            reply_markup=await _main_menu(cb.from_user.id),
+        )
+        await cb.answer()
+        return
 
-    await _show_catalog_status(cb.message, cb.from_user.id, "fabrics_catalog", "тканей")
+    enumerated = [(name, str(idx)) for idx, name in enumerate(categories)]
+    page_items, page, total = slice_page(enumerated, 1, PAGE_SIZE)
+    await send_md_safe(
+        cb.message,
+        "Категории:",
+        reply_markup=pager(f"{CAT_CAT_PREFIX}:fabrics", page_items, page, total),
+    )
     await cb.answer()
 
 
@@ -409,7 +425,7 @@ async def open_category(cb: CallbackQuery):
 
     category = cats[category_idx]
 
-    prods = await db_utils.fetch_products_by_category(section, category, city)
+    prods = await db_utils.fetch_items_by_category(section, category, city)
     items = [(name, str(pid)) for pid, name in prods]
     page_items, page, total = slice_page(items, 1, PAGE_SIZE)
     await send_md_safe(
@@ -429,7 +445,7 @@ async def product_list_page(cb: CallbackQuery):
     category = parts[2]
     page = int(parts[-1])
     city = _user_city(cb.from_user.id)
-    prods = await db_utils.fetch_products_by_category(section, category, city)
+    prods = await db_utils.fetch_items_by_category(section, category, city)
     items = [(name, str(pid)) for pid, name in prods]
     page_items, page, total = slice_page(items, page, PAGE_SIZE)
     await cb.message.edit_reply_markup(
@@ -458,7 +474,7 @@ async def product_card(cb: CallbackQuery):
 
     caption = build_product_caption(p, rng, usd)
 
-    products = await db_utils.fetch_products_by_category(section, category, city)
+    products = await db_utils.fetch_items_by_category(section, category, city)
     product_ids = [prod_id for prod_id, _ in products]
     try:
         index = product_ids.index(pid)
@@ -683,7 +699,7 @@ async def prod_back(cb: CallbackQuery):
     if context:
         if context_source == "catalog":
             city = context.get("city") or _user_city(user_id)
-            products = await db_utils.fetch_products_by_category(
+            products = await db_utils.fetch_items_by_category(
                 context["section"],
                 context["category"],
                 city,
