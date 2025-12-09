@@ -566,7 +566,7 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
             text = _string(val) or ""
             text = text.replace("\n", " ")
             text = re.sub(r"[()]+", "", text)
-            text = text.replace("-", "_")
+            text = re.sub(r"[–—-]+", "_", text)
             text = re.sub(r"\s+", "_", text)
             return text.strip().lower()
 
@@ -616,12 +616,7 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
             "price_piece_95_100": _find_price("95_100", False),
         }
 
-        status_idx = _find_idx("статус")
-        if status_idx is None:
-            for t, idx in reversed(combined_headers):
-                if t:
-                    status_idx = idx
-                    break
+        status_idx = len(header_row) - 1 if header_row else None
 
         missing = [
             key
