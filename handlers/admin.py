@@ -586,23 +586,20 @@ async def import_xlsx(msg: Message):
                         await set_setting("import_target", "")
                         return
 
-                    target_section = (
-                        "fabrics_catalog" if target_key == "fabrics_catalog" else section
-                    )
+                    target_section = "fabrics" if target_key == "fabrics_catalog" else section
                     target_city = city or ("all" if target_key == "fabrics_catalog" else "Санкт-Петербург")
 
                     product_sql = (
                         "INSERT INTO products("  # noqa: ISC003
-                        "city,section,category,subcategory,name,article,country,fabric_type,segment,"
-                        "collection,brand_country,multiplicity,unit,currency,status,"
-                        "price_piece_85_90,price_roll_85_90,price_piece_90_95,price_roll_90_95,price_piece_95_100,price_roll_95_100,"
-                        "price_rrc,price_opt,special,in_stock,image_url) "
-                        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+                        "city,section,category,subcategory,name,country,fabric_type,segment,"
+                        "wholesale_roll,wholesale_piece,"
+                        "price_roll_85_90,price_piece_85_90,price_roll_90_95,price_piece_90_95,price_roll_95_100,price_piece_95_100,"
+                        "special,image_url) "
+                        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
                     )
 
                     payload = []
                     for item in items:
-                        status_value = item.get("status")
                         payload.append(
                             (
                                 item.get("city", target_city),
@@ -610,35 +607,32 @@ async def import_xlsx(msg: Message):
                                 item.get("category"),
                                 item.get("subcategory"),
                                 item.get("name"),
-                                item.get("article"),
                                 item.get("country"),
                                 item.get("fabric_type"),
                                 item.get("segment"),
-                                item.get("collection"),
-                                item.get("brand_country"),
-                                item.get("multiplicity"),
-                                item.get("unit"),
-                                item.get("currency"),
-                                status_value,
-                                item.get("price_piece_85_90"),
+                                item.get("wholesale_roll"),
+                                item.get("wholesale_piece"),
                                 item.get("price_roll_85_90"),
-                                item.get("price_piece_90_95"),
+                                item.get("price_piece_85_90"),
                                 item.get("price_roll_90_95"),
-                                item.get("price_piece_95_100"),
+                                item.get("price_piece_90_95"),
                                 item.get("price_roll_95_100"),
-                                item.get("price_rrc"),
-                                item.get("price_opt"),
+                                item.get("price_piece_95_100"),
                                 item.get("special"),
-                                item.get("in_stock"),
                                 item.get("image_url"),
                             )
                         )
 
                     try:
-                        await db.execute(
-                            "DELETE FROM products WHERE section=? AND city=?",
-                            (target_section, target_city),
-                        )
+                        if target_section == "fabrics":
+                            await db.execute(
+                                "DELETE FROM products WHERE section='fabrics'",
+                            )
+                        else:
+                            await db.execute(
+                                "DELETE FROM products WHERE section=? AND city=?",
+                                (target_section, target_city),
+                            )
                         if payload:
                             await db.executemany(product_sql, payload)
                         import_count = len(payload)
@@ -666,10 +660,10 @@ async def import_xlsx(msg: Message):
                 if target_section in {"fabrics", "fabrics_catalog"} and not target_key.startswith(
                     "stock_"
                 ):
-                    cursor = await db.execute(
-                        "SELECT * FROM products WHERE section=? AND city=? AND name LIKE ?",
-                        (target_section, target_city, "%BISON%"),
-                    )
+                        cursor = await db.execute(
+                            "SELECT * FROM products WHERE section=? AND city=? AND name=?",
+                            (target_section, target_city, "BISON"),
+                        )
                     row = await cursor.fetchone()
                     if row is None:
                         logging.warning(

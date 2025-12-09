@@ -87,43 +87,56 @@ async def fetch_sections(city: str = DEFAULT_CITY) -> list[str]:
 
 
 async def fetch_categories(section: str, city: str = DEFAULT_CITY) -> list[str]:
-    """Возвращает список сегментов по разделу и городу, игнорируя подкатегории."""
+    """Возвращает уникальные категории для раздела тканей."""
 
-    base_sql = (
-        "SELECT DISTINCT category FROM products "
+    sql = (
+        "SELECT DISTINCT category "
+        "FROM products "
         "WHERE section=? AND category IS NOT NULL AND category != '' "
-        "AND city IN (?, 'all') ORDER BY category"
+        "ORDER BY category"
     )
-    params: tuple = (section, city)
 
     async with aiosqlite.connect(DB_PATH) as db:
-        cur = await db.execute(base_sql, params)
+        cur = await db.execute(sql, (section,))
         rows = await cur.fetchall()
     return [r[0] for r in rows]
 
 
-async def fetch_items_by_category(
-    section: str,
-    category: str,
-    city: str = DEFAULT_CITY,
-) -> list[tuple[int, str]]:
-    """Возвращает товары выбранного сегмента с учётом общих записей по городу."""
+async def fetch_products_by_category(category: str) -> list[dict]:
+    """Возвращает товары выбранного сегмента без учёта города и подкатегорий."""
 
     sql = (
-        "SELECT id, name FROM products "
-        "WHERE section=? AND category=? AND city IN (?, 'all') ORDER BY name"
+        "SELECT * "
+        "FROM products "
+        "WHERE section='fabrics' "
+        "  AND category=? "
+        "ORDER BY name"
     )
-    params: tuple = (section, category, city)
 
     async with aiosqlite.connect(DB_PATH) as db:
-        cur = await db.execute(sql, params)
-        return [(int(r[0]), r[1]) for r in await cur.fetchall()]
+        cur = await db.execute(sql, (category,))
+        rows = await cur.fetchall()
+        cols = [c[0] for c in cur.description]
+    return [dict(zip(cols, row)) for row in rows]
 
-async def fetch_product(pid: int) -> dict:
+
+async def fetch_product(name: str) -> dict:
+    """Ищет товар ткани по точному совпадению имени."""
+
     async with aiosqlite.connect(DB_PATH) as db:
-        cur = await db.execute("SELECT * FROM products WHERE id=?", (pid,))
+        cur = await db.execute(
+            """
+            SELECT *
+            FROM products
+            WHERE section='fabrics'
+              AND name=?
+            LIMIT 1
+            """,
+            (name,),
+        )
         row = await cur.fetchone()
-        if not row: return {}
+        if not row:
+            return {}
         cols = [c[0] for c in cur.description]
         return dict(zip(cols, row))
 

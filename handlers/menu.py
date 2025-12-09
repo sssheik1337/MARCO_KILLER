@@ -375,19 +375,13 @@ def _build_fabrics_caption(product: dict, rng: str, usd: float | None) -> str:
     lines.append(escape_user(f"Тип ткани: {product.get('fabric_type') or '—'}"))
     lines.append(escape_user(f"Сегмент: {product.get('segment') or '—'}"))
 
-    if product.get("wholesale_roll") is not None:
-        lines.append("")
-        lines.append(
-            escape_user(
-                f"💵 Оптовая от ролика: {_format_money_value(product.get('wholesale_roll'))}"
-            )
-        )
-    if product.get("wholesale_piece") is not None:
-        lines.append(
-            escape_user(
-                f"💵 Оптовая в отрез: {_format_money_value(product.get('wholesale_piece'))}"
-            )
-        )
+    def _text_or_dash(value: object) -> str:
+        return str(value) if value not in (None, "") else "—"
+
+    lines.append("")
+    lines.append("💵 Оптовая цена:")
+    lines.append(escape_user(f"– От ролика: {_text_or_dash(product.get('wholesale_roll'))}"))
+    lines.append(escape_user(f"– В отрез: {_text_or_dash(product.get('wholesale_piece'))}"))
 
     price_piece_range = _format_money_value(product.get(f"price_piece_{rng}"))
     lines.append("")
@@ -395,7 +389,7 @@ def _build_fabrics_caption(product: dict, rng: str, usd: float | None) -> str:
     lines.append(escape_user(f"→ {price_piece_range}"))
     range_hint = range_label(rng, usd)
     if range_hint:
-        lines.append(escape_user(range_hint))
+        lines.append(escape_user(f"Курс: {range_hint}"))
 
     def _range_line(label: str, roll_key: str, piece_key: str) -> str:
         roll_val = _format_money_value(product.get(roll_key))
@@ -403,6 +397,7 @@ def _build_fabrics_caption(product: dict, rng: str, usd: float | None) -> str:
         return escape_user(f"{label}: ролик {roll_val}, отрез {piece_val}")
 
     lines.append("")
+    lines.append("Диапазоны:")
     lines.append(_range_line("85–90", "price_roll_85_90", "price_piece_85_90"))
     lines.append(_range_line("90–95", "price_roll_90_95", "price_piece_90_95"))
     lines.append(_range_line("95–100", "price_roll_95_100", "price_piece_95_100"))
@@ -515,8 +510,8 @@ async def open_category(cb: CallbackQuery):
 
     category = cats[category_idx]
 
-    prods = await db_utils.fetch_items_by_category(section, category, city)
-    items = [(name, str(pid)) for pid, name in prods]
+    prods = await db_utils.fetch_products_by_category(category)
+    items = [(p["name"], str(idx)) for idx, p in enumerate(prods)]
     page_items, page, total = slice_page(items, 1, PAGE_SIZE)
     reply_markup = _catalog_products_keyboard(
         f"{CAT_PROD_PREFIX}:{section}:{category}",
@@ -536,8 +531,8 @@ async def product_list_page(cb: CallbackQuery):
     category = parts[2]
     page = int(parts[-1])
     city = _user_city(cb.from_user.id)
-    prods = await db_utils.fetch_items_by_category(section, category, city)
-    items = [(name, str(pid)) for pid, name in prods]
+    prods = await db_utils.fetch_products_by_category(category)
+    items = [(p["name"], str(idx)) for idx, p in enumerate(prods)]
     page_items, page, total = slice_page(items, page, PAGE_SIZE)
     reply_markup = _catalog_products_keyboard(
         f"{CAT_PROD_PREFIX}:{section}:{category}",
@@ -555,29 +550,38 @@ async def product_card(cb: CallbackQuery):
     """Показывает карточку товара и запоминает, как вернуться назад."""
 
     parts = cb.data.split(":")
-    pid = int(parts[-1])
+    try:
+        product_idx = int(parts[-1])
+    except ValueError:
+        await cb.answer("Товар недоступен", show_alert=True)
+        return
     section = parts[1] if len(parts) > 1 else ""
     category = ":".join(parts[2:-2]) if len(parts) > 3 else ""
 
     city = _user_city(cb.from_user.id)
-    p = await db_utils.fetch_product(pid)
+    products = await db_utils.fetch_products_by_category(category)
+    if product_idx < 0 or product_idx >= len(products):
+        await cb.answer("Товар недоступен", show_alert=True)
+        return
+
+    product_info = products[product_idx]
+    p = await db_utils.fetch_product(product_info.get("name", ""))
 
     rng, usd = await current_range()
     if logger.isEnabledFor(logging.DEBUG):
-        logger.debug("Карточка товара %s, диапазон %s, данные: %s", pid, rng, p)
+        logger.debug(
+            "Карточка товара %s, диапазон %s, данные: %s",
+            product_info.get("name"),
+            rng,
+            p,
+        )
 
     if section == "fabrics":
         caption = _build_fabrics_caption(p, rng, usd)
     else:
         caption = build_product_caption(p, rng, usd)
 
-    products = await db_utils.fetch_items_by_category(section, category, city)
-    product_ids = [prod_id for prod_id, _ in products]
-    try:
-        index = product_ids.index(pid)
-    except ValueError:
-        index = 0
-    page = index // PAGE_SIZE + 1 if product_ids else 1
+    page = product_idx // PAGE_SIZE + 1 if products else 1
 
     list_prefix = f"{CAT_PROD_PREFIX}:{section}:{category}"
 
@@ -598,7 +602,7 @@ async def product_card(cb: CallbackQuery):
         "category": category,
         "prefix": list_prefix,
         "page": page,
-        "product_id": pid,
+        "product_id": product_idx,
         "city": city,
     }
 
@@ -796,10 +800,8 @@ async def prod_back(cb: CallbackQuery):
     if context:
         if context_source == "catalog":
             city = context.get("city") or _user_city(user_id)
-            products = await db_utils.fetch_items_by_category(
-                context["section"],
+            products = await db_utils.fetch_products_by_category(
                 context["category"],
-                city,
             )
         else:
             city = context.get("city") or _user_city(user_id)
@@ -809,7 +811,7 @@ async def prod_back(cb: CallbackQuery):
                 city,
             )
 
-        items = [(name, str(pid)) for pid, name in products]
+        items = [(p["name"], str(idx)) for idx, p in enumerate(products)]
         page_items, page, total = slice_page(
             items, context.get("page", 1), PAGE_SIZE
         )
