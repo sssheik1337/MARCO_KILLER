@@ -660,10 +660,10 @@ async def import_xlsx(msg: Message):
                 if target_section in {"fabrics", "fabrics_catalog"} and not target_key.startswith(
                     "stock_"
                 ):
-                        cursor = await db.execute(
-                            "SELECT * FROM products WHERE section=? AND city=? AND name=?",
-                            (target_section, target_city, "BISON"),
-                        )
+                    cursor = await db.execute(
+                        "SELECT * FROM products WHERE section=? AND city=? AND name=?",
+                        (target_section, target_city, "BISON"),
+                    )
                     row = await cursor.fetchone()
                     if row is None:
                         logging.warning(
@@ -673,7 +673,7 @@ async def import_xlsx(msg: Message):
                             "SELECT * FROM products WHERE section=? AND city=? LIMIT 1",
                             (target_section, target_city),
                         )
-                    row = await cursor.fetchone()
+                        row = await cursor.fetchone()
                     if row is not None:
                         columns = [desc[0] for desc in cursor.description]
                         snapshot = {column: row[idx] for idx, column in enumerate(columns)}
