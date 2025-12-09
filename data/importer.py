@@ -534,7 +534,7 @@ def _find_catalog_id(
 # ---------------------------------- парсинг каталогов ----------------------------------
 
 def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
-    """Парсит каталог тканей с двухуровневой шапкой по позициям колонок."""
+    """Парсит каталог тканей с учётом двухуровневой шапки и безопасным поиском колонок."""
 
     try:
         table_type = "fabrics_catalog"
@@ -560,58 +560,78 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
             )
 
         header_row = rows[header_index]
-        logger.debug("Строка заголовков (нижний уровень): %s", header_row)
+        upper_row = rows[header_index - 1] if header_index > 0 else []
 
-        # Жёсткая структура колонок согласно ТЗ
-        base_positions: dict[str, int] = {
-            "name": 0,
-            "country": 1,
-            "fabric_type": 2,
-            "segment": 3,
-            "wholesale_roll": 4,
-            "wholesale_piece": 5,
+        def _norm_title(val: object) -> str:
+            text = _string(val) or ""
+            text = text.replace("\n", " ")
+            text = re.sub(r"[()]+", "", text)
+            text = text.replace("-", "_")
+            text = re.sub(r"\s+", "_", text)
+            return text.strip().lower()
+
+        max_len = max(len(header_row), len(upper_row))
+        combined_headers: list[tuple[str, int]] = []
+        for idx in range(max_len):
+            lower = _norm_title(_row_value(header_row, idx))
+            upper = _norm_title(_row_value(upper_row, idx))
+            if lower and upper:
+                combined = f"{lower}_{upper}"
+            else:
+                combined = lower or upper
+            combined_headers.append((combined, idx))
+
+        def _find_idx(check: str | list[str]) -> int | None:
+            tokens = [check] if isinstance(check, str) else check
+            for title, idx in combined_headers:
+                if all(token in title for token in tokens):
+                    return idx
+            return None
+
+        def _find_price(range_key: str, is_roll: bool) -> int | None:
+            for title, idx in combined_headers:
+                if range_key.replace("_", "") not in title.replace("_", ""):
+                    continue
+                if is_roll and "ролик" in title:
+                    return idx
+                if not is_roll and ("отрез" in title or "рез" in title):
+                    return idx
+            return None
+
+        base_positions = {
+            "name": _find_idx("наименование_коллекции"),
+            "country": _find_idx("страна"),
+            "fabric_type": _find_idx(["тип", "ткани"]),
+            "segment": _find_idx("сегмент"),
+            "wholesale_roll": _find_idx(["оптовая", "от", "ролика"]),
+            "wholesale_piece": _find_idx(["оптовая", "в", "отрез"]),
         }
 
-        price_positions: dict[str, int] = {
-            "price_roll_85_90": 6,
-            "price_piece_85_90": 7,
-            "price_roll_90_95": 8,
-            "price_piece_90_95": 9,
-            "price_roll_95_100": 10,
-            "price_piece_95_100": 11,
+        price_positions = {
+            "price_roll_85_90": _find_price("85_90", True),
+            "price_piece_85_90": _find_price("85_90", False),
+            "price_roll_90_95": _find_price("90_95", True),
+            "price_piece_90_95": _find_price("90_95", False),
+            "price_roll_95_100": _find_price("95_100", True),
+            "price_piece_95_100": _find_price("95_100", False),
         }
 
-        status_idx = 12
+        status_idx = _find_idx("статус")
+        if status_idx is None:
+            for t, idx in reversed(combined_headers):
+                if t:
+                    status_idx = idx
+                    break
 
-        max_price_idx = max(price_positions.values())
-        if len(header_row) <= max_price_idx:
-            raise ImportErrorFriendly(
-                reason="missing_columns",
-                preview=list(price_positions.keys()),
-                template=TABLE_SCHEMAS[table_type]["template_path"],
-            )
-
-        headers_for_check = [
-            "name",
-            "country",
-            "fabric_type",
-            "segment",
-            "wholesale_roll",
-            "wholesale_piece",
-            "РОЛИК_85_90",
-            "ОТРЕЗ_85_90",
-            "РОЛИК_90_95",
-            "ОТРЕЗ_90_95",
-            "РОЛИК_95_100",
-            "ОТРЕЗ_95_100",
-            "special_status",
+        missing = [
+            key
+            for key, idx in {**base_positions, **price_positions, "special": status_idx}.items()
+            if idx is None
         ]
-        _validate_headers(table_type, headers_for_check)
-
-        if len(header_row) <= status_idx:
+        if missing:
             raise ImportErrorFriendly(
                 reason="missing_columns",
-                preview=["special_status"],
+                preview=missing,
                 template=TABLE_SCHEMAS[table_type]["template_path"],
             )
 

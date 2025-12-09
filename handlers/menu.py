@@ -375,9 +375,19 @@ def _build_fabrics_caption(product: dict, rng: str, usd: float | None) -> str:
     lines.append(escape_user(f"Тип ткани: {product.get('fabric_type') or '—'}"))
     lines.append(escape_user(f"Сегмент: {product.get('segment') or '—'}"))
 
-    lines.append("")
-    lines.append(escape_user(f"💵 Оптовая от ролика: {_format_money_value(product.get('wholesale_roll'))}"))
-    lines.append(escape_user(f"💵 Оптовая в отрез: {_format_money_value(product.get('wholesale_piece'))}"))
+    if product.get("wholesale_roll") is not None:
+        lines.append("")
+        lines.append(
+            escape_user(
+                f"💵 Оптовая от ролика: {_format_money_value(product.get('wholesale_roll'))}"
+            )
+        )
+    if product.get("wholesale_piece") is not None:
+        lines.append(
+            escape_user(
+                f"💵 Оптовая в отрез: {_format_money_value(product.get('wholesale_piece'))}"
+            )
+        )
 
     price_piece_range = _format_money_value(product.get(f"price_piece_{rng}"))
     lines.append("")
@@ -392,10 +402,19 @@ def _build_fabrics_caption(product: dict, rng: str, usd: float | None) -> str:
         piece_val = _format_money_value(product.get(piece_key))
         return escape_user(f"{label}: ролик {roll_val}, отрез {piece_val}")
 
-    lines.append("")
-    lines.append(_range_line("85–90", "price_roll_85_90", "price_piece_85_90"))
-    lines.append(_range_line("90–95", "price_roll_90_95", "price_piece_90_95"))
-    lines.append(_range_line("95–100", "price_roll_95_100", "price_piece_95_100"))
+    label_map = {
+        "85_90": "85–90",
+        "90_95": "90–95",
+        "95_100": "95–100",
+    }
+
+    if rng in label_map:
+        lines.append("")
+        lines.append(
+            _range_line(
+                label_map[rng], f"price_roll_{rng}", f"price_piece_{rng}"
+            )
+        )
 
     special = product.get("special")
     if special:
