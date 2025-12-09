@@ -624,52 +624,52 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
                 )
                 continue
 
-        def _price_at(pos: int, title: str) -> float | None:
-            value = _row_value(row, pos)
-            if value in (None, ""):
-                return None
-            return _number_or_error(value, title)
+            def _price_at(pos: int, title: str) -> float | None:
+                value = _row_value(row, pos)
+                if value in (None, ""):
+                    return None
+                return _number_or_error(value, title)
 
-        raw_status = _string(_row_value(row, status_idx))
+            raw_status = _string(_row_value(row, status_idx))
 
-        item = {
-            "city": "all",
-            "section": "fabrics",
-            "category": _string(_row_value(row, base_positions["segment"])),
-            "subcategory": None,
-            "name": name,
-            "country": _string(_row_value(row, base_positions["country"])),
-            "fabric_type": _string(
-                _row_value(row, base_positions["fabric_type"])
-            ),
-            "segment": _string(_row_value(row, base_positions["segment"])),
-            "wholesale_roll": _string(
-                _row_value(row, base_positions["wholesale_roll"])
-            ),
-            "wholesale_piece": _string(
-                _row_value(row, base_positions["wholesale_piece"])
-            ),
-            "price_roll_85_90": _price_at(
-                price_positions["price_roll_85_90"], "price_roll_85_90"
-            ),
-            "price_piece_85_90": _price_at(
-                price_positions["price_piece_85_90"], "price_piece_85_90"
-            ),
-            "price_roll_90_95": _price_at(
-                price_positions["price_roll_90_95"], "price_roll_90_95"
-            ),
-            "price_piece_90_95": _price_at(
-                price_positions["price_piece_90_95"], "price_piece_90_95"
-            ),
-            "price_roll_95_100": _price_at(
-                price_positions["price_roll_95_100"], "price_roll_95_100"
-            ),
-            "price_piece_95_100": _price_at(
-                price_positions["price_piece_95_100"], "price_piece_95_100"
-            ),
-            "special": raw_status or None,
-            "image_url": None,
-        }
+            item = {
+                "city": "all",
+                "section": "fabrics",
+                "category": _string(_row_value(row, base_positions["segment"])),
+                "subcategory": None,
+                "name": name,
+                "country": _string(_row_value(row, base_positions["country"])),
+                "fabric_type": _string(
+                    _row_value(row, base_positions["fabric_type"])
+                ),
+                "segment": _string(_row_value(row, base_positions["segment"])),
+                "wholesale_roll": _string(
+                    _row_value(row, base_positions["wholesale_roll"])
+                ),
+                "wholesale_piece": _string(
+                    _row_value(row, base_positions["wholesale_piece"])
+                ),
+                "price_roll_85_90": _price_at(
+                    price_positions["price_roll_85_90"], "price_roll_85_90"
+                ),
+                "price_piece_85_90": _price_at(
+                    price_positions["price_piece_85_90"], "price_piece_85_90"
+                ),
+                "price_roll_90_95": _price_at(
+                    price_positions["price_roll_90_95"], "price_roll_90_95"
+                ),
+                "price_piece_90_95": _price_at(
+                    price_positions["price_piece_90_95"], "price_piece_90_95"
+                ),
+                "price_roll_95_100": _price_at(
+                    price_positions["price_roll_95_100"], "price_roll_95_100"
+                ),
+                "price_piece_95_100": _price_at(
+                    price_positions["price_piece_95_100"], "price_piece_95_100"
+                ),
+                "special": raw_status or None,
+                "image_url": None,
+            }
             items.append(item)
             logger.debug("Строка добавлена: %s", item)
 
