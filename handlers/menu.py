@@ -402,19 +402,10 @@ def _build_fabrics_caption(product: dict, rng: str, usd: float | None) -> str:
         piece_val = _format_money_value(product.get(piece_key))
         return escape_user(f"{label}: ролик {roll_val}, отрез {piece_val}")
 
-    label_map = {
-        "85_90": "85–90",
-        "90_95": "90–95",
-        "95_100": "95–100",
-    }
-
-    if rng in label_map:
-        lines.append("")
-        lines.append(
-            _range_line(
-                label_map[rng], f"price_roll_{rng}", f"price_piece_{rng}"
-            )
-        )
+    lines.append("")
+    lines.append(_range_line("85–90", "price_roll_85_90", "price_piece_85_90"))
+    lines.append(_range_line("90–95", "price_roll_90_95", "price_piece_90_95"))
+    lines.append(_range_line("95–100", "price_roll_95_100", "price_piece_95_100"))
 
     special = product.get("special")
     if special:
@@ -532,7 +523,7 @@ async def open_category(cb: CallbackQuery):
         page_items,
         page,
         total,
-        back_cb=f"{CAT_SEC_PREFIX}:open:{section}",
+        back_cb=f"{CAT_CAT_PREFIX}:{section}:page:1",
     )
     await send_md_safe(cb.message, category, reply_markup=reply_markup)
     await cb.answer()
@@ -553,7 +544,7 @@ async def product_list_page(cb: CallbackQuery):
         page_items,
         page,
         total,
-        back_cb=f"{CAT_SEC_PREFIX}:open:{section}",
+        back_cb=f"{CAT_CAT_PREFIX}:{section}:page:1",
     )
     await cb.message.edit_reply_markup(reply_markup=reply_markup)
     await cb.answer()

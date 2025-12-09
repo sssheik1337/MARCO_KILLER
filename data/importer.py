@@ -534,7 +534,7 @@ def _find_catalog_id(
 # ---------------------------------- парсинг каталогов ----------------------------------
 
 def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
-    """Парсит каталог тканей с учётом двухуровневой шапки и безопасным поиском колонок."""
+    """Парсит каталог тканей с фиксированным порядком колонок."""
 
     try:
         table_type = "fabrics_catalog"
@@ -554,85 +554,65 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
 
         if header_index is None:
             raise ImportErrorFriendly(
-                reason="missing_columns",
-                preview=["Наименование коллекции"],
+                title="В таблице отсутствует строка заголовков",
+                details="Не найдена колонка 'Наименование коллекции'.",
                 template=TABLE_SCHEMAS[table_type]["template_path"],
             )
 
         header_row = rows[header_index]
-        upper_row = rows[header_index - 1] if header_index > 0 else []
 
-        def _norm_title(val: object) -> str:
+        expected_headers = [
+            "наименование коллекции",
+            "страна",
+            "тип ткани",
+            "сегмент",
+            "оптовая от ролика",
+            "оптовая в отрез",
+            "ролик 85 90",
+            "отрез 85 90",
+            "ролик 90 95",
+            "отрез 90 95",
+            "ролик 95 100",
+            "отрез 95 100",
+            "статус",
+        ]
+
+        def _normalize_simple(val: object) -> str:
             text = _string(val) or ""
             text = text.replace("\n", " ")
-            text = re.sub(r"[()]+", "", text)
-            text = re.sub(r"[–—-]+", "_", text)
-            text = re.sub(r"\s+", "_", text)
+            text = re.sub(r"[\s\u00A0]+", " ", text)
+            text = re.sub(r"[–—-]+", " ", text)
             return text.strip().lower()
 
-        max_len = max(len(header_row), len(upper_row))
-        combined_headers: list[tuple[str, int]] = []
-        for idx in range(max_len):
-            lower = _norm_title(_row_value(header_row, idx))
-            upper = _norm_title(_row_value(upper_row, idx))
-            if lower and upper:
-                combined = f"{lower}_{upper}"
-            else:
-                combined = lower or upper
-            combined_headers.append((combined, idx))
+        normalized_headers = [_normalize_simple(cell) for cell in header_row]
 
-        def _find_idx(check: str | list[str]) -> int | None:
-            tokens = [check] if isinstance(check, str) else check
-            for title, idx in combined_headers:
-                if all(token in title for token in tokens):
-                    return idx
-            return None
-
-        def _find_price(range_key: str, is_roll: bool) -> int | None:
-            for title, idx in combined_headers:
-                if range_key.replace("_", "") not in title.replace("_", ""):
-                    continue
-                if is_roll and "ролик" in title:
-                    return idx
-                if not is_roll and ("отрез" in title or "рез" in title):
-                    return idx
-            return None
-
-        base_positions = {
-            "name": _find_idx("наименование_коллекции"),
-            "country": _find_idx("страна"),
-            "fabric_type": _find_idx(["тип", "ткани"]),
-            "segment": _find_idx("сегмент"),
-            "wholesale_roll": _find_idx(["оптовая", "от", "ролика"]),
-            "wholesale_piece": _find_idx(["оптовая", "в", "отрез"]),
-        }
-
-        price_positions = {
-            "price_roll_85_90": _find_price("85_90", True),
-            "price_piece_85_90": _find_price("85_90", False),
-            "price_roll_90_95": _find_price("90_95", True),
-            "price_piece_90_95": _find_price("90_95", False),
-            "price_roll_95_100": _find_price("95_100", True),
-            "price_piece_95_100": _find_price("95_100", False),
-        }
-
-        status_idx = len(header_row) - 1 if header_row else None
-
-        missing = [
-            key
-            for key, idx in {**base_positions, **price_positions, "special": status_idx}.items()
-            if idx is None
-        ]
-        if missing:
+        if len(normalized_headers) < len(expected_headers):
             raise ImportErrorFriendly(
-                reason="missing_columns",
-                preview=missing,
+                title="Ошибка: в таблице отсутствуют обязательные столбцы",
+                details="\n".join(
+                    f"• {col}" for col in expected_headers[len(normalized_headers) :]
+                ),
                 template=TABLE_SCHEMAS[table_type]["template_path"],
             )
 
+        missing: list[str] = []
+        for idx, expected in enumerate(expected_headers[:-1]):
+            current = normalized_headers[idx] if idx < len(normalized_headers) else ""
+            if expected not in current:
+                missing.append(expected)
+
+        if missing:
+            raise ImportErrorFriendly(
+                title="Ошибка: в таблице отсутствуют обязательные столбцы",
+                details="\n".join(f"• {col}" for col in missing),
+                template=TABLE_SCHEMAS[table_type]["template_path"],
+            )
+
+        status_idx = len(expected_headers) - 1
+
         items: list[dict] = []
         for row in rows[header_index + 1 :]:
-            name = _string(_row_value(row, base_positions["name"]))
+            name = _string(_row_value(row, 0))
             if not name:
                 logger.debug(
                     "Строка пропущена: отсутствует 'Наименование коллекции' в %s",
@@ -640,49 +620,28 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
                 )
                 continue
 
+            def _num_at(pos: int, title: str) -> float | None:
+                return _number_or_error(_row_value(row, pos), title)
+
             raw_status = _string(_row_value(row, status_idx))
 
             item = {
                 "city": "all",
                 "section": "fabrics",
-                "category": _string(_row_value(row, base_positions["segment"])),
+                "category": _string(_row_value(row, 3)),
                 "subcategory": None,
                 "name": name,
-                "country": _string(_row_value(row, base_positions["country"])),
-                "fabric_type": _string(_row_value(row, base_positions["fabric_type"])),
-                "segment": _string(_row_value(row, base_positions["segment"])),
-                "wholesale_roll": _number_or_error(
-                    _row_value(row, base_positions["wholesale_roll"]),
-                    "wholesale_roll",
-                ),
-                "wholesale_piece": _number_or_error(
-                    _row_value(row, base_positions["wholesale_piece"]),
-                    "wholesale_piece",
-                ),
-                "price_piece_85_90": _number_or_error(
-                    _row_value(row, price_positions["price_piece_85_90"]),
-                    "price_piece_85_90",
-                ),
-                "price_roll_85_90": _number_or_error(
-                    _row_value(row, price_positions["price_roll_85_90"]),
-                    "price_roll_85_90",
-                ),
-                "price_piece_90_95": _number_or_error(
-                    _row_value(row, price_positions["price_piece_90_95"]),
-                    "price_piece_90_95",
-                ),
-                "price_roll_90_95": _number_or_error(
-                    _row_value(row, price_positions["price_roll_90_95"]),
-                    "price_roll_90_95",
-                ),
-                "price_piece_95_100": _number_or_error(
-                    _row_value(row, price_positions["price_piece_95_100"]),
-                    "price_piece_95_100",
-                ),
-                "price_roll_95_100": _number_or_error(
-                    _row_value(row, price_positions["price_roll_95_100"]),
-                    "price_roll_95_100",
-                ),
+                "country": _string(_row_value(row, 1)),
+                "fabric_type": _string(_row_value(row, 2)),
+                "segment": _string(_row_value(row, 3)),
+                "wholesale_roll": _num_at(4, "wholesale_roll"),
+                "wholesale_piece": _num_at(5, "wholesale_piece"),
+                "price_roll_85_90": _num_at(6, "price_roll_85_90"),
+                "price_piece_85_90": _num_at(7, "price_piece_85_90"),
+                "price_roll_90_95": _num_at(8, "price_roll_90_95"),
+                "price_piece_90_95": _num_at(9, "price_piece_90_95"),
+                "price_roll_95_100": _num_at(10, "price_roll_95_100"),
+                "price_piece_95_100": _num_at(11, "price_piece_95_100"),
                 "special": raw_status or None,
                 "status": None,
                 "in_stock": None,
