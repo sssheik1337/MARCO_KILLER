@@ -818,9 +818,11 @@ async def prod_back(cb: CallbackQuery):
             page_items,
             page,
             total,
-            back_cb=f"{CAT_SEC_PREFIX}:open:{context.get('section')}"
-            if context_source == "catalog"
-            else "home",
+            back_cb=(
+                f"{CAT_CAT_PREFIX}:{context.get('section')}:page:1"
+                if context_source == "catalog"
+                else "home"
+            ),
         )
         title = context.get("category") or "Товары"
         await send_md_safe(cb.message, title, reply_markup=reply_markup)
