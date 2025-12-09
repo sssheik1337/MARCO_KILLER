@@ -630,7 +630,8 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
                     return None
                 return _number_or_error(value, title)
 
-            raw_status = _string(_row_value(row, status_idx))
+            status_value = _row_value(row, status_idx)
+            raw_status = _string(status_value) if isinstance(status_value, str) else None
 
             item = {
                 "city": "all",

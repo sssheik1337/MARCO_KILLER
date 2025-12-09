@@ -592,13 +592,13 @@ async def product_card(cb: CallbackQuery):
     if p.get("image_url"):
         msg = await cb.message.answer_photo(
             p["image_url"], caption=caption,
-            reply_markup=product_controls(pid)
+            reply_markup=product_controls(product_idx)
         )
     else:
         msg = await send_md_safe(
             cb.message,
             caption,
-            reply_markup=product_controls(pid),
+            reply_markup=product_controls(product_idx),
         )
 
     _PRODUCT_CONTEXT[cb.from_user.id][msg.message_id] = {
