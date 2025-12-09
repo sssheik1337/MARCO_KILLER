@@ -43,6 +43,10 @@ async def find_product_by_code(code: str) -> dict | None:
         return None
 
     async with aiosqlite.connect(DB_PATH) as db:
+        if not await _table_has_column(db, "products", "article"):
+            logger.warning("Поиск по артикулу недоступен: столбец article удалён")
+            return None
+
         cur = await db.execute(
             """
             SELECT *
@@ -87,29 +91,29 @@ async def fetch_sections(city: str = DEFAULT_CITY) -> list[str]:
 
 
 async def fetch_categories(section: str, city: str = DEFAULT_CITY) -> list[str]:
-    """Возвращает уникальные категории для раздела тканей."""
+    """Возвращает уникальные категории раздела тканей."""
 
     sql = (
         "SELECT DISTINCT category "
         "FROM products "
-        "WHERE section=? AND category IS NOT NULL AND category != '' "
+        "WHERE section='fabrics' "
         "ORDER BY category"
     )
 
     async with aiosqlite.connect(DB_PATH) as db:
-        cur = await db.execute(sql, (section,))
+        cur = await db.execute(sql)
         rows = await cur.fetchall()
     return [r[0] for r in rows]
 
 
 async def fetch_products_by_category(category: str) -> list[dict]:
-    """Возвращает товары выбранного сегмента без учёта города и подкатегорий."""
+    """Возвращает товары выбранного сегмента по точному совпадению категории."""
 
     sql = (
         "SELECT * "
         "FROM products "
         "WHERE section='fabrics' "
-        "  AND category=? "
+        "  AND category = ? "
         "ORDER BY name"
     )
 
@@ -129,7 +133,7 @@ async def fetch_product(name: str) -> dict:
             SELECT *
             FROM products
             WHERE section='fabrics'
-              AND name=?
+              AND name = ?
             LIMIT 1
             """,
             (name,),

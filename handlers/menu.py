@@ -379,13 +379,17 @@ def _build_fabrics_caption(product: dict, rng: str, usd: float | None) -> str:
         return str(value) if value not in (None, "") else "—"
 
     lines.append("")
-    lines.append("💵 Оптовая цена:")
-    lines.append(escape_user(f"– От ролика: {_text_or_dash(product.get('wholesale_roll'))}"))
-    lines.append(escape_user(f"– В отрез: {_text_or_dash(product.get('wholesale_piece'))}"))
+    lines.append("Оптовые цены:")
+    lines.append(
+        escape_user(f"• От ролика: {_text_or_dash(product.get('wholesale_roll'))}")
+    )
+    lines.append(
+        escape_user(f"• В отрез: {_text_or_dash(product.get('wholesale_piece'))}")
+    )
 
     price_piece_range = _format_money_value(product.get(f"price_piece_{rng}"))
     lines.append("")
-    lines.append("🟢 Розница по курсу:")
+    lines.append("Розница по курсу:")
     lines.append(escape_user(f"→ {price_piece_range}"))
     range_hint = range_label(rng, usd)
     if range_hint:
