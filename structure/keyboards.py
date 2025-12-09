@@ -1,5 +1,4 @@
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from config import PAGE_SIZE
 from data import db_utils
 
 
@@ -124,6 +123,261 @@ def kb_stock_sections(city: str) -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")],
         ]
     )
+
+
+def kb_stock_kinds(city: str, section: str, kinds: list[tuple[str, str]]) -> InlineKeyboardMarkup:
+    """Клавиатура выбора вида номенклатуры."""
+
+    rows = [
+        [InlineKeyboardButton(text=title, callback_data=f"stock:types:{city}:{section}:{slug}:1")]
+        for title, slug in kinds
+    ]
+    rows.append(
+        [
+            InlineKeyboardButton(text="⬅ Назад", callback_data=f"stock_section:{city}:{section}"),
+            InlineKeyboardButton(text="🏠 Главное меню", callback_data="home"),
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def build_hardware_kinds_keyboard(
+    city: str,
+    kinds: list[tuple[str, str]],
+    page: int,
+    total_pages: int,
+) -> InlineKeyboardMarkup:
+    """Клавиатура выбора видов фурнитуры с пагинацией."""
+
+    rows: list[list[InlineKeyboardButton]] = [
+        [
+            InlineKeyboardButton(
+                text=title,
+                callback_data=f"stock:{city}:hardware:types:{slug}:1",
+            )
+        ]
+        for title, slug in kinds
+    ]
+
+    nav_row: list[InlineKeyboardButton] = []
+    if page > 1:
+        nav_row.append(
+            InlineKeyboardButton(
+                text="◀ Назад",
+                callback_data=f"stock:{city}:hardware:kinds:{page - 1}",
+            )
+        )
+
+    nav_row.append(InlineKeyboardButton(text="🏠 Главное меню", callback_data="home"))
+
+    if page < total_pages:
+        nav_row.append(
+            InlineKeyboardButton(
+                text="Вперёд ▶",
+                callback_data=f"stock:{city}:hardware:kinds:{page + 1}",
+            )
+        )
+
+    rows.append(nav_row)
+    rows.append([InlineKeyboardButton(text="⬅ Назад", callback_data=f"stock_section:{city}:hardware")])
+
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def build_types_keyboard(
+    city: str,
+    section: str,
+    kind_slug: str,
+    types: list[tuple[str, str]],
+    page: int,
+    total_pages: int,
+) -> InlineKeyboardMarkup:
+    """Клавиатура выбора типа номенклатуры с пагинацией."""
+
+    rows: list[list[InlineKeyboardButton]] = [
+        [
+            InlineKeyboardButton(
+                text=title,
+                callback_data=f"stock:list:{city}:{section}:{kind_slug}:{slug}:1",
+            )
+        ]
+        for title, slug in types
+    ]
+
+    nav_row: list[InlineKeyboardButton] = []
+    if page > 1:
+        nav_row.append(
+            InlineKeyboardButton(
+                text="◀ Назад",
+                callback_data=f"stock:types:{city}:{section}:{kind_slug}:{page - 1}",
+            )
+        )
+
+    nav_row.append(InlineKeyboardButton(text="🏠 Главное меню", callback_data="home"))
+
+    if page < total_pages:
+        nav_row.append(
+            InlineKeyboardButton(
+                text="Вперёд ▶",
+                callback_data=f"stock:types:{city}:{section}:{kind_slug}:{page + 1}",
+            )
+        )
+
+    rows.append(nav_row)
+    rows.append([InlineKeyboardButton(text="⬅ Назад", callback_data=f"stock:kindlist:{city}:{section}")])
+
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def build_hardware_types_keyboard(
+    city: str,
+    kind_slug: str,
+    types: list[tuple[str, str]],
+    page: int,
+    total_pages: int,
+) -> InlineKeyboardMarkup:
+    """Клавиатура выбора типа фурнитуры с пагинацией."""
+
+    rows: list[list[InlineKeyboardButton]] = [
+        [
+            InlineKeyboardButton(
+                text=title,
+                callback_data=f"stock:{city}:hardware:items:{kind_slug}:{slug}:1",
+            )
+        ]
+        for title, slug in types
+    ]
+
+    nav_row: list[InlineKeyboardButton] = []
+    if page > 1:
+        nav_row.append(
+            InlineKeyboardButton(
+                text="◀ Назад",
+                callback_data=f"stock:{city}:hardware:types:{kind_slug}:{page - 1}",
+            )
+        )
+
+    nav_row.append(InlineKeyboardButton(text="🏠 Главное меню", callback_data="home"))
+
+    if page < total_pages:
+        nav_row.append(
+            InlineKeyboardButton(
+                text="Вперёд ▶",
+                callback_data=f"stock:{city}:hardware:types:{kind_slug}:{page + 1}",
+            )
+        )
+
+    rows.append(nav_row)
+    rows.append([InlineKeyboardButton(text="⬅ Назад", callback_data=f"stock:{city}:hardware:kinds:1")])
+
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def build_spb_collections_keyboard(
+    city: str,
+    section: str,
+    collections: list[tuple[str, str]],
+    page: int,
+    total_pages: int,
+) -> InlineKeyboardMarkup:
+    """Клавиатура выбора коллекции для СПБ с пагинацией."""
+
+    rows: list[list[InlineKeyboardButton]] = [
+        [
+            InlineKeyboardButton(
+                text=title,
+                callback_data=f"stock:list:{city}:{section}:{slug}:all:1",
+            )
+        ]
+        for title, slug in collections
+    ]
+
+    nav_row: list[InlineKeyboardButton] = []
+    if page > 1:
+        nav_row.append(
+            InlineKeyboardButton(
+                text="◀ Назад",
+                callback_data=f"stock:collections:{city}:{section}:{page - 1}",
+            )
+        )
+
+    nav_row.append(InlineKeyboardButton(text="🏠 Главное меню", callback_data="home"))
+
+    if page < total_pages:
+        nav_row.append(
+            InlineKeyboardButton(
+                text="Вперёд ▶",
+                callback_data=f"stock:collections:{city}:{section}:{page + 1}",
+            )
+        )
+
+    rows.append(nav_row)
+    rows.append([InlineKeyboardButton(text="⬅ Назад", callback_data=f"stock_section:{city}:{section}")])
+
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def build_stock_list_keyboard(
+    city: str,
+    section: str,
+    kind_slug: str | None,
+    type_slug: str | None,
+    page: int,
+    total_pages: int,
+    back_callback: str | None,
+    *,
+    flat: bool = False,
+) -> InlineKeyboardMarkup:
+    """Клавиатура пагинации списка остатков."""
+
+    def _page_callback(target_page: int) -> str:
+        if flat:
+            return f"stock:flat:{city}:{section}:{target_page}"
+        return f"stock:list:{city}:{section}:{kind_slug or 'all'}:{type_slug or 'all'}:{target_page}"
+
+    nav_row: list[InlineKeyboardButton] = []
+    if page > 1:
+        nav_row.append(InlineKeyboardButton(text="◀ Назад", callback_data=_page_callback(page - 1)))
+
+    nav_row.append(InlineKeyboardButton(text="🏠 Главное меню", callback_data="home"))
+
+    if page < total_pages:
+        nav_row.append(InlineKeyboardButton(text="Вперёд ▶", callback_data=_page_callback(page + 1)))
+
+    rows: list[list[InlineKeyboardButton]] = [nav_row]
+    if back_callback:
+        rows.append([InlineKeyboardButton(text="⬅ Назад", callback_data=back_callback)])
+
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def build_hardware_items_keyboard(
+    city: str,
+    kind_slug: str,
+    type_slug: str,
+    page: int,
+    total_pages: int,
+    back_callback: str | None,
+) -> InlineKeyboardMarkup:
+    """Клавиатура пагинации товаров фурнитуры."""
+
+    def _page_callback(target_page: int) -> str:
+        return f"stock:{city}:hardware:items:{kind_slug}:{type_slug}:{target_page}"
+
+    nav_row: list[InlineKeyboardButton] = []
+    if page > 1:
+        nav_row.append(InlineKeyboardButton(text="◀ Назад", callback_data=_page_callback(page - 1)))
+
+    nav_row.append(InlineKeyboardButton(text="🏠 Главное меню", callback_data="home"))
+
+    if page < total_pages:
+        nav_row.append(InlineKeyboardButton(text="Вперёд ▶", callback_data=_page_callback(page + 1)))
+
+    rows: list[list[InlineKeyboardButton]] = [nav_row]
+    if back_callback:
+        rows.append([InlineKeyboardButton(text="⬅ Назад", callback_data=back_callback)])
+
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def empty_catalog_keyboard(is_admin: bool) -> InlineKeyboardMarkup:

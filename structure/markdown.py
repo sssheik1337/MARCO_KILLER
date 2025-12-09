@@ -252,6 +252,7 @@ async def send_md_safe(
     """
 
     destination = target if isinstance(target, Message) else target.message
+    can_edit = bool(destination and destination.from_user and destination.from_user.is_bot)
 
     async def _sender(payload: str, parse_mode: ParseMode | None):
         kwargs: dict[str, object] = {"reply_markup": reply_markup}
@@ -259,6 +260,8 @@ async def send_md_safe(
             kwargs["parse_mode"] = parse_mode
         if disable_web_page_preview is not None:
             kwargs["disable_web_page_preview"] = disable_web_page_preview
+        if can_edit:
+            return await destination.edit_text(payload, **kwargs)
         return await destination.answer(payload, **kwargs)
 
     return await _send_with_fallback(_sender, text)

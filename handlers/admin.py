@@ -1,12 +1,23 @@
 import logging
+import os
+import sqlite3
+from pathlib import Path
 
 from aiogram import Router, F
 from aiogram.filters import Command, CommandObject
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message, ContentType, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import (
+    CallbackQuery,
+    Message,
+    ContentType,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+    FSInputFile,
+)
 from middlewares.admin_filter import AdminOnly
 from data.db_utils import (
+    add_stock_items,
     fetch_active_users,
     find_catalog_product_by_article,
     find_product_by_code,
@@ -14,10 +25,12 @@ from data.db_utils import (
     mark_user_blocked,
     set_setting,
 )
-from data.importer import parse_fabrics, parse_hardware, parse_stock
+from data import importer
+from data.importer import ImportErrorFriendly, ParsedResult
 import aiosqlite
 from config import DB_PATH
-from structure.markdown import send_md_safe, edit_md_safe, message_to_markdown, escape_user, send_md_safe_to_chat
+from formatter import escape_md, send_md_safe
+from structure.markdown import edit_md_safe, message_to_markdown, escape_user, send_md_safe_to_chat
 from structure.keyboards import usd_keyboard, import_result_keyboard
 from structure.states import BroadcastState
 from services.exchange import current_range, refresh_range
@@ -39,43 +52,52 @@ _EDITABLE_SETTINGS = {
 
 
 _IMPORT_TARGETS = {
-    "fabrics_msk": {
+    "fabrics_catalog": {
+        "section": "fabrics",
+        "city": "all",
+        "prompt": "Пришлите XLSX или CSV с каталогом тканей.",
+        "title": "каталог тканей",
+        "parser": importer.parse_fabrics_catalog,
+    },
+    "hardware_catalog": {
+        "section": "hardware",
+        "city": "all",
+        "prompt": "Пришлите XLSX или CSV с каталогом фурнитуры.",
+        "title": "каталог фурнитуры",
+        "parser": importer.parse_hardware_catalog,
+    },
+    "stock_fabrics_msk": {
         "section": "fabrics",
         "city": "msk",
-        "prompt": "Пришлите XLSX с тканями для Москвы.",
-        "title": "ткани (Москва)",
+        "prompt": "Пришлите XLSX или CSV с остатками тканей для Москвы.",
+        "title": "остатки тканей (Москва)",
+        "parser": importer.parse_fabrics_stock_msk,
     },
-    "fabrics_spb": {
+    "stock_fabrics_spb": {
         "section": "fabrics",
         "city": "spb",
-        "prompt": "Пришлите XLSX с тканями для Санкт-Петербурга.",
-        "title": "ткани (СПБ)",
+        "prompt": "Пришлите XLSX или CSV с остатками тканей для Санкт-Петербурга.",
+        "title": "остатки тканей (СПБ)",
+        "parser": importer.parse_fabrics_stock_spb,
     },
-    "hardware_msk": {
+    "stock_hardware_msk": {
         "section": "hardware",
         "city": "msk",
-        "prompt": "Пришлите XLSX с фурнитурой для Москвы.",
-        "title": "фурнитура (Москва)",
+        "prompt": "Пришлите XLSX или CSV с остатками фурнитуры для Москвы.",
+        "title": "остатки фурнитуры (Москва)",
+        "parser": importer.parse_hardware_stock_msk,
     },
-    "hardware_spb": {
+    "stock_hardware_spb": {
         "section": "hardware",
         "city": "spb",
-        "prompt": "Пришлите XLSX с фурнитурой для Санкт-Петербурга.",
-        "title": "фурнитура (СПБ)",
-    },
-    "stock_msk": {
-        "section": "stock",
-        "city": "msk",
-        "prompt": "Пришлите XLSX с остатками для Москвы.",
-        "title": "наличие (Москва)",
-    },
-    "stock_spb": {
-        "section": "stock",
-        "city": "spb",
-        "prompt": "Пришлите XLSX с остатками для Санкт-Петербурга.",
-        "title": "наличие (СПБ)",
+        "prompt": "Пришлите XLSX или CSV с остатками фурнитуры для Санкт-Петербурга.",
+        "title": "остатки фурнитуры (СПБ)",
+        "parser": importer.parse_hardware_stock_spb,
     },
 }
+
+# Человекочитаемые названия для сообщений об импорте
+HUMAN_NAME = {key: cfg["title"] for key, cfg in _IMPORT_TARGETS.items()}
 
 
 _BROADCAST_TYPES = {
@@ -122,12 +144,12 @@ def admin_kb():
         [InlineKeyboardButton(text="🕘 Режим работы", callback_data="admin:edit:worktime"),
          InlineKeyboardButton(text="📄 Реквизиты", callback_data="admin:edit:requisites")],
         [InlineKeyboardButton(text="Изменить ссылку на каталог готовых изделий", callback_data="admin:edit:ready_catalog_url")],
-        [InlineKeyboardButton(text="📤 Ткани Москва (xlsx)", callback_data="admin:import:fabrics_msk"),
-         InlineKeyboardButton(text="📤 Ткани СПБ (xlsx)", callback_data="admin:import:fabrics_spb")],
-        [InlineKeyboardButton(text="📤 Фурнитура Москва (xlsx)", callback_data="admin:import:hardware_msk"),
-         InlineKeyboardButton(text="📤 Фурнитура СПБ (xlsx)", callback_data="admin:import:hardware_spb")],
-        [InlineKeyboardButton(text="📦 Наличие Москва (xlsx)", callback_data="admin:import:stock_msk"),
-         InlineKeyboardButton(text="📦 Наличие СПБ (xlsx)", callback_data="admin:import:stock_spb")],
+        [InlineKeyboardButton(text="📤 Каталог тканей", callback_data="admin:import:fabrics_catalog"),
+         InlineKeyboardButton(text="📤 Каталог фурнитуры", callback_data="admin:import:hardware_catalog")],
+        [InlineKeyboardButton(text="📦 Остатки тканей Москва", callback_data="admin:import:stock_fabrics_msk"),
+         InlineKeyboardButton(text="📦 Остатки тканей СПБ", callback_data="admin:import:stock_fabrics_spb")],
+        [InlineKeyboardButton(text="📦 Остатки фурнитуры Москва", callback_data="admin:import:stock_hardware_msk"),
+         InlineKeyboardButton(text="📦 Остатки фурнитуры СПБ", callback_data="admin:import:stock_hardware_spb")],
         [InlineKeyboardButton(text="Публикация акции / новинки / распродажи", callback_data="admin:broadcast")],
         [InlineKeyboardButton(text="💵 Курс USD: авто/ручной", callback_data="admin:usd")],
         [InlineKeyboardButton(text="🏠 В меню", callback_data="home")],
@@ -413,156 +435,325 @@ async def import_xlsx(msg: Message):
 
     target_config = _IMPORT_TARGETS.get(target_key)
     if not target_config:
-        await send_md_safe(msg, "Неизвестный раздел импорта.")
+        await msg.answer("Неизвестный раздел импорта.", parse_mode=None)
         await set_setting("import_target", "")
         return
 
     section = target_config["section"]
-    city = target_config["city"]
+    city = target_config.get("city")
+    parser = target_config.get("parser")
+    parser_kwargs = target_config.get("parser_kwargs", {})
+    if parser is None:
+        await msg.answer("Не найден обработчик для выбранного импорта.", parse_mode=None)
+        await set_setting("import_target", "")
+        return
 
     f = await msg.bot.get_file(msg.document.file_id)
     stream = await msg.bot.download_file(f.file_path)
-    file_name = (msg.document.file_name or "").lower()
-    if not file_name.endswith(".xlsx"):
-        await send_md_safe(
-            msg,
-            "Ошибка: формат XLS не поддерживается. Загрузите файл в формате XLSX.",
+    file_name = msg.document.file_name or ""
+    ext = Path(file_name).suffix.lower()
+    if ext == ".xls":
+        await msg.answer(
+            "Ошибка: формат XLS не поддерживается. Используйте XLSX",
+            parse_mode=None,
+        )
+        await set_setting("import_target", "")
+        return
+    if ext not in {".xlsx", ".csv"}:
+        await msg.answer(
+            "Ошибка: поддерживаются только файлы XLSX или CSV.",
+            parse_mode=None,
         )
         await set_setting("import_target", "")
         return
 
-    try:
-        if section == "fabrics":
-            items = parse_fabrics(stream, city=city)
-        elif section == "hardware":
-            items = parse_hardware(stream, city=city)
-        elif section == "stock":
-            items = parse_stock(stream, city=city)
-        else:
-            await send_md_safe(msg, "Неизвестный раздел импорта.")
-            return
-    except Exception as exc:
-        logging.exception("Ошибка разбора файла для раздела %s", section)
-        await send_md_safe(
-            msg,
-            f"Не удалось обработать файл: {escape_user(str(exc))}",
+    if target_key == "stock_hardware_spb":
+        try:
+            result = importer.parse_hardware_stock_spb(stream)
+        except ImportErrorFriendly as e:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            logging.exception("Ошибка сохранения файла остатков фурнитуры СПБ")
+            raise ImportErrorFriendly(
+                title="Не удалось сохранить файл остатков фурнитуры СПБ",
+                details=str(exc),
+                template=None,
+            ) from exc
+
+        saved_path = result.get("saved_path") if isinstance(result, dict) else None
+        file_note = f" ({Path(saved_path).name})" if saved_path else ""
+        await msg.answer(
+            f"Файл остатков фурнитуры СПБ сохранён{file_note}.",
+            parse_mode=None,
+            reply_markup=import_result_keyboard(),
         )
+        await set_setting("import_target", "")
         return
 
-    async with aiosqlite.connect(DB_PATH) as db:
+    target_section = section
+    target_city = city
+    try:
         try:
-            await db.execute("BEGIN")
-
-            if section == "stock":
-                await db.execute("DELETE FROM stock_items WHERE city=?", (city,))
-                stock_sql = (
-                    "INSERT INTO stock_items(city,section,category,name,article,quantity,unit,status) "
-                    "VALUES(?,?,?,?,?,?,?,?)"
+            parsed_result = parser(stream, **parser_kwargs)
+        except ImportErrorFriendly as e:
+            if getattr(e, "reason", None) == "wrong_section":
+                preview = [p or "—" for p in (e.preview or [])]
+                text = (
+                    "Ошибка: загруженная таблица не соответствует выбранному разделу.\n"
+                    f"Обнаружено посторонних записей: {e.total}\n"
+                    f"Примеры (первые {len(preview)}):\n"
+                    + "\n".join(f"• {p}" for p in preview)
+                    + "\n\nПожалуйста, используйте корректный шаблон."
                 )
-                stock_payload = [
-                    (
-                        item.get("city", city),
-                        item.get("section"),
-                        item.get("category"),
-                        item.get("name"),
-                        item.get("article"),
-                        item.get("quantity"),
-                        item.get("unit"),
-                        item.get("status"),
+                await msg.answer(text, parse_mode=None)
+                template_path = f"templates/{target_key}_example.xlsx"
+                if not os.path.exists(template_path):
+                    await msg.answer(
+                        "Шаблон отсутствует на сервере. Обратитесь к разработчику.",
+                        parse_mode=None,
                     )
-                    for item in items
-                ]
-                if stock_payload:
-                    await db.executemany(stock_sql, stock_payload)
-                import_count = len(stock_payload)
-            else:
-                product_sql = (
-                    "INSERT INTO products("  # noqa: ISC003
-                    "city,section,category,subcategory,name,article,country,fabric_type,segment,"
-                    "collection,brand_country,multiplicity,unit,currency,status,"
-                    "price_piece_85_90,price_roll_85_90,price_piece_90_95,price_roll_90_95,price_piece_95_100,price_roll_95_100,"
-                    "price_rrc,price_opt,special,in_stock,image_url) "
-                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
-                )
+                    await set_setting("import_target", "")
+                    return
 
-                payload = [
-                    (
-                        item.get("city", city),
-                        item.get("section"),
-                        item.get("category"),
-                        item.get("subcategory"),
-                        item.get("name"),
-                        item.get("article"),
-                        item.get("country"),
-                        item.get("fabric_type"),
-                        item.get("segment"),
-                        item.get("collection"),
-                        item.get("brand_country"),
-                        item.get("multiplicity"),
-                        item.get("unit"),
-                        item.get("currency"),
-                        item.get("status"),
-                        item.get("price_piece_85_90"),
-                        item.get("price_roll_85_90"),
-                        item.get("price_piece_90_95"),
-                        item.get("price_roll_90_95"),
-                        item.get("price_piece_95_100"),
-                        item.get("price_roll_95_100"),
-                        item.get("price_rrc"),
-                        item.get("price_opt"),
-                        item.get("special"),
-                        item.get("in_stock"),
-                        item.get("image_url"),
-                    )
-                    for item in items
-                ]
-
-                await db.execute(
-                    "DELETE FROM products WHERE section=? AND city=?",
-                    (section, city),
-                )
-                if payload:
-                    await db.executemany(product_sql, payload)
-                import_count = len(payload)
+                await msg.answer_document(FSInputFile(template_path))
+                await set_setting("import_target", "")
+                return
+            raise
         except Exception as exc:
-            if db.in_transaction:
-                await db.rollback()
-            logging.exception("Ошибка импорта раздела %s", section)
+            logging.exception("Ошибка разбора файла для раздела %s", section)
+            raise ImportErrorFriendly(
+                title="Не удалось обработать файл",
+                details=str(exc),
+                template=importer.TABLE_SCHEMAS.get(target_key, {}).get("template_path"),
+            ) from exc
+
+        skipped_rows: list[str] = []
+        warnings: list[str] = []
+        if isinstance(parsed_result, ParsedResult):
+            items = parsed_result.items
+            imported_count = len(items)
+            warnings = parsed_result.warnings
+        elif isinstance(parsed_result, dict):
+            items = parsed_result.get("items", [])
+            imported_count = parsed_result.get("imported", len(items))
+            skipped_rows = parsed_result.get("skipped", []) or []
+        else:
+            items = parsed_result
+            imported_count = len(items)
+
+        if warnings:
+            preview = [w or "—" for w in warnings]
+            text = (
+                "⚠️ В таблице найдены строки, которые не относятся к разделу "
+                f"{HUMAN_NAME[target_key]}.\n"
+                "Импорт прерван.\n\n"
+                "Примеры несовпадающих строк:\n"
+                + "\n".join(f"• {row}" for row in preview[:20])
+                + ("\n… остальные скрыты" if len(preview) > 20 else "")
+            )
+            await msg.answer(text, parse_mode=None)
+            await set_setting("import_target", "")
+            return
+
+        if imported_count:
+            logging.info(
+                f"[IMPORT DONE] Type={target_key} City={city} Items={imported_count}"
+            )
+        else:
+            logging.warning(
+                f"[IMPORT WARNING] Parsed 0 items for {target_key} ({city})"
+            )
+
+        async with aiosqlite.connect(DB_PATH) as db:
+            try:
+                await db.execute("BEGIN")
+
+                if section in {"fabrics", "hardware"} and target_key.startswith("stock_"):
+                    import_count = await add_stock_items(db, items, city, section)
+                else:
+                    products_exist_cursor = await db.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table' AND name='products'"
+                    )
+                    products_exists = await products_exist_cursor.fetchone()
+                    if not products_exists:
+                        logging.error("Таблица products не найдена, импорт каталога прерван")
+                        if db.in_transaction:
+                            await db.rollback()
+                        await msg.answer(
+                            "Импорт каталога невозможен: таблица products отсутствует.",
+                            parse_mode=None,
+                        )
+                        await set_setting("import_target", "")
+                        return
+
+                    target_section = (
+                        "fabrics_catalog" if target_key == "fabrics_catalog" else section
+                    )
+                    target_city = city or ("all" if target_key == "fabrics_catalog" else "Санкт-Петербург")
+
+                    product_sql = (
+                        "INSERT INTO products("  # noqa: ISC003
+                        "city,section,category,subcategory,name,article,country,fabric_type,segment,"
+                        "collection,brand_country,multiplicity,unit,currency,status,"
+                        "price_piece_85_90,price_roll_85_90,price_piece_90_95,price_roll_90_95,price_piece_95_100,price_roll_95_100,"
+                        "price_rrc,price_opt,special,in_stock,image_url) "
+                        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+                    )
+
+                    payload = []
+                    for item in items:
+                        status_value = item.get("status")
+                        payload.append(
+                            (
+                                item.get("city", target_city),
+                                item.get("section", target_section),
+                                item.get("category"),
+                                item.get("subcategory"),
+                                item.get("name"),
+                                item.get("article"),
+                                item.get("country"),
+                                item.get("fabric_type"),
+                                item.get("segment"),
+                                item.get("collection"),
+                                item.get("brand_country"),
+                                item.get("multiplicity"),
+                                item.get("unit"),
+                                item.get("currency"),
+                                status_value,
+                                item.get("price_piece_85_90"),
+                                item.get("price_roll_85_90"),
+                                item.get("price_piece_90_95"),
+                                item.get("price_roll_90_95"),
+                                item.get("price_piece_95_100"),
+                                item.get("price_roll_95_100"),
+                                item.get("price_rrc"),
+                                item.get("price_opt"),
+                                item.get("special"),
+                                item.get("in_stock"),
+                                item.get("image_url"),
+                            )
+                        )
+
+                    try:
+                        await db.execute(
+                            "DELETE FROM products WHERE section=? AND city=?",
+                            (target_section, target_city),
+                        )
+                        if payload:
+                            await db.executemany(product_sql, payload)
+                        import_count = len(payload)
+                    except sqlite3.OperationalError as exc:
+                        logging.error("Ошибка при записи каталога в products: %s", exc)
+                        if db.in_transaction:
+                            await db.rollback()
+                        await msg.answer(
+                            "Импорт каталога невозможен: ошибка структуры таблицы products.",
+                            parse_mode=None,
+                        )
+                        await set_setting("import_target", "")
+                        return
+            except Exception as exc:
+                if db.in_transaction:
+                    await db.rollback()
+                logging.exception("Ошибка импорта раздела %s", section)
+                raise ImportErrorFriendly(
+                    title="Импорт прерван из-за ошибки",
+                    details=str(exc),
+                    template=importer.TABLE_SCHEMAS.get(target_key, {}).get("template_path"),
+                ) from exc
+            else:
+                row = None
+                if target_section in {"fabrics", "fabrics_catalog"} and not target_key.startswith(
+                    "stock_"
+                ):
+                    cursor = await db.execute(
+                        "SELECT * FROM products WHERE section=? AND city=? AND name LIKE ?",
+                        (target_section, target_city, "%BISON%"),
+                    )
+                    row = await cursor.fetchone()
+                    if row is None:
+                        logging.warning(
+                            "Не найдена коллекция BISON после импорта, выводим первую запись раздела тканей."
+                        )
+                        cursor = await db.execute(
+                            "SELECT * FROM products WHERE section=? AND city=? LIMIT 1",
+                            (target_section, target_city),
+                        )
+                    row = await cursor.fetchone()
+                    if row is not None:
+                        columns = [desc[0] for desc in cursor.description]
+                        snapshot = {column: row[idx] for idx, column in enumerate(columns)}
+                        logging.info("Запись ткани после импорта: %s", snapshot)
+                    else:
+                        logging.warning(
+                            "После импорта раздела тканей записи не найдены."
+                        )
+                if not target_key.startswith("stock_"):
+                    await db.commit()
+
+        await set_setting("import_target", "")
+
+        if skipped_rows:
+            skipped_lines = [
+                f"{idx}) {escape_md(name)}" for idx, name in enumerate(skipped_rows, start=1)
+            ]
+            skipped_text = "\n".join(
+                [
+                    "⚠️ Обнаружены посторонние позиции, не относящиеся к тканям:",
+                    "",
+                    *skipped_lines,
+                    "",
+                    "Эти строки были пропущены.",
+                    f"Импорт завершён: добавлено {import_count} позиций.",
+                ]
+            )
+            await send_md_safe(msg, skipped_text, reply_markup=import_result_keyboard())
+        else:
             await send_md_safe(
                 msg,
-                f"Импорт прерван из-за ошибки: {escape_user(str(exc))}",
+                f"Импортировано {import_count} позиций для раздела {target_config['title']}",
+                reply_markup=import_result_keyboard(),
             )
+    except ImportErrorFriendly as e:
+        if getattr(e, "reason", None) == "bad_xlsx":
+            await msg.answer(
+                "Ошибка: файл XLSX повреждён или сохранён в неподдерживаемом режиме Excel.\n"
+                "Пожалуйста, откройте таблицу в Excel и сохраните через:\n"
+                "Файл → Сохранить как → Excel (*.xlsx) (ОБЫЧНЫЙ, не Strict OpenXML).",
+                parse_mode=None,
+            )
+            await set_setting("import_target", "")
             return
-        else:
-            row = None
-            if section == "fabrics":
-                cursor = await db.execute(
-                    "SELECT * FROM products WHERE section=? AND city=? AND name LIKE ?",
-                    ("fabrics", city, "%BISON%"),
-                )
-                row = await cursor.fetchone()
-                if row is None:
-                    logging.warning(
-                        "Не найдена коллекция BISON после импорта, выводим первую запись раздела тканей."
-                    )
-                    cursor = await db.execute(
-                        "SELECT * FROM products WHERE section=? AND city=? LIMIT 1",
-                        ("fabrics", city),
-                    )
-                row = await cursor.fetchone()
-                if row is not None:
-                    columns = [desc[0] for desc in cursor.description]
-                    snapshot = {column: row[idx] for idx, column in enumerate(columns)}
-                    logging.info("Запись ткани после импорта: %s", snapshot)
-                else:
-                    logging.warning(
-                        "После импорта раздела тканей записи не найдены."
-                    )
-            await db.commit()
 
-    await set_setting("import_target", "")
-    await send_md_safe(
-        msg,
-        f"Импортировано {import_count} позиций для раздела {target_config['title']}",
-        reply_markup=import_result_keyboard(),
-    )
+        if getattr(e, "reason", None) == "missing_columns":
+            missing_cols = e.preview or []
+            text = (
+                "Ошибка: в таблице отсутствуют обязательные столбцы:\n"
+                + "\n".join(f"• {col}" for col in missing_cols)
+            )
+            await msg.answer(text, parse_mode=None)
+            await set_setting("import_target", "")
+            return
+
+        text = (
+            f"Ошибка! {e.title}.\n\n"
+            + (f"{e.details}\n\n" if e.details else "")
+            + "Пожалуйста, используйте корректный шаблон."
+        )
+
+        await msg.answer(text, parse_mode=None)
+
+        if e.template:
+            template_path = e.template
+            if not os.path.exists(template_path):
+                await msg.answer(
+                    "Шаблон отсутствует на сервере. Обратитесь к разработчику.",
+                    parse_mode=None,
+                )
+                await set_setting("import_target", "")
+                return
+
+            await msg.answer_document(FSInputFile(template_path))
+
+        await set_setting("import_target", "")
+        return

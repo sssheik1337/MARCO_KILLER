@@ -1,1 +1,1 @@
-PAGE_SIZE = 8
+PAGE_SIZE = 20

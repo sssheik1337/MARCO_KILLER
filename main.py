@@ -4,6 +4,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import BotCommand
 from config import BOT_TOKEN, LOG_LEVEL
 from handlers import start as start_handlers
 from handlers import menu as menu_handlers
@@ -14,7 +15,17 @@ from data.db_init import init_db
 from middlewares.user_registry import UserRegistry
 
 async def main() -> None:
-    logging.basicConfig(level=getattr(logging, LOG_LEVEL.upper(), logging.INFO))
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format="%(asctime)s %(levelname)s %(message)s",
+        filename="bot_debug.log",
+        filemode="a",
+    )
+    console = logging.StreamHandler()
+    console.setLevel(logging.DEBUG)
+    logging.getLogger("").addHandler(console)
+    # Отключаем детальный вывод для aiosqlite, чтобы не засорять логи
+    logging.getLogger("aiosqlite").setLevel(logging.WARNING)
     bot = Bot(
         BOT_TOKEN,
         default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN_V2),
@@ -35,6 +46,9 @@ async def main() -> None:
     dp.include_router(stock_handlers.router)
     dp.include_router(admin_handlers.router)
     dp.include_router(fallback_handlers.router)
+
+    # Устанавливаем описание команды /start, чтобы кнопка меню отображалась рядом с полем ввода
+    await bot.set_my_commands([BotCommand(command="start", description="Главное меню")])
 
     await dp.start_polling(bot)
 

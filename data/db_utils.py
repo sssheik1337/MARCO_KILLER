@@ -1,5 +1,10 @@
+import logging
+
 import aiosqlite
 from config import DB_PATH, DEFAULT_CITY
+
+
+logger = logging.getLogger(__name__)
 
 
 async def upsert_user(tg_id: int) -> None:
@@ -31,7 +36,7 @@ async def fetch_active_users() -> list[int]:
 
 
 async def find_product_by_code(code: str) -> dict | None:
-    """Ищет товар по артикулу или названию без ограничения города."""
+    """Ищет товар по артикулу без ограничения города."""
 
     normalized = (code or "").strip()
     if not normalized:
@@ -43,11 +48,10 @@ async def find_product_by_code(code: str) -> dict | None:
             SELECT *
             FROM products
             WHERE lower(coalesce(article, '')) = lower(?)
-               OR lower(name) = lower(?)
             ORDER BY city
             LIMIT 1
             """,
-            (normalized, normalized),
+            (normalized,),
         )
         row = await cur.fetchone()
         if not row:
@@ -68,9 +72,12 @@ async def set_setting(key: str, value: str) -> None:
         await db.commit()
 
 async def fetch_sections(city: str = DEFAULT_CITY) -> list[str]:
-    """Возвращает список разделов каталога для указанного города."""
+    """Возвращает разделы каталога для выбранного города и общих записей (city='all')."""
 
-    sql = "SELECT DISTINCT section FROM products WHERE city=? ORDER BY section"
+    sql = (
+        "SELECT DISTINCT section FROM products "
+        "WHERE city IN (?, 'all') ORDER BY section"
+    )
     params: tuple = (city,)
 
     async with aiosqlite.connect(DB_PATH) as db:
@@ -80,10 +87,12 @@ async def fetch_sections(city: str = DEFAULT_CITY) -> list[str]:
 
 
 async def fetch_categories(section: str, city: str = DEFAULT_CITY) -> list[str]:
-    """Возвращает категории для выбранного раздела и города."""
+    """Возвращает список сегментов по разделу и городу, игнорируя подкатегории."""
 
     base_sql = (
-        "SELECT DISTINCT category FROM products WHERE section=? AND city=? ORDER BY category"
+        "SELECT DISTINCT category FROM products "
+        "WHERE section=? AND category IS NOT NULL AND category != '' "
+        "AND city IN (?, 'all') ORDER BY category"
     )
     params: tuple = (section, city)
 
@@ -93,15 +102,16 @@ async def fetch_categories(section: str, city: str = DEFAULT_CITY) -> list[str]:
     return [r[0] for r in rows]
 
 
-async def fetch_products_by_category(
+async def fetch_items_by_category(
     section: str,
     category: str,
     city: str = DEFAULT_CITY,
 ) -> list[tuple[int, str]]:
-    """Возвращает товары выбранной категории и города."""
+    """Возвращает товары выбранного сегмента с учётом общих записей по городу."""
 
     sql = (
-        "SELECT id, name FROM products WHERE section=? AND category=? AND city=? ORDER BY name"
+        "SELECT id, name FROM products "
+        "WHERE section=? AND category=? AND city IN (?, 'all') ORDER BY name"
     )
     params: tuple = (section, category, city)
 
@@ -121,6 +131,105 @@ async def fetch_product(pid: int) -> dict:
 # --- наличие ---
 
 
+async def add_stock_items(
+    db: aiosqlite.Connection, items: list[dict], city: str, section: str
+) -> int:
+    """Сохраняет остатки с учётом города и раздела."""
+
+    await db.execute(
+        "DELETE FROM stock_items WHERE city=? AND section=?",
+        (city, section),
+    )
+
+    columns = [
+        "city",
+        "section",
+        "kind",
+        "item_type",
+        "code",
+        "article",
+        "name",
+        "quantity",
+        "free_quantity",
+        "unit",
+        "extra_info",
+        "date_in",
+    ]
+
+    placeholders = ",".join(["?"] * len(columns))
+    stock_sql = f"INSERT INTO stock_items({','.join(columns)}) VALUES({placeholders})"
+
+    payload: list[tuple] = []
+    for item in items:
+        name = item.get("name")
+        article = item.get("article")
+        if name is None and article is None:
+            logger.warning("Запись пропущена: отсутствуют артикул и наименование")
+            continue
+
+        quantity = item.get("quantity")
+        unit = item.get("unit")
+        city_value = item.get("city", city)
+        section_value = item.get("section", section)
+        if unit is None:
+            logger.warning("Запись пропущена: нет количества или единицы измерения")
+            continue
+        if quantity is None and not (city_value == "spb" and section_value == "fabrics"):
+            logger.warning("Запись пропущена: нет количества или единицы измерения")
+            continue
+
+        values = [
+            city_value,
+            section_value,
+            item.get("kind") or None,
+            item.get("item_type") or None,
+            item.get("code") or None,
+            article or None,
+            name,
+            quantity,
+            item.get("free_quantity"),
+            unit,
+            item.get("extra_info") or item.get("status") or None,
+            item.get("date_incoming") or item.get("date_in") or None,
+        ]
+
+        if len(values) != len(columns):
+            raise ValueError("Количество полей записи не соответствует числу столбцов таблицы")
+
+        payload.append(tuple(values))
+
+    logger.info(f"Сохраняем {len(payload)} записей в stock_items...")
+
+    inserted_count = 0
+    if payload:
+        await db.executemany(stock_sql, payload)
+        inserted_count = len(payload)
+
+    await db.commit()
+    logger.info(f"Импорт завершён: добавлено {inserted_count} записей.")
+
+    return inserted_count
+
+
+async def fetch_stock_items(city: str, section: str) -> list[dict]:
+    """Возвращает остатки по городу и разделу."""
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            """
+            SELECT city, section, kind, item_type, code, article, name, quantity, free_quantity, unit, extra_info, date_in
+            FROM stock_items
+            WHERE city = ?
+              AND section = ?
+            ORDER BY name
+            """,
+            (city, section),
+        )
+        rows = await cur.fetchall()
+        columns = [col[0] for col in cur.description]
+    return [dict(zip(columns, row)) for row in rows]
+
+
 async def fetch_stock_sections(city: str = DEFAULT_CITY) -> list[str]:
     """Возвращает разделы из таблицы наличия для указанного города."""
 
@@ -134,15 +243,13 @@ async def fetch_stock_sections(city: str = DEFAULT_CITY) -> list[str]:
 
 
 async def fetch_stock_categories(section: str, city: str = DEFAULT_CITY) -> list[str]:
-    """Возвращает категории наличия для раздела и города."""
+    """Возвращает список категорий для раздела и города."""
 
-    async with aiosqlite.connect(DB_PATH) as db:
-        cur = await db.execute(
-            "SELECT DISTINCT category FROM stock_items WHERE section=? AND city=? ORDER BY category",
-            (section, city),
-        )
-        rows = await cur.fetchall()
-    return [row[0] for row in rows]
+    items = await fetch_stock_items(city, section)
+    if not items:
+        return []
+
+    return ["Все позиции"]
 
 
 async def fetch_stock_products_by_category(
@@ -150,25 +257,19 @@ async def fetch_stock_products_by_category(
 ) -> list[tuple[int, str]]:
     """Возвращает товары наличия указанной категории и города."""
 
-    async with aiosqlite.connect(DB_PATH) as db:
-        cur = await db.execute(
-            "SELECT id, name FROM stock_items WHERE section=? AND category=? AND city=? ORDER BY name",
-            (section, category, city),
-        )
-        rows = await cur.fetchall()
-    return [(int(row[0]), row[1]) for row in rows]
+    items = await fetch_stock_items(city, section)
+    return [
+        (idx, item.get("name")) for idx, item in enumerate(items) if item.get("name")
+    ]
 
 
-async def fetch_stock_item(pid: int) -> dict:
-    """Возвращает запись наличия по идентификатору."""
+async def fetch_stock_item(city: str, section: str, index: int) -> dict:
+    """Возвращает запись наличия по индексу из списка для города и раздела."""
 
-    async with aiosqlite.connect(DB_PATH) as db:
-        cur = await db.execute("SELECT * FROM stock_items WHERE id=?", (pid,))
-        row = await cur.fetchone()
-        if not row:
-            return {}
-        cols = [c[0] for c in cur.description]
-        return dict(zip(cols, row))
+    items = await fetch_stock_items(city, section)
+    if index < 0 or index >= len(items):
+        return {}
+    return items[index]
 
 
 async def _table_has_column(db: aiosqlite.Connection, table: str, column: str) -> bool:
