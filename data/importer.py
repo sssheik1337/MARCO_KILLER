@@ -562,69 +562,58 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
         header_row = rows[header_index]
         logger.debug("Строка заголовков (нижний уровень): %s", header_row)
 
-        # Собираем позиции основных полей по нижней строке шапки
-        base_positions: dict[str, int] = {}
-        base_map = {
-            "наименование коллекции": "name",
-            "страна": "country",
-            "тип ткани": "fabric_type",
-            "сегмент": "segment",
-            "оптовая от ролика": "wholesale_roll",
-            "оптовая в отрез": "wholesale_piece",
+        # Жёсткая структура колонок согласно ТЗ
+        base_positions: dict[str, int] = {
+            "name": 0,
+            "country": 1,
+            "fabric_type": 2,
+            "segment": 3,
+            "wholesale_roll": 4,
+            "wholesale_piece": 5,
         }
 
-        for idx, cell in enumerate(header_row):
-            normalized = _normalize_header(cell)
-            if normalized in base_map and base_map[normalized] not in base_positions:
-                base_positions[base_map[normalized]] = idx
-                logger.debug(
-                    "Поле %s интерпретировано из колонки %s (индекс %s)",
-                    base_map[normalized],
-                    cell,
-                    idx,
-                )
+        price_positions: dict[str, int] = {
+            "price_roll_85_90": 6,
+            "price_piece_85_90": 7,
+            "price_roll_90_95": 8,
+            "price_piece_90_95": 9,
+            "price_roll_95_100": 10,
+            "price_piece_95_100": 11,
+        }
 
-        required_base = list(base_map.values())
-        missing_base = [key for key in required_base if key not in base_positions]
-        if missing_base:
+        status_idx = 12
+
+        max_price_idx = max(price_positions.values())
+        if len(header_row) <= max_price_idx:
             raise ImportErrorFriendly(
                 reason="missing_columns",
-                preview=missing_base,
+                preview=list(price_positions.keys()),
                 template=TABLE_SCHEMAS[table_type]["template_path"],
             )
 
-        # Определяем позиции ценовых колонок строго после базовых полей
-        start_idx = max(base_positions.values()) + 1
-        price_keys = [
-            "price_roll_85_90",
-            "price_piece_85_90",
-            "price_roll_90_95",
-            "price_piece_90_95",
-            "price_roll_95_100",
-            "price_piece_95_100",
+        headers_for_check = [
+            "name",
+            "country",
+            "fabric_type",
+            "segment",
+            "wholesale_roll",
+            "wholesale_piece",
+            "РОЛИК_85_90",
+            "ОТРЕЗ_85_90",
+            "РОЛИК_90_95",
+            "ОТРЕЗ_90_95",
+            "РОЛИК_95_100",
+            "ОТРЕЗ_95_100",
+            "special_status",
         ]
+        _validate_headers(table_type, headers_for_check)
 
-        price_positions: dict[str, int] = {}
-        if len(header_row) < start_idx + len(price_keys):
-            raise ImportErrorFriendly(
-                reason="missing_columns",
-                preview=price_keys,
-                template=TABLE_SCHEMAS[table_type]["template_path"],
-            )
-        for offset, key in enumerate(price_keys):
-            col_idx = start_idx + offset
-            price_positions[key] = col_idx
-            logger.debug("Колонка цены %s расположена в индексе %s", key, col_idx)
-
-        # Колонка статуса всегда в R5C21 (индекс 20)
-        status_idx = 20
         if len(header_row) <= status_idx:
             raise ImportErrorFriendly(
                 reason="missing_columns",
                 preview=["special_status"],
                 template=TABLE_SCHEMAS[table_type]["template_path"],
             )
-        logger.debug("Колонка статуса взята по индексу %s", status_idx)
 
         items: list[dict] = []
         for row in rows[header_index + 1 :]:
@@ -647,7 +636,14 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
                 "country": _string(_row_value(row, base_positions["country"])),
                 "fabric_type": _string(_row_value(row, base_positions["fabric_type"])),
                 "segment": _string(_row_value(row, base_positions["segment"])),
-                "status": "активен",
+                "wholesale_roll": _number_or_error(
+                    _row_value(row, base_positions["wholesale_roll"]),
+                    "wholesale_roll",
+                ),
+                "wholesale_piece": _number_or_error(
+                    _row_value(row, base_positions["wholesale_piece"]),
+                    "wholesale_piece",
+                ),
                 "price_piece_85_90": _number_or_error(
                     _row_value(row, price_positions["price_piece_85_90"]),
                     "price_piece_85_90",
@@ -672,8 +668,17 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
                     _row_value(row, price_positions["price_roll_95_100"]),
                     "price_roll_95_100",
                 ),
-                "special": raw_status if raw_status else None,
-                "in_stock": 999,
+                "special": raw_status or None,
+                "status": None,
+                "in_stock": None,
+                "article": None,
+                "collection": None,
+                "brand_country": None,
+                "multiplicity": None,
+                "unit": None,
+                "currency": None,
+                "price_rrc": None,
+                "price_opt": None,
                 "image_url": None,
             }
             items.append(item)

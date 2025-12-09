@@ -6,7 +6,7 @@ from typing import Any
 import aiosqlite
 from aiogram import Router, F
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup
+from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton
 from config import PAGE_SIZE, ADMINS, DEFAULT_CITY, DB_PATH
 from structure.keyboards import (
     catalog_menu,
@@ -325,6 +325,86 @@ def _format_quantity_value(qty: float | None, unit: str | None) -> str:
     return base
 
 
+def _catalog_products_keyboard(
+    prefix: str,
+    items: list[tuple[str, str]],
+    page: int,
+    total: int,
+    back_cb: str,
+) -> InlineKeyboardMarkup:
+    """Клавиатура списка товаров с кнопкой возврата к категориям."""
+
+    rows = [
+        [InlineKeyboardButton(text=title, callback_data=f"{prefix}:open:{item_id}")]
+        for title, item_id in items
+    ]
+
+    nav_back = [
+        InlineKeyboardButton(text="⬅️ Назад", callback_data=back_cb),
+        InlineKeyboardButton(text="🏠 Главное меню", callback_data="home"),
+    ]
+
+    nav_pages: list[InlineKeyboardButton] = []
+    if page > 1:
+        nav_pages.append(
+            InlineKeyboardButton(text="⬅️", callback_data=f"{prefix}:page:{page-1}")
+        )
+    if page < total:
+        nav_pages.append(
+            InlineKeyboardButton(text="➡️", callback_data=f"{prefix}:page:{page+1}")
+        )
+
+    rows.append(nav_back)
+    if nav_pages:
+        rows.append(nav_pages)
+
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _format_money_value(value: object) -> str:
+    money = _format_money(_as_float(value))
+    return money
+
+
+def _build_fabrics_caption(product: dict, rng: str, usd: float | None) -> str:
+    """Формирует карточку ткани с ценами и диапазонами."""
+
+    lines: list[str] = []
+    lines.append(f"*{escape_user(product.get('name'))}*")
+    lines.append(escape_user(f"Страна: {product.get('country') or '—'}"))
+    lines.append(escape_user(f"Тип ткани: {product.get('fabric_type') or '—'}"))
+    lines.append(escape_user(f"Сегмент: {product.get('segment') or '—'}"))
+
+    lines.append("")
+    lines.append(escape_user(f"💵 Оптовая от ролика: {_format_money_value(product.get('wholesale_roll'))}"))
+    lines.append(escape_user(f"💵 Оптовая в отрез: {_format_money_value(product.get('wholesale_piece'))}"))
+
+    price_piece_range = _format_money_value(product.get(f"price_piece_{rng}"))
+    lines.append("")
+    lines.append("🟢 Розница по курсу:")
+    lines.append(escape_user(f"→ {price_piece_range}"))
+    range_hint = range_label(rng, usd)
+    if range_hint:
+        lines.append(escape_user(range_hint))
+
+    def _range_line(label: str, roll_key: str, piece_key: str) -> str:
+        roll_val = _format_money_value(product.get(roll_key))
+        piece_val = _format_money_value(product.get(piece_key))
+        return escape_user(f"{label}: ролик {roll_val}, отрез {piece_val}")
+
+    lines.append("")
+    lines.append(_range_line("85–90", "price_roll_85_90", "price_piece_85_90"))
+    lines.append(_range_line("90–95", "price_roll_90_95", "price_piece_90_95"))
+    lines.append(_range_line("95–100", "price_roll_95_100", "price_piece_95_100"))
+
+    special = product.get("special")
+    if special:
+        lines.append("")
+        lines.append(escape_user(f"Статус: {special}"))
+
+    return "\n".join(lines)
+
+
 @router.callback_query(F.data == "menu:catalog")
 async def catalog_root(cb: CallbackQuery):
     await _show_catalog_menu(cb.message)
@@ -428,13 +508,14 @@ async def open_category(cb: CallbackQuery):
     prods = await db_utils.fetch_items_by_category(section, category, city)
     items = [(name, str(pid)) for pid, name in prods]
     page_items, page, total = slice_page(items, 1, PAGE_SIZE)
-    await send_md_safe(
-        cb.message,
-        category,
-        reply_markup=pager(
-            f"{CAT_PROD_PREFIX}:{section}:{category}", page_items, page, total
-        ),
+    reply_markup = _catalog_products_keyboard(
+        f"{CAT_PROD_PREFIX}:{section}:{category}",
+        page_items,
+        page,
+        total,
+        back_cb=f"{CAT_SEC_PREFIX}:open:{section}",
     )
+    await send_md_safe(cb.message, category, reply_markup=reply_markup)
     await cb.answer()
 
 
@@ -448,11 +529,14 @@ async def product_list_page(cb: CallbackQuery):
     prods = await db_utils.fetch_items_by_category(section, category, city)
     items = [(name, str(pid)) for pid, name in prods]
     page_items, page, total = slice_page(items, page, PAGE_SIZE)
-    await cb.message.edit_reply_markup(
-        reply_markup=pager(
-            f"{CAT_PROD_PREFIX}:{section}:{category}", page_items, page, total
-        )
+    reply_markup = _catalog_products_keyboard(
+        f"{CAT_PROD_PREFIX}:{section}:{category}",
+        page_items,
+        page,
+        total,
+        back_cb=f"{CAT_SEC_PREFIX}:open:{section}",
     )
+    await cb.message.edit_reply_markup(reply_markup=reply_markup)
     await cb.answer()
 
 
@@ -472,7 +556,10 @@ async def product_card(cb: CallbackQuery):
     if logger.isEnabledFor(logging.DEBUG):
         logger.debug("Карточка товара %s, диапазон %s, данные: %s", pid, rng, p)
 
-    caption = build_product_caption(p, rng, usd)
+    if section == "fabrics":
+        caption = _build_fabrics_caption(p, rng, usd)
+    else:
+        caption = build_product_caption(p, rng, usd)
 
     products = await db_utils.fetch_items_by_category(section, category, city)
     product_ids = [prod_id for prod_id, _ in products]
@@ -716,7 +803,15 @@ async def prod_back(cb: CallbackQuery):
         page_items, page, total = slice_page(
             items, context.get("page", 1), PAGE_SIZE
         )
-        reply_markup = pager(context.get("prefix", ""), page_items, page, total)
+        reply_markup = _catalog_products_keyboard(
+            context.get("prefix", ""),
+            page_items,
+            page,
+            total,
+            back_cb=f"{CAT_SEC_PREFIX}:open:{context.get('section')}"
+            if context_source == "catalog"
+            else "home",
+        )
         title = context.get("category") or "Товары"
         await send_md_safe(cb.message, title, reply_markup=reply_markup)
 # --- информационные страницы ---
