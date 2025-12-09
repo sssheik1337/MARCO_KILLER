@@ -196,7 +196,7 @@ async def on_catalog(cb: CallbackQuery):
 async def on_catalog_fabrics(cb: CallbackQuery):
     """Открывает каталог тканей из общего прайс-листа."""
     city = _user_city(cb.from_user.id)
-    categories = await db_utils.fetch_categories("fabrics", city)
+    categories = [c for c in await db_utils.fetch_categories("fabrics", city) if c]
     if not categories:
         await send_md_safe(
             cb.message,
