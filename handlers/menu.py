@@ -388,23 +388,14 @@ def _build_fabrics_caption(product: dict, rng: str, usd: float | None) -> str:
     )
 
     price_piece_range = _format_money_value(product.get(f"price_piece_{rng}"))
+    price_roll_range = _format_money_value(product.get(f"price_roll_{rng}"))
     lines.append("")
     lines.append("Розница по курсу:")
-    lines.append(escape_user(f"→ {price_piece_range}"))
+    lines.append(escape_user(f"• Ролик: {price_roll_range}"))
+    lines.append(escape_user(f"• Отрез: {price_piece_range}"))
     range_hint = range_label(rng, usd)
     if range_hint:
         lines.append(escape_user(f"Курс: {range_hint}"))
-
-    def _range_line(label: str, roll_key: str, piece_key: str) -> str:
-        roll_val = _format_money_value(product.get(roll_key))
-        piece_val = _format_money_value(product.get(piece_key))
-        return escape_user(f"{label}: ролик {roll_val}, отрез {piece_val}")
-
-    lines.append("")
-    lines.append("Диапазоны:")
-    lines.append(_range_line("85–90", "price_roll_85_90", "price_piece_85_90"))
-    lines.append(_range_line("90–95", "price_roll_90_95", "price_piece_90_95"))
-    lines.append(_range_line("95–100", "price_roll_95_100", "price_piece_95_100"))
 
     special = product.get("special")
     if special:

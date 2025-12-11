@@ -245,6 +245,22 @@ def _string(value: object) -> str | None:
     return text or None
 
 
+def _raw_text_value(value: object) -> str | None:
+    """Возвращает строковое значение без очистки, если оно заполнено."""
+
+    if value is None:
+        return None
+
+    try:
+        if pd.isna(value):
+            return None
+    except TypeError:
+        pass
+
+    text = str(value)
+    return text if text != "" else None
+
+
 def _number(value: object) -> float | None:
     """Преобразует значение в float, очищая пробелы, запятые и валютные суффиксы."""
 
@@ -631,7 +647,11 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
                 return _number_or_error(value, title)
 
             status_value = _row_value(row, status_idx)
-            raw_status = _string(status_value) if isinstance(status_value, str) else None
+            raw_status = _raw_text_value(status_value)
+            if raw_status is not None:
+                raw_status = raw_status.strip()
+                if not raw_status:
+                    raw_status = None
 
             item = {
                 "city": "all",
@@ -644,10 +664,10 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
                     _row_value(row, base_positions["fabric_type"])
                 ),
                 "segment": _string(_row_value(row, base_positions["segment"])),
-                "wholesale_roll": _string(
+                "wholesale_roll": _raw_text_value(
                     _row_value(row, base_positions["wholesale_roll"])
                 ),
-                "wholesale_piece": _string(
+                "wholesale_piece": _raw_text_value(
                     _row_value(row, base_positions["wholesale_piece"])
                 ),
                 "price_roll_85_90": _price_at(
