@@ -70,13 +70,6 @@ TABLE_SCHEMAS = {
             "segment",
             "wholesale_roll",
             "wholesale_piece",
-            "РОЛИК_85_90",
-            "ОТРЕЗ_85_90",
-            "РОЛИК_90_95",
-            "ОТРЕЗ_90_95",
-            "РОЛИК_95_100",
-            "ОТРЕЗ_95_100",
-            "special_status",
         ],
         "template_path": "templates/fabrics_catalog_example.xlsx",
     },
@@ -550,7 +543,7 @@ def _find_catalog_id(
 # ---------------------------------- парсинг каталогов ----------------------------------
 
 def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
-    """Парсит каталог тканей с фиксированным порядком колонок."""
+    """Парсит каталог тканей с динамическими диапазонами цен."""
 
     try:
         table_type = "fabrics_catalog"
@@ -576,8 +569,8 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
             )
 
         header_row = rows[header_index]
+        second_row = rows[header_index + 1] if header_index + 1 < len(rows) else None
 
-        # Жёсткая структура колонок согласно ТЗ
         base_positions: dict[str, int] = {
             "name": 0,
             "country": 1,
@@ -587,51 +580,65 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
             "wholesale_piece": 5,
         }
 
-        price_positions: dict[str, int] = {
-            "price_roll_85_90": 6,
-            "price_piece_85_90": 7,
-            "price_roll_90_95": 8,
-            "price_piece_90_95": 9,
-            "price_roll_95_100": 10,
-            "price_piece_95_100": 11,
-        }
+        def _is_role_row(row: list[object] | None) -> bool:
+            """Проверяет, есть ли в строке колонки 'ролик' и 'отрез'."""
 
-        status_idx = 12
+            if not row:
+                return False
+            normalized = [_normalize_header(cell) for cell in row[6:]]
+            return any(val in {"ролик", "отрез"} for val in normalized)
 
-        max_price_idx = max(price_positions.values())
-        if len(header_row) <= max_price_idx:
-            raise ImportErrorFriendly(
-                reason="missing_columns",
-                preview=list(price_positions.keys()),
-                template=TABLE_SCHEMAS[table_type]["template_path"],
-            )
+        role_row = second_row if _is_role_row(second_row) else None
+        data_start = header_index + (2 if role_row is not None else 1)
 
-        headers_for_check = [
-            "name",
-            "country",
-            "fabric_type",
-            "segment",
-            "wholesale_roll",
-            "wholesale_piece",
-            "РОЛИК_85_90",
-            "ОТРЕЗ_85_90",
-            "РОЛИК_90_95",
-            "ОТРЕЗ_90_95",
-            "РОЛИК_95_100",
-            "ОТРЕЗ_95_100",
-            "special_status",
-        ]
-        _validate_headers(table_type, headers_for_check)
+        max_len = max(len(header_row), len(role_row or []))
+        range_columns: dict[str, dict[str, int]] = {}
+        status_idx: int | None = None
+        last_range_title: str | None = None
 
-        if len(header_row) <= status_idx:
-            raise ImportErrorFriendly(
-                reason="missing_columns",
-                preview=["special_status"],
-                template=TABLE_SCHEMAS[table_type]["template_path"],
-            )
+        def _normalize_range_name(value: str) -> str:
+            cleaned = re.sub(r"[^0-9]+", "_", value)
+            cleaned = cleaned.strip("_")
+            return cleaned
+
+        for col in range(6, max_len):
+            top_value = _string(_row_value(header_row, col))
+            if top_value:
+                last_range_title = top_value
+
+            range_key = _normalize_range_name(last_range_title) if last_range_title else None
+            assigned = False
+
+            if range_key:
+                cols = range_columns.setdefault(range_key, {})
+
+                if role_row:
+                    role_value = _normalize_header(_row_value(role_row, col))
+                    if role_value in {"ролик", "roll", "ролл"}:
+                        cols["roll"] = col
+                        assigned = True
+                    elif role_value in {"отрез", "отр", "piece"}:
+                        cols["piece"] = col
+                        assigned = True
+                else:
+                    if "roll" not in cols:
+                        cols["roll"] = col
+                        assigned = True
+                    elif "piece" not in cols:
+                        cols["piece"] = col
+                        assigned = True
+
+            if assigned:
+                continue
+
+            if status_idx is None:
+                candidate = _string(_row_value(header_row, col))
+                if candidate:
+                    status_idx = col
+                    break
 
         items: list[dict] = []
-        for row in rows[header_index + 1 :]:
+        for row in rows[data_start:]:
             name = _string(_row_value(row, base_positions["name"]))
             if not name:
                 logger.debug(
@@ -640,18 +647,13 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
                 )
                 continue
 
-            def _price_at(pos: int, title: str) -> float | None:
-                value = _row_value(row, pos)
-                if value in (None, ""):
-                    return None
-                return _number_or_error(value, title)
-
-            status_value = _row_value(row, status_idx)
+            status_value = _row_value(row, status_idx) if status_idx is not None else None
             raw_status = _raw_text_value(status_value)
+            special = None
             if raw_status is not None:
-                raw_status = raw_status.strip()
-                if not raw_status:
-                    raw_status = None
+                raw_status = str(raw_status).strip()
+                if raw_status:
+                    special = raw_status
 
             item = {
                 "city": "all",
@@ -670,27 +672,22 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
                 "wholesale_piece": _raw_text_value(
                     _row_value(row, base_positions["wholesale_piece"])
                 ),
-                "price_roll_85_90": _price_at(
-                    price_positions["price_roll_85_90"], "price_roll_85_90"
-                ),
-                "price_piece_85_90": _price_at(
-                    price_positions["price_piece_85_90"], "price_piece_85_90"
-                ),
-                "price_roll_90_95": _price_at(
-                    price_positions["price_roll_90_95"], "price_roll_90_95"
-                ),
-                "price_piece_90_95": _price_at(
-                    price_positions["price_piece_90_95"], "price_piece_90_95"
-                ),
-                "price_roll_95_100": _price_at(
-                    price_positions["price_roll_95_100"], "price_roll_95_100"
-                ),
-                "price_piece_95_100": _price_at(
-                    price_positions["price_piece_95_100"], "price_piece_95_100"
-                ),
-                "special": raw_status or None,
+                "special": special,
                 "image_url": None,
             }
+
+            for range_key, cols in range_columns.items():
+                if "roll" in cols:
+                    field_name = f"price_roll_{range_key}"
+                    item[field_name] = _number_or_error(
+                        _row_value(row, cols["roll"]), field_name
+                    )
+                if "piece" in cols:
+                    field_name = f"price_piece_{range_key}"
+                    item[field_name] = _number_or_error(
+                        _row_value(row, cols["piece"]), field_name
+                    )
+
             items.append(item)
             logger.debug("Строка добавлена: %s", item)
 
