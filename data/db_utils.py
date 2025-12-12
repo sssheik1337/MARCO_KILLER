@@ -91,58 +91,101 @@ async def fetch_sections(city: str = DEFAULT_CITY) -> list[str]:
 
 
 async def fetch_categories(section: str, city: str = DEFAULT_CITY) -> list[str]:
-    """Возвращает уникальные категории раздела тканей."""
+    """Возвращает уникальные категории для выбранного раздела."""
 
-    sql = (
-        "SELECT DISTINCT category "
-        "FROM products "
-        "WHERE section='fabrics' "
-        "ORDER BY category"
-    )
+    target_section = section or ""
+
+    if target_section == "hardware":
+        sql = (
+            "SELECT DISTINCT category "
+            "FROM products "
+            "WHERE section='hardware' "
+            "ORDER BY category"
+        )
+        params: tuple = ()
+    else:
+        sql = (
+            "SELECT DISTINCT category "
+            "FROM products "
+            "WHERE section='fabrics' "
+            "ORDER BY category"
+        )
+        params = ()
 
     async with aiosqlite.connect(DB_PATH) as db:
-        cur = await db.execute(sql)
+        cur = await db.execute(sql, params)
         rows = await cur.fetchall()
     return [r[0] for r in rows if r[0]]
 
 
-async def fetch_products_by_category(category: str) -> list[dict]:
-    """Возвращает товары выбранного сегмента по точному совпадению категории."""
+async def fetch_products_by_category(
+    category: str, section: str = "fabrics", collection: str | None = None
+) -> list[dict]:
+    """Возвращает товары выбранной категории (и коллекции для фурнитуры)."""
 
-    sql = (
-        "SELECT * "
-        "FROM products "
-        "WHERE section='fabrics' "
-        "  AND category = ? "
-        "ORDER BY name"
-    )
+    if section == "hardware":
+        sql = (
+            "SELECT * "
+            "FROM products "
+            "WHERE section='hardware' "
+            "  AND category = ? "
+            "  AND collection = ? "
+            "ORDER BY name"
+        )
+        params = (category, collection)
+    else:
+        sql = (
+            "SELECT * "
+            "FROM products "
+            "WHERE section='fabrics' "
+            "  AND category = ? "
+            "ORDER BY name"
+        )
+        params = (category,)
 
     async with aiosqlite.connect(DB_PATH) as db:
-        cur = await db.execute(sql, (category,))
+        cur = await db.execute(sql, params)
         rows = await cur.fetchall()
         cols = [c[0] for c in cur.description]
     return [dict(zip(cols, row)) for row in rows]
 
 
-async def fetch_product(name: str) -> dict:
-    """Ищет товар ткани по точному совпадению имени."""
+async def fetch_product(name: str, section: str = "fabrics") -> dict:
+    """Ищет товар по точному совпадению имени внутри раздела."""
 
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(
             """
             SELECT *
             FROM products
-            WHERE section='fabrics'
+            WHERE section=?
               AND name = ?
             LIMIT 1
             """,
-            (name,),
+            (section, name),
         )
         row = await cur.fetchone()
         if not row:
             return {}
         cols = [c[0] for c in cur.description]
         return dict(zip(cols, row))
+
+
+async def fetch_collections(category: str) -> list[str]:
+    """Возвращает уникальные коллекции для выбранной категории фурнитуры."""
+
+    sql = (
+        "SELECT DISTINCT collection "
+        "FROM products "
+        "WHERE section='hardware' "
+        "  AND category = ? "
+        "ORDER BY collection"
+    )
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(sql, (category,))
+        rows = await cur.fetchall()
+    return [r[0] for r in rows if r[0]]
 
 
 # --- наличие ---

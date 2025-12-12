@@ -737,91 +737,125 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
 
 
 def parse_hardware_catalog(stream: SourceType) -> list[dict]:
-    """Парсит общий каталог фурнитуры."""
+    """Парсит каталог фурнитуры с учётом категорий и коллекций."""
 
     try:
-        table_type = "hardware_catalog"
+        table_type = 'hardware_catalog'
         rows = _load_rows(stream)
         if not rows:
             return []
 
-        logger.info(f"Импорт {table_type} для города -")
+        logger.info('Импорт %s для города all', table_type)
+
+        working_rows = rows[10:] if len(rows) > 10 else rows
+        if not working_rows:
+            raise ImportErrorFriendly(
+                reason='missing_columns',
+                details='Не найдена строка заголовков каталога фурнитуры.',
+            )
+
+        header_row_full = working_rows[0]
+        header_cells = header_row_full[1:]
+        normalized_headers = {_normalize_header(val): idx for idx, val in enumerate(header_cells)}
 
         required_titles = [
-            "Артикул",
-            "Фото",
-            "Наименование",
-            "Коллекция",
-            "Статус",
-            "Кратность",
-            "Бренд (Страна)",
-            "Ед.",
-            "Валюта",
-            "РРЦ",
-            "Оптовая",
+            'Артикул',
+            'Наименование',
+            'Коллекция',
+            'Статус',
+            'Кратность',
+            'Бренд (Страна)',
+            'Ед.',
+            'Валюта',
+            'РРЦ',
+            'Оптовая',
         ]
 
-        header_index = None
-        columns: dict[str, str] = {}
-        header_row: list[object] | None = None
-        for idx, row in enumerate(rows):
-            temp_columns = {_normalize_header(val): val for val in row}
-            try:
-                _ensure_columns(temp_columns, required_titles)
-                header_index = idx
-                columns = temp_columns
-                header_row = row
-                break
-            except Exception:
-                continue
-
-        if header_index is None or header_row is None:
-            temp_columns = {_normalize_header(val): val for val in rows[0]}
-            _ensure_columns(temp_columns, required_titles)
-            header_index = 0
-            header_row = rows[0]
-            columns = temp_columns
-
-        headers = [(_string(val) or "").strip() for val in header_row]
+        _ensure_columns(normalized_headers, required_titles)
+        headers = [(_string(val) or '').strip() for val in header_cells]
         _validate_headers(table_type, headers)
 
-        data_rows = rows[header_index + 1 :]
-        df = pd.DataFrame(data_rows, columns=header_row)
-        df = df.dropna(how="all")
+        data_rows = working_rows[1:]
+        trimmed_rows = [row[1 : len(header_cells) + 1] for row in data_rows]
+        df = pd.DataFrame(trimmed_rows, columns=header_cells)
+        df = df.dropna(how='all')
 
+        col_article = normalized_headers[_normalize_header('Артикул')]
+        col_name = normalized_headers[_normalize_header('Наименование')]
+        col_collection = normalized_headers[_normalize_header('Коллекция')]
+        col_status = normalized_headers[_normalize_header('Статус')]
+        col_multiplicity = normalized_headers[_normalize_header('Кратность')]
+        col_brand = normalized_headers[_normalize_header('Бренд (Страна)')]
+        col_unit = normalized_headers[_normalize_header('Ед.')]
+        col_currency = normalized_headers[_normalize_header('Валюта')]
+        col_rrc = normalized_headers[_normalize_header('РРЦ')]
+        col_opt = normalized_headers[_normalize_header('Оптовая')]
+
+        current_category: str | None = None
         items: list[dict] = []
-        for _, row in df.iterrows():
-            article = _string(row.get(columns["артикул"]))
-            name = _string(row.get(columns["наименование"]))
-            if not article and not name:
+
+        for _, record in df.iterrows():
+            article_raw = record.iloc[col_article]
+            name_raw = record.iloc[col_name]
+            if str(article_raw).strip().lower() == 'артикул' and str(name_raw).strip().lower() == 'наименование':
                 continue
 
-            currency = _string(row.get(columns["валюта"]))
-            if currency:
-                currency = currency.upper()
+            article = _string(article_raw)
+            name = _string(name_raw)
+
+            price_rrc_raw = record.iloc[col_rrc]
+            price_opt_raw = record.iloc[col_opt]
+            price_rrc = _number(price_rrc_raw)
+            price_opt = _number(price_opt_raw)
+
+            has_price = any(
+                _string(price) not in (None, '') or _number(price) is not None
+                for price in (price_rrc_raw, price_opt_raw)
+            )
+
+            if not article and not has_price:
+                category_text = _string(name) or _string(record.iloc[col_collection])
+                if category_text:
+                    current_category = category_text
+                continue
+
+            if not article or not name or not has_price:
+                continue
+
+            status_raw = record.iloc[col_status]
+            status_text = None
+            if isinstance(status_raw, str) and any(ch.isalpha() for ch in status_raw):
+                status_text = status_raw.strip()
+
+            currency_value = _string(record.iloc[col_currency])
 
             item = {
-                "article": article,
-                "name": name,
-                "collection": _string(row.get(columns["коллекция"])),
-                "status": _string(row.get(columns["статус"])),
-                "multiplicity": _string(row.get(columns["кратность"])),
-                "brand_country": _string(row.get(columns["бренд (страна)"])),
-                "unit": _string(row.get(columns["ед."])),
-                "currency": currency,
-                "price_rrc": _number_or_error(row.get(columns["ррц"]), "РРЦ"),
-                "price_opt": _number_or_error(row.get(columns["оптовая"]), "Оптовая"),
-                "image_url": None,
+                'city': 'all',
+                'section': 'hardware',
+                'category': current_category,
+                'subcategory': None,
+                'collection': _string(record.iloc[col_collection]),
+                'article': article,
+                'name': name,
+                'special': status_text,
+                'multiplicity': _string(record.iloc[col_multiplicity]),
+                'brand_country': _string(record.iloc[col_brand]),
+                'unit': _string(record.iloc[col_unit]),
+                'currency': currency_value,
+                'price_rrc': price_rrc,
+                'price_opt': price_opt,
+                'image_url': None,
             }
+
             items.append(item)
 
-        logger.info(f"Получено валидных записей: {len(items)}")
+        logger.info('Получено валидных записей каталога фурнитуры: %s', len(items))
 
         return items
     except ImportErrorFriendly:
         raise
     except Exception as exc:  # noqa: BLE001
-        logger.error("Ошибка импорта каталога фурнитуры", exc_info=True)
+        logger.error('Ошибка импорта каталога фурнитуры', exc_info=True)
         raise _wrap_import_error(table_type, exc) from exc
 
 
