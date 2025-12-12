@@ -505,7 +505,7 @@ async def open_category(cb: CallbackQuery):
 
     category = cats[category_idx]
 
-    prods = await db_utils.fetch_products_by_category(category)
+    prods = [p for p in await db_utils.fetch_products_by_category(category) if p.get("name")]
     items = [(p["name"], str(idx)) for idx, p in enumerate(prods)]
     page_items, page, total = slice_page(items, 1, PAGE_SIZE)
     reply_markup = _catalog_products_keyboard(
@@ -526,7 +526,7 @@ async def product_list_page(cb: CallbackQuery):
     category = parts[2]
     page = int(parts[-1])
     city = _user_city(cb.from_user.id)
-    prods = await db_utils.fetch_products_by_category(category)
+    prods = [p for p in await db_utils.fetch_products_by_category(category) if p.get("name")]
     items = [(p["name"], str(idx)) for idx, p in enumerate(prods)]
     page_items, page, total = slice_page(items, page, PAGE_SIZE)
     reply_markup = _catalog_products_keyboard(
@@ -554,7 +554,7 @@ async def product_card(cb: CallbackQuery):
     category = ":".join(parts[2:-2]) if len(parts) > 3 else ""
 
     city = _user_city(cb.from_user.id)
-    products = await db_utils.fetch_products_by_category(category)
+    products = [p for p in await db_utils.fetch_products_by_category(category) if p.get("name")]
     if product_idx < 0 or product_idx >= len(products):
         await cb.answer("Товар недоступен", show_alert=True)
         return

@@ -570,7 +570,6 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
 
         header_row = rows[header_index]
         top_row = rows[header_index - 1] if header_index - 1 >= 0 else None
-        roles_row = rows[header_index + 1] if header_index + 1 < len(rows) else None
 
         base_positions: dict[str, int] = {
             "name": 0,
@@ -588,7 +587,7 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
             return cleaned
 
         def _is_role_cell(value: object, expected: set[str]) -> bool:
-            """Проверяет, соответствует ли ячейка тексту 'ролик'/'отрез'."""
+            """Проверяет, соответствует ли ячейка тексту "ролик"/"отрез"."""
 
             normalized = _normalize_header(value)
             return normalized in expected
@@ -603,11 +602,7 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
 
         range_columns: dict[str, dict[str, int]] = {}
         col = 6
-        max_len = max(
-            len(header_row),
-            len(top_row or []),
-            len(roles_row or []),
-        )
+        max_len = max(len(header_row), len(top_row or []))
 
         while col < max_len:
             range_title_cell = _row_value(top_row, col) if top_row else None
@@ -640,14 +635,6 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
                 _row_value(header_row, piece_idx), {"отрез", "отр", "piece"}
             )
 
-            if roles_row:
-                roll_ok = roll_ok or _is_role_cell(
-                    _row_value(roles_row, roll_idx), {"ролик", "ролл", "roll"}
-                )
-                piece_ok = piece_ok or _is_role_cell(
-                    _row_value(roles_row, piece_idx), {"отрез", "отр", "piece"}
-                )
-
             if not (roll_ok and piece_ok):
                 raise ImportErrorFriendly(
                     title="Некорректная структура диапазона",
@@ -668,22 +655,6 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
                 template=TABLE_SCHEMAS[table_type]["template_path"],
             )
 
-        status_idx: int | None = None
-        for status_col in range(col, max_len):
-            candidate = _string(_row_value(header_row, status_col))
-            if not candidate:
-                continue
-
-            normalized = _normalize_header(candidate)
-            if any(marker in normalized for marker in {"ролик", "ролл", "отрез", "piece", "roll"}):
-                continue
-
-            if not re.search(r"[a-zа-яё]", candidate, re.IGNORECASE):
-                continue
-
-            status_idx = status_col
-            break
-
         data_start = header_index + 1
 
         items: list[dict] = []
@@ -696,13 +667,27 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
                 )
                 continue
 
-            status_value = _row_value(row, status_idx) if status_idx is not None else None
-            raw_status = _raw_text_value(status_value)
             special = None
-            if raw_status is not None:
-                raw_status = str(raw_status).strip()
-                if raw_status and re.search(r"[a-zа-яё]", raw_status, re.IGNORECASE):
-                    special = raw_status
+            status_search_start = col - 1
+            last_index = len(row) - 1
+            for idx in range(last_index, status_search_start - 1, -1):
+                cell = _row_value(row, idx)
+                if cell is None:
+                    continue
+                if isinstance(cell, str):
+                    candidate = cell.strip()
+                    if not candidate:
+                        continue
+                    if candidate.startswith("="):
+                        continue
+                    if _number(candidate) is not None:
+                        continue
+                    if not any(ch.isalpha() for ch in candidate):
+                        continue
+                    special = candidate
+                    break
+                if isinstance(cell, (int, float)):
+                    continue
 
             item = {
                 "city": "all",
