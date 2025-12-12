@@ -593,6 +593,14 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
             normalized = _normalize_header(value)
             return normalized in expected
 
+        def _is_range_title(value: object) -> bool:
+            """Определяет, подходит ли верхняя ячейка под шаблон диапазона."""
+
+            text = _string(value)
+            if not text:
+                return False
+            return bool(re.search(r"\d+\s*[-–]\s*\d+", text))
+
         range_columns: dict[str, dict[str, int]] = {}
         col = 6
         max_len = max(
@@ -602,11 +610,28 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
         )
 
         while col < max_len:
-            range_title = _string(_row_value(top_row, col)) if top_row else None
-            if not range_title:
+            range_title_cell = _row_value(top_row, col) if top_row else None
+            if range_title_cell is None or _string(range_title_cell) in (None, ""):
                 break
 
+            if not _is_range_title(range_title_cell):
+                raise ImportErrorFriendly(
+                    title="Некорректное название диапазона",
+                    details=(
+                        "Ячейка над колонкой не содержит диапазон ширины (пример: 85-90)."
+                    ),
+                    template=TABLE_SCHEMAS[table_type]["template_path"],
+                )
+
+            range_title = _string(range_title_cell) or ""
             range_key = _normalize_range_name(range_title)
+            if not range_key:
+                raise ImportErrorFriendly(
+                    title="Некорректное название диапазона",
+                    details="Ячейка диапазона не содержит числового интервала (пример: 85-90).",
+                    template=TABLE_SCHEMAS[table_type]["template_path"],
+                )
+
             roll_idx = col
             piece_idx = col + 1
 

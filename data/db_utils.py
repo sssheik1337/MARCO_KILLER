@@ -97,8 +97,6 @@ async def fetch_categories(section: str, city: str = DEFAULT_CITY) -> list[str]:
         "SELECT DISTINCT category "
         "FROM products "
         "WHERE section='fabrics' "
-        "  AND category IS NOT NULL "
-        "  AND TRIM(category) <> '' "
         "ORDER BY category"
     )
 

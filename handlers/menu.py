@@ -395,7 +395,7 @@ def _build_fabrics_caption(product: dict, rng: str, usd: float | None) -> str:
     lines.append(escape_user(f"• Отрез: {price_piece_range}"))
     range_hint = range_label(rng, usd)
     if range_hint:
-        lines.append(escape_user(f"Курс: {range_hint}"))
+        lines.append(escape_user(range_hint))
 
     special = product.get("special")
     if special:
