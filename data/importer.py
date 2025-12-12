@@ -569,7 +569,8 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
             )
 
         header_row = rows[header_index]
-        second_row = rows[header_index + 1] if header_index + 1 < len(rows) else None
+        top_row = rows[header_index - 1] if header_index - 1 >= 0 else None
+        roles_row = rows[header_index + 1] if header_index + 1 < len(rows) else None
 
         base_positions: dict[str, int] = {
             "name": 0,
@@ -580,62 +581,85 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
             "wholesale_piece": 5,
         }
 
-        def _is_role_row(row: list[object] | None) -> bool:
-            """Проверяет, есть ли в строке колонки 'ролик' и 'отрез'."""
-
-            if not row:
-                return False
-            normalized = [_normalize_header(cell) for cell in row[6:]]
-            return any(val in {"ролик", "отрез"} for val in normalized)
-
-        role_row = second_row if _is_role_row(second_row) else None
-        data_start = header_index + (2 if role_row is not None else 1)
-
-        max_len = max(len(header_row), len(role_row or []))
-        range_columns: dict[str, dict[str, int]] = {}
-        status_idx: int | None = None
-        last_range_title: str | None = None
-
+        # Начинаем разбор диапазонов с колонки 6, как только над шапкой указано имя диапазона.
         def _normalize_range_name(value: str) -> str:
             cleaned = re.sub(r"[^0-9]+", "_", value)
             cleaned = cleaned.strip("_")
             return cleaned
 
-        for col in range(6, max_len):
-            top_value = _string(_row_value(header_row, col))
-            if top_value:
-                last_range_title = top_value
+        def _is_role_cell(value: object, expected: set[str]) -> bool:
+            """Проверяет, соответствует ли ячейка тексту 'ролик'/'отрез'."""
 
-            range_key = _normalize_range_name(last_range_title) if last_range_title else None
-            assigned = False
+            normalized = _normalize_header(value)
+            return normalized in expected
 
-            if range_key:
-                cols = range_columns.setdefault(range_key, {})
+        range_columns: dict[str, dict[str, int]] = {}
+        col = 6
+        max_len = max(
+            len(header_row),
+            len(top_row or []),
+            len(roles_row or []),
+        )
 
-                if role_row:
-                    role_value = _normalize_header(_row_value(role_row, col))
-                    if role_value in {"ролик", "roll", "ролл"}:
-                        cols["roll"] = col
-                        assigned = True
-                    elif role_value in {"отрез", "отр", "piece"}:
-                        cols["piece"] = col
-                        assigned = True
-                else:
-                    if "roll" not in cols:
-                        cols["roll"] = col
-                        assigned = True
-                    elif "piece" not in cols:
-                        cols["piece"] = col
-                        assigned = True
+        while col < max_len:
+            range_title = _string(_row_value(top_row, col)) if top_row else None
+            if not range_title:
+                break
 
-            if assigned:
+            range_key = _normalize_range_name(range_title)
+            roll_idx = col
+            piece_idx = col + 1
+
+            roll_ok = _is_role_cell(_row_value(header_row, roll_idx), {"ролик", "ролл", "roll"})
+            piece_ok = _is_role_cell(
+                _row_value(header_row, piece_idx), {"отрез", "отр", "piece"}
+            )
+
+            if roles_row:
+                roll_ok = roll_ok or _is_role_cell(
+                    _row_value(roles_row, roll_idx), {"ролик", "ролл", "roll"}
+                )
+                piece_ok = piece_ok or _is_role_cell(
+                    _row_value(roles_row, piece_idx), {"отрез", "отр", "piece"}
+                )
+
+            if not (roll_ok and piece_ok):
+                raise ImportErrorFriendly(
+                    title="Некорректная структура диапазона",
+                    details=(
+                        "Ожидаются подписи 'РОЛИК' и 'отрез' под диапазоном "
+                        f"{range_title}, но они не найдены."
+                    ),
+                    template=TABLE_SCHEMAS[table_type]["template_path"],
+                )
+
+            range_columns[range_key] = {"roll": roll_idx, "piece": piece_idx}
+            col += 2
+
+        if not range_columns:
+            raise ImportErrorFriendly(
+                title="Не найдены диапазоны цен",
+                details="После обязательных колонок отсутствуют диапазоны ширины ткани.",
+                template=TABLE_SCHEMAS[table_type]["template_path"],
+            )
+
+        status_idx: int | None = None
+        for status_col in range(col, max_len):
+            candidate = _string(_row_value(header_row, status_col))
+            if not candidate:
                 continue
 
-            if status_idx is None:
-                candidate = _string(_row_value(header_row, col))
-                if candidate:
-                    status_idx = col
-                    break
+            normalized = _normalize_header(candidate)
+            if any(marker in normalized for marker in {"ролик", "ролл", "отрез", "piece", "roll"}):
+                continue
+
+            if not re.search(r"[a-zа-яё]", candidate, re.IGNORECASE):
+                continue
+
+            status_idx = status_col
+            break
+
+        data_start = header_index + 1
 
         items: list[dict] = []
         for row in rows[data_start:]:
@@ -652,7 +676,7 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
             special = None
             if raw_status is not None:
                 raw_status = str(raw_status).strip()
-                if raw_status:
+                if raw_status and re.search(r"[a-zа-яё]", raw_status, re.IGNORECASE):
                     special = raw_status
 
             item = {
@@ -677,16 +701,16 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
             }
 
             for range_key, cols in range_columns.items():
-                if "roll" in cols:
-                    field_name = f"price_roll_{range_key}"
-                    item[field_name] = _number_or_error(
-                        _row_value(row, cols["roll"]), field_name
-                    )
-                if "piece" in cols:
-                    field_name = f"price_piece_{range_key}"
-                    item[field_name] = _number_or_error(
-                        _row_value(row, cols["piece"]), field_name
-                    )
+                roll_value = _row_value(row, cols["roll"])
+                piece_value = _row_value(row, cols["piece"])
+
+                field_name_roll = f"price_roll_{range_key}"
+                field_name_piece = f"price_piece_{range_key}"
+
+                item[field_name_roll] = _number_or_error(roll_value, field_name_roll)
+                item[field_name_piece] = _number_or_error(
+                    piece_value, field_name_piece
+                )
 
             items.append(item)
             logger.debug("Строка добавлена: %s", item)
