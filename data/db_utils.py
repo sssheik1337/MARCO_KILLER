@@ -103,7 +103,7 @@ async def fetch_categories(section: str, city: str = DEFAULT_CITY) -> list[str]:
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(sql)
         rows = await cur.fetchall()
-    return [r[0] for r in rows]
+    return [r[0] for r in rows if r[0]]
 
 
 async def fetch_products_by_category(category: str) -> list[dict]:
