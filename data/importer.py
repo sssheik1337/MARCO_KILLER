@@ -737,7 +737,7 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
 
 
 def parse_hardware_catalog(stream: SourceType) -> list[dict]:
-    """Парсит каталог фурнитуры с жёсткой привязкой к структуре столбцов."""
+    """Парсит каталог фурнитуры строго по заполненности столбцов."""
 
     try:
         table_type = "hardware_catalog"
@@ -754,30 +754,44 @@ def parse_hardware_catalog(stream: SourceType) -> list[dict]:
                 details="Не найдена строка заголовков каталога фурнитуры.",
             )
 
-        header_row_full = working_rows[0]
-        header_cells = header_row_full[1:]
-        normalized_headers = {
-            _normalize_header(val): idx for idx, val in enumerate(header_cells)
-        }
+        header_row_full: list[object] | None = None
+        header_cells: list[object] = []
+        normalized_headers: dict[str, int] = {}
+        for row in working_rows:
+            candidate_cells = row[1:]
+            normalized = {_normalize_header(val): idx for idx, val in enumerate(candidate_cells)}
+            required_titles = [
+                "Артикул",
+                "Наименование",
+                "Коллекция",
+                "Статус",
+                "Кратность",
+                "Бренд (Страна)",
+                "Ед.",
+                "Валюта",
+                "РРЦ",
+                "Оптовая",
+            ]
+            try:
+                _ensure_columns(normalized, required_titles)
+            except ImportErrorFriendly:
+                continue
+            header_row_full = row
+            header_cells = candidate_cells
+            normalized_headers = normalized
+            break
 
-        required_titles = [
-            "Артикул",
-            "Наименование",
-            "Коллекция",
-            "Статус",
-            "Кратность",
-            "Бренд (Страна)",
-            "Ед.",
-            "Валюта",
-            "РРЦ",
-            "Оптовая",
-        ]
+        if not header_cells:
+            raise ImportErrorFriendly(
+                reason="missing_columns",
+                details="Не найдена строка заголовков каталога фурнитуры.",
+            )
 
-        _ensure_columns(normalized_headers, required_titles)
         headers = [(_string(val) or "").strip() for val in header_cells]
         _validate_headers(table_type, headers)
 
-        data_rows = working_rows[1:]
+        header_index = working_rows.index(header_row_full)
+        data_rows = working_rows[header_index + 1 :]
         trimmed_rows = [row[1 : len(header_cells) + 1] for row in data_rows]
 
         col_article = normalized_headers[_normalize_header("Артикул")]
@@ -798,6 +812,11 @@ def parse_hardware_catalog(stream: SourceType) -> list[dict]:
         def _is_empty(value: object) -> bool:
             text = _string(value)
             return text is None or text == ""
+
+        def _only_column_has_text(row_values: list[object], idx: int) -> bool:
+            return bool(_string(row_values[idx])) and all(
+                _is_empty(val) for pos, val in enumerate(row_values) if pos != idx
+            )
 
         def _has_letters(value: object) -> bool:
             return isinstance(value, str) and any(ch.isalpha() for ch in value)
@@ -823,46 +842,15 @@ def parse_hardware_catalog(stream: SourceType) -> list[dict]:
             has_price = not (_is_empty(price_rrc_raw) and _is_empty(price_opt_raw))
 
             is_cat_level1 = (
-                not has_price
-                and _string(article_cell)
-                and _is_empty(row[col_status])
-                and _is_empty(row[col_multiplicity])
-                and _is_empty(row[col_brand])
-                and _is_empty(row[col_unit])
-                and _is_empty(row[col_currency])
-                and _is_empty(row[col_rrc])
-                and _is_empty(row[col_opt])
-                and _is_empty(row[col_name])
+                _only_column_has_text(row, 0)
+                and _string(row[0])
+                and not has_price
             )
-            is_cat_level2 = (
-                not has_price
-                and _is_empty(article_cell)
-                and _string(row[1])
-                and _is_empty(row[col_status])
-                and _is_empty(row[col_multiplicity])
-                and _is_empty(row[col_brand])
-                and _is_empty(row[col_unit])
-                and _is_empty(row[col_currency])
-                and _is_empty(row[col_rrc])
-                and _is_empty(row[col_opt])
-                and _is_empty(row[col_name])
-            )
-            is_cat_level3 = (
-                not has_price
-                and _is_empty(article_cell)
-                and _is_empty(row[1])
-                and _string(name_cell)
-                and _is_empty(row[col_status])
-                and _is_empty(row[col_multiplicity])
-                and _is_empty(row[col_brand])
-                and _is_empty(row[col_unit])
-                and _is_empty(row[col_currency])
-                and _is_empty(row[col_rrc])
-                and _is_empty(row[col_opt])
-            )
+            is_cat_level2 = _only_column_has_text(row, 1) and not has_price
+            is_cat_level3 = _only_column_has_text(row, 2) and not has_price
 
             if is_cat_level1:
-                title = _string(article_cell)
+                title = _string(row[0])
                 if title and title.strip().lower() != "вверх":
                     current_cat1 = title
                 else:
@@ -881,7 +869,7 @@ def parse_hardware_catalog(stream: SourceType) -> list[dict]:
                 continue
 
             if is_cat_level3:
-                title = _string(name_cell)
+                title = _string(row[2])
                 if title and title.strip().lower() != "вверх":
                     current_cat3 = title
                 else:
