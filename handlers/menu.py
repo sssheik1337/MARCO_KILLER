@@ -509,7 +509,7 @@ async def catalog_sections_page(cb: CallbackQuery):
 async def open_catalog_section(cb: CallbackQuery):
     section = cb.data.split(":")[-1]
     city = _user_city(cb.from_user.id)
-    cats = await db_utils.fetch_categories(section, city)
+    cats = [c for c in await db_utils.fetch_categories(section, city) if c]
     if not cats:
         await send_md_safe(cb.message, "В этом разделе пока нет позиций.")
         await cb.answer()
@@ -530,7 +530,7 @@ async def open_category_page(cb: CallbackQuery):
     section = parts[1]
     page = int(parts[-1])
     city = _user_city(cb.from_user.id)
-    cats = await db_utils.fetch_categories(section, city)
+    cats = [c for c in await db_utils.fetch_categories(section, city) if c]
     enumerated = [(name, str(idx)) for idx, name in enumerate(cats)]
     page_items, page, total = slice_page(enumerated, page, PAGE_SIZE)
     await cb.message.edit_reply_markup(
@@ -760,6 +760,7 @@ async def product_card(cb: CallbackQuery):
     _PRODUCT_CONTEXT[cb.from_user.id][msg.message_id] = {
         "section": section,
         "category": category,
+        "collection": collection,
         "prefix": list_prefix,
         "page": page,
         "product_id": product_idx,
@@ -960,9 +961,25 @@ async def prod_back(cb: CallbackQuery):
     if context:
         if context_source == "catalog":
             city = context.get("city") or _user_city(user_id)
-            products = await db_utils.fetch_products_by_category(
-                context["category"],
-            )
+            section = context.get("section", "fabrics")
+            if section == "hardware":
+                products = [
+                    p
+                    for p in await db_utils.fetch_products_by_category(
+                        context.get("category"),
+                        section=section,
+                        collection=context.get("collection"),
+                    )
+                    if p.get("name")
+                ]
+            else:
+                products = [
+                    p
+                    for p in await db_utils.fetch_products_by_category(
+                        context.get("category", "")
+                    )
+                    if p.get("name")
+                ]
         else:
             city = context.get("city") or _user_city(user_id)
             products = await db_utils.fetch_stock_products_by_category(
