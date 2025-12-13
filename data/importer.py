@@ -814,20 +814,20 @@ def parse_hardware_catalog(stream: SourceType) -> list[dict]:
             text = _string(value)
             return text is None or text == ""
 
-    def _only_column_has_text(row_values: list[object], idx: int) -> bool:
-        return bool(_string(row_values[idx])) and all(
-            _is_empty(val) for pos, val in enumerate(row_values) if pos != idx
-        )
+        def _only_column_has_text(row_values: list[object], idx: int) -> bool:
+            return bool(_string(row_values[idx])) and all(
+                _is_empty(val) for pos, val in enumerate(row_values) if pos != idx
+            )
 
         def _has_letters(value: object) -> bool:
             return isinstance(value, str) and any(ch.isalpha() for ch in value)
 
-    category_totals: dict[str, dict[str | None, dict[str | None, int]]]
-    category_totals = defaultdict(lambda: defaultdict(lambda: defaultdict(int)))
+        category_totals: dict[str, dict[str | None, dict[str | None, int]]]
+        category_totals = defaultdict(lambda: defaultdict(lambda: defaultdict(int)))
 
-    for row in trimmed_rows:
-        if all(_is_empty(cell) for cell in row):
-            continue
+        for row in trimmed_rows:
+            if all(_is_empty(cell) for cell in row):
+                continue
 
             article_cell = row[col_article]
             name_cell = row[col_name]
@@ -845,50 +845,50 @@ def parse_hardware_catalog(stream: SourceType) -> list[dict]:
             price_opt = _number(price_opt_raw)
             has_price = not (_is_empty(price_rrc_raw) and _is_empty(price_opt_raw))
 
-        is_cat_level1 = (
-            _only_column_has_text(row, 0)
-            and _string(row[0])
-            and all(_is_empty(cell) for cell in row[1:])
-        )
-        is_cat_level2 = _only_column_has_text(row, 1) and all(
-            _is_empty(cell) for cell in row[2:]
-        )
-        is_cat_level3 = _only_column_has_text(row, 2) and all(
-            _is_empty(cell) for cell in row[3:]
-        )
+            is_cat_level1 = (
+                _only_column_has_text(row, 0)
+                and _string(row[0])
+                and all(_is_empty(cell) for cell in row[1:])
+            )
+            is_cat_level2 = _only_column_has_text(row, 1) and all(
+                _is_empty(cell) for cell in row[2:]
+            )
+            is_cat_level3 = _only_column_has_text(row, 2) and all(
+                _is_empty(cell) for cell in row[3:]
+            )
 
-        if is_cat_level1:
-            title = _string(row[0])
-            if title and title.strip().lower() != "вверх":
-                current_cat1 = title
-            else:
-                current_cat1 = None
-            current_cat2 = None
-            current_cat3 = None
-            continue
-
-        if is_cat_level2:
-            title = _string(row[1])
-            if title and title.strip().lower() != "вверх":
-                current_cat2 = title
-            else:
+            if is_cat_level1:
+                title = _string(row[0])
+                if title and title.strip().lower() != "вверх":
+                    current_cat1 = title
+                else:
+                    current_cat1 = None
                 current_cat2 = None
-            current_cat3 = None
-            continue
-
-        if is_cat_level3:
-            title = _string(row[2])
-            if title and title.strip().lower() != "вверх":
-                current_cat3 = title
-            else:
                 current_cat3 = None
-            continue
+                continue
 
-        article = _string(article_cell)
-        name = _string(name_cell)
+            if is_cat_level2:
+                title = _string(row[1])
+                if title and title.strip().lower() != "вверх":
+                    current_cat2 = title
+                else:
+                    current_cat2 = None
+                current_cat3 = None
+                continue
 
-        if not article or not name or not has_price or not current_cat1:
-            continue
+            if is_cat_level3:
+                title = _string(row[2])
+                if title and title.strip().lower() != "вверх":
+                    current_cat3 = title
+                else:
+                    current_cat3 = None
+                continue
+
+            article = _string(article_cell)
+            name = _string(name_cell)
+
+            if not article or not name or not has_price or not current_cat1:
+                continue
 
             status_text = _string(status_cell)
             if not _has_letters(status_text):
@@ -914,20 +914,20 @@ def parse_hardware_catalog(stream: SourceType) -> list[dict]:
                 "image_url": None,
             }
 
-        items.append(item)
-        category_totals[current_cat1][current_cat2][current_cat3] += 1
+            items.append(item)
+            category_totals[current_cat1][current_cat2][current_cat3] += 1
 
-    for cat1, sub_map in category_totals.items():
-        logger.info("[IMPORT] category_1: %s", cat1)
-        for cat2, grp_map in sub_map.items():
-            if cat2:
-                logger.info("[IMPORT]   category_2: %s", cat2)
-            for cat3, count in grp_map.items():
-                if cat3:
-                    logger.info("[IMPORT]     category_3: %s", cat3)
-                logger.info("[IMPORT]       products: %s", count)
+        for cat1, sub_map in category_totals.items():
+            logger.info("[IMPORT] category_1: %s", cat1)
+            for cat2, grp_map in sub_map.items():
+                if cat2:
+                    logger.info("[IMPORT]   category_2: %s", cat2)
+                for cat3, count in grp_map.items():
+                    if cat3:
+                        logger.info("[IMPORT]     category_3: %s", cat3)
+                    logger.info("[IMPORT]       products: %s", count)
 
-    logger.info("Получено валидных записей каталога фурнитуры: %s", len(items))
+        logger.info("Получено валидных записей каталога фурнитуры: %s", len(items))
 
         return items
     except ImportErrorFriendly:
