@@ -119,9 +119,12 @@ async def fetch_categories(section: str, city: str = DEFAULT_CITY) -> list[str]:
 
 
 async def fetch_products_by_category(
-    category: str, section: str = "fabrics", collection: str | None = None
+    category: str,
+    section: str = "fabrics",
+    subcategory: str | None = None,
+    group: str | None = None,
 ) -> list[dict]:
-    """Возвращает товары выбранной категории (и коллекции для фурнитуры)."""
+    """Возвращает товары выбранной категории (и иерархии для фурнитуры)."""
 
     if section == "hardware":
         sql = (
@@ -129,10 +132,11 @@ async def fetch_products_by_category(
             "FROM products "
             "WHERE section='hardware' "
             "  AND category = ? "
-            "  AND collection = ? "
+            "  AND (subcategory = ? OR (subcategory IS NULL AND ? IS NULL)) "
+            "  AND (\"group\" = ? OR (\"group\" IS NULL AND ? IS NULL)) "
             "ORDER BY name"
         )
-        params = (category, collection)
+        params = (category, subcategory, subcategory, group, group)
     else:
         sql = (
             "SELECT * "
@@ -171,19 +175,37 @@ async def fetch_product(name: str, section: str = "fabrics") -> dict:
         return dict(zip(cols, row))
 
 
-async def fetch_collections(category: str) -> list[str]:
-    """Возвращает уникальные коллекции для выбранной категории фурнитуры."""
+async def fetch_subcategories(category: str) -> list[str]:
+    """Возвращает подкатегории фурнитуры (уровень 2)."""
 
     sql = (
-        "SELECT DISTINCT collection "
+        "SELECT DISTINCT subcategory "
         "FROM products "
         "WHERE section='hardware' "
         "  AND category = ? "
-        "ORDER BY collection"
+        "ORDER BY subcategory"
     )
 
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(sql, (category,))
+        rows = await cur.fetchall()
+    return [r[0] for r in rows if r[0]]
+
+
+async def fetch_groups(category: str, subcategory: str | None) -> list[str]:
+    """Возвращает группы фурнитуры (уровень 3) для выбранной ветки."""
+
+    sql = (
+        "SELECT DISTINCT \"group\" "
+        "FROM products "
+        "WHERE section='hardware' "
+        "  AND category = ? "
+        "  AND (subcategory = ? OR (subcategory IS NULL AND ? IS NULL)) "
+        "ORDER BY \"group\""
+    )
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(sql, (category, subcategory, subcategory))
         rows = await cur.fetchall()
     return [r[0] for r in rows if r[0]]
 

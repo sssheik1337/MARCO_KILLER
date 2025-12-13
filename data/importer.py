@@ -737,7 +737,7 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
 
 
 def parse_hardware_catalog(stream: SourceType) -> list[dict]:
-    """Парсит каталог фурнитуры с учётом уровней категорий и служебных строк."""
+    """Парсит каталог фурнитуры с жёсткой привязкой к структуре столбцов."""
 
     try:
         table_type = "hardware_catalog"
@@ -782,7 +782,6 @@ def parse_hardware_catalog(stream: SourceType) -> list[dict]:
 
         col_article = normalized_headers[_normalize_header("Артикул")]
         col_name = normalized_headers[_normalize_header("Наименование")]
-        col_collection = normalized_headers[_normalize_header("Коллекция")]
         col_status = normalized_headers[_normalize_header("Статус")]
         col_multiplicity = normalized_headers[_normalize_header("Кратность")]
         col_brand = normalized_headers[_normalize_header("Бренд (Страна)")]
@@ -826,13 +825,26 @@ def parse_hardware_catalog(stream: SourceType) -> list[dict]:
             is_cat_level1 = (
                 not has_price
                 and _string(article_cell)
+                and _is_empty(row[col_status])
+                and _is_empty(row[col_multiplicity])
+                and _is_empty(row[col_brand])
+                and _is_empty(row[col_unit])
+                and _is_empty(row[col_currency])
+                and _is_empty(row[col_rrc])
+                and _is_empty(row[col_opt])
                 and _is_empty(row[col_name])
-                and _is_empty(row[col_collection])
             )
             is_cat_level2 = (
                 not has_price
                 and _is_empty(article_cell)
                 and _string(row[1])
+                and _is_empty(row[col_status])
+                and _is_empty(row[col_multiplicity])
+                and _is_empty(row[col_brand])
+                and _is_empty(row[col_unit])
+                and _is_empty(row[col_currency])
+                and _is_empty(row[col_rrc])
+                and _is_empty(row[col_opt])
                 and _is_empty(row[col_name])
             )
             is_cat_level3 = (
@@ -840,21 +852,40 @@ def parse_hardware_catalog(stream: SourceType) -> list[dict]:
                 and _is_empty(article_cell)
                 and _is_empty(row[1])
                 and _string(name_cell)
+                and _is_empty(row[col_status])
+                and _is_empty(row[col_multiplicity])
+                and _is_empty(row[col_brand])
+                and _is_empty(row[col_unit])
+                and _is_empty(row[col_currency])
+                and _is_empty(row[col_rrc])
+                and _is_empty(row[col_opt])
             )
 
             if is_cat_level1:
-                current_cat1 = _string(article_cell)
+                title = _string(article_cell)
+                if title and title.strip().lower() != "вверх":
+                    current_cat1 = title
+                else:
+                    current_cat1 = None
                 current_cat2 = None
                 current_cat3 = None
                 continue
 
             if is_cat_level2:
-                current_cat2 = _string(row[1])
+                title = _string(row[1])
+                if title and title.strip().lower() != "вверх":
+                    current_cat2 = title
+                else:
+                    current_cat2 = None
                 current_cat3 = None
                 continue
 
             if is_cat_level3:
-                current_cat3 = _string(name_cell)
+                title = _string(name_cell)
+                if title and title.strip().lower() != "вверх":
+                    current_cat3 = title
+                else:
+                    current_cat3 = None
                 continue
 
             article = _string(article_cell)
@@ -869,19 +900,14 @@ def parse_hardware_catalog(stream: SourceType) -> list[dict]:
             else:
                 status_text = status_text.strip()
 
-            category_value = current_cat1
-            subcategory_value = current_cat2
-            group_value = current_cat3
-
             item = {
                 "city": "all",
                 "section": "hardware",
-                "category": category_value,
-                "subcategory": subcategory_value,
-                "group": group_value,
+                "category": current_cat1,
+                "subcategory": current_cat2,
+                "group": current_cat3,
                 "article": article,
                 "name": name,
-                "collection": _string(row[col_collection]),
                 "special": status_text,
                 "multiplicity": _string(row[col_multiplicity]),
                 "brand_country": _string(row[col_brand]),

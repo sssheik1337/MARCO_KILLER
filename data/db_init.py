@@ -22,6 +22,7 @@ async def init_db() -> None:
         section TEXT NOT NULL,
         category TEXT,
         subcategory TEXT,
+        "group" TEXT,
         name TEXT,
         country TEXT,
         fabric_type TEXT,
@@ -34,6 +35,13 @@ async def init_db() -> None:
         price_roll_90_95 REAL,
         price_piece_95_100 REAL,
         price_roll_95_100 REAL,
+        article TEXT,
+        multiplicity TEXT,
+        brand_country TEXT,
+        unit TEXT,
+        currency TEXT,
+        price_rrc REAL,
+        price_opt REAL,
         special TEXT,
         image_url TEXT
     );

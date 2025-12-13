@@ -589,39 +589,67 @@ async def import_xlsx(msg: Message):
                     target_section = "fabrics" if target_key == "fabrics_catalog" else section
                     target_city = city or ("all" if target_key == "fabrics_catalog" else "Санкт-Петербург")
 
-                    product_sql = (
-                        "INSERT INTO products("  # noqa: ISC003
-                        "city,section,category,subcategory,name,country,fabric_type,segment,"
-                        "wholesale_roll,wholesale_piece,"
-                        "price_roll_85_90,price_piece_85_90,price_roll_90_95,price_piece_90_95,price_roll_95_100,price_piece_95_100,"
-                        "special,image_url) "
-                        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
-                    )
-
-                    payload = []
-                    for item in items:
-                        payload.append(
+                    if target_section == "hardware":
+                        product_sql = (
+                            "INSERT INTO products("  # noqa: ISC003
+                            "city,section,category,subcategory,\"group\",name,article,"
+                            "special,multiplicity,brand_country,unit,currency,price_rrc,price_opt,image_url"
+                            ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+                        )
+                        payload = [
                             (
                                 item.get("city", target_city),
                                 item.get("section", target_section),
                                 item.get("category"),
                                 item.get("subcategory"),
+                                item.get("group"),
                                 item.get("name"),
-                                item.get("country"),
-                                item.get("fabric_type"),
-                                item.get("segment"),
-                                item.get("wholesale_roll"),
-                                item.get("wholesale_piece"),
-                                item.get("price_roll_85_90"),
-                                item.get("price_piece_85_90"),
-                                item.get("price_roll_90_95"),
-                                item.get("price_piece_90_95"),
-                                item.get("price_roll_95_100"),
-                                item.get("price_piece_95_100"),
+                                item.get("article"),
                                 item.get("special"),
+                                item.get("multiplicity"),
+                                item.get("brand_country"),
+                                item.get("unit"),
+                                item.get("currency"),
+                                item.get("price_rrc"),
+                                item.get("price_opt"),
                                 item.get("image_url"),
                             )
+                            for item in items
+                        ]
+                    else:
+                        product_sql = (
+                            "INSERT INTO products("  # noqa: ISC003
+                            "city,section,category,subcategory,name,country,fabric_type,segment,"
+                            "wholesale_roll,wholesale_piece,"
+                            "price_roll_85_90,price_piece_85_90,price_roll_90_95,price_piece_90_95,price_roll_95_100,price_piece_95_100,"
+                            "special,image_url) "
+                            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
                         )
+
+                        payload = []
+                        for item in items:
+                            payload.append(
+                                (
+                                    item.get("city", target_city),
+                                    item.get("section", target_section),
+                                    item.get("category"),
+                                    item.get("subcategory"),
+                                    item.get("name"),
+                                    item.get("country"),
+                                    item.get("fabric_type"),
+                                    item.get("segment"),
+                                    item.get("wholesale_roll"),
+                                    item.get("wholesale_piece"),
+                                    item.get("price_roll_85_90"),
+                                    item.get("price_piece_85_90"),
+                                    item.get("price_roll_90_95"),
+                                    item.get("price_piece_90_95"),
+                                    item.get("price_roll_95_100"),
+                                    item.get("price_piece_95_100"),
+                                    item.get("special"),
+                                    item.get("image_url"),
+                                )
+                            )
 
                     try:
                         if target_section == "fabrics":
@@ -630,8 +658,7 @@ async def import_xlsx(msg: Message):
                             )
                         else:
                             await db.execute(
-                                "DELETE FROM products WHERE section=? AND city=?",
-                                (target_section, target_city),
+                                "DELETE FROM products WHERE section='hardware'",
                             )
                         if payload:
                             await db.executemany(product_sql, payload)
