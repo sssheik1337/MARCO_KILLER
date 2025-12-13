@@ -810,9 +810,19 @@ def parse_hardware_catalog(stream: SourceType) -> list[dict]:
         current_cat3: str | None = None
         items: list[dict] = []
 
-        def _is_empty(value: object) -> bool:
+        def _is_up_marker(value: object) -> bool:
             text = _string(value)
-            return text is None or text == ""
+            return bool(text) and text.strip().lower() == "вверх"
+
+        def _is_empty(value: object) -> bool:
+            """Пустая ячейка или служебная надпись «вверх».
+
+            «ВВЕРХ» игнорируется на уровне ячейки, чтобы не ломать разметку
+            категорий, если ссылка соседствует с названием уровня.
+            """
+
+            text = _string(value)
+            return text is None or text == "" or _is_up_marker(text)
 
         def _only_column_has_text(row_values: list[object], idx: int) -> bool:
             return bool(_string(row_values[idx])) and all(
@@ -879,6 +889,8 @@ def parse_hardware_catalog(stream: SourceType) -> list[dict]:
             if is_cat_level3:
                 title = _string(row[2])
                 if title and title.strip().lower() != "вверх":
+                    if title != current_cat3:
+                        logger.info("[IMPORT]     category_3: %s", title)
                     current_cat3 = title
                 else:
                     current_cat3 = None
