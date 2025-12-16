@@ -5,6 +5,7 @@ import io
 import logging
 import re
 import sqlite3
+from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO, Union
@@ -70,13 +71,6 @@ TABLE_SCHEMAS = {
             "segment",
             "wholesale_roll",
             "wholesale_piece",
-            "РОЛИК_85_90",
-            "ОТРЕЗ_85_90",
-            "РОЛИК_90_95",
-            "ОТРЕЗ_90_95",
-            "РОЛИК_95_100",
-            "ОТРЕЗ_95_100",
-            "special_status",
         ],
         "template_path": "templates/fabrics_catalog_example.xlsx",
     },
@@ -243,6 +237,22 @@ def _string(value: object) -> str | None:
 
     text = str(value).strip()
     return text or None
+
+
+def _raw_text_value(value: object) -> str | None:
+    """Возвращает строковое значение без очистки, если оно заполнено."""
+
+    if value is None:
+        return None
+
+    try:
+        if pd.isna(value):
+            return None
+    except TypeError:
+        pass
+
+    text = str(value)
+    return text if text != "" else None
 
 
 def _number(value: object) -> float | None:
@@ -534,7 +544,7 @@ def _find_catalog_id(
 # ---------------------------------- парсинг каталогов ----------------------------------
 
 def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
-    """Парсит каталог тканей с фиксированным порядком колонок."""
+    """Парсит каталог тканей с динамическими диапазонами цен."""
 
     try:
         table_type = "fabrics_catalog"
@@ -560,8 +570,8 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
             )
 
         header_row = rows[header_index]
+        top_row = rows[header_index - 1] if header_index - 1 >= 0 else None
 
-        # Жёсткая структура колонок согласно ТЗ
         base_positions: dict[str, int] = {
             "name": 0,
             "country": 1,
@@ -571,51 +581,85 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
             "wholesale_piece": 5,
         }
 
-        price_positions: dict[str, int] = {
-            "price_roll_85_90": 6,
-            "price_piece_85_90": 7,
-            "price_roll_90_95": 8,
-            "price_piece_90_95": 9,
-            "price_roll_95_100": 10,
-            "price_piece_95_100": 11,
-        }
+        # Начинаем разбор диапазонов с колонки 6, как только над шапкой указано имя диапазона.
+        def _normalize_range_name(value: str) -> str:
+            cleaned = re.sub(r"[^0-9]+", "_", value)
+            cleaned = cleaned.strip("_")
+            return cleaned
 
-        status_idx = 12
+        def _is_role_cell(value: object, expected: set[str]) -> bool:
+            """Проверяет, соответствует ли ячейка тексту "ролик"/"отрез"."""
 
-        max_price_idx = max(price_positions.values())
-        if len(header_row) <= max_price_idx:
+            normalized = _normalize_header(value)
+            return normalized in expected
+
+        def _is_range_title(value: object) -> bool:
+            """Определяет, подходит ли верхняя ячейка под шаблон диапазона."""
+
+            text = _string(value)
+            if not text:
+                return False
+            return bool(re.search(r"\d+\s*[-–]\s*\d+", text))
+
+        range_columns: dict[str, dict[str, int]] = {}
+        col = 6
+        max_len = max(len(header_row), len(top_row or []))
+
+        while col < max_len:
+            range_title_cell = _row_value(top_row, col) if top_row else None
+            if range_title_cell is None or _string(range_title_cell) in (None, ""):
+                break
+
+            if not _is_range_title(range_title_cell):
+                raise ImportErrorFriendly(
+                    title="Некорректное название диапазона",
+                    details=(
+                        "Ячейка над колонкой не содержит диапазон ширины (пример: 85-90)."
+                    ),
+                    template=TABLE_SCHEMAS[table_type]["template_path"],
+                )
+
+            range_title = _string(range_title_cell) or ""
+            range_key = _normalize_range_name(range_title)
+            if not range_key:
+                raise ImportErrorFriendly(
+                    title="Некорректное название диапазона",
+                    details="Ячейка диапазона не содержит числового интервала (пример: 85-90).",
+                    template=TABLE_SCHEMAS[table_type]["template_path"],
+                )
+
+            roll_idx = col
+            piece_idx = col + 1
+
+            roll_ok = _is_role_cell(_row_value(header_row, roll_idx), {"ролик", "ролл", "roll"})
+            piece_ok = _is_role_cell(
+                _row_value(header_row, piece_idx), {"отрез", "отр", "piece"}
+            )
+
+            if not (roll_ok and piece_ok):
+                raise ImportErrorFriendly(
+                    title="Некорректная структура диапазона",
+                    details=(
+                        "Ожидаются подписи 'РОЛИК' и 'отрез' под диапазоном "
+                        f"{range_title}, но они не найдены."
+                    ),
+                    template=TABLE_SCHEMAS[table_type]["template_path"],
+                )
+
+            range_columns[range_key] = {"roll": roll_idx, "piece": piece_idx}
+            col += 2
+
+        if not range_columns:
             raise ImportErrorFriendly(
-                reason="missing_columns",
-                preview=list(price_positions.keys()),
+                title="Не найдены диапазоны цен",
+                details="После обязательных колонок отсутствуют диапазоны ширины ткани.",
                 template=TABLE_SCHEMAS[table_type]["template_path"],
             )
 
-        headers_for_check = [
-            "name",
-            "country",
-            "fabric_type",
-            "segment",
-            "wholesale_roll",
-            "wholesale_piece",
-            "РОЛИК_85_90",
-            "ОТРЕЗ_85_90",
-            "РОЛИК_90_95",
-            "ОТРЕЗ_90_95",
-            "РОЛИК_95_100",
-            "ОТРЕЗ_95_100",
-            "special_status",
-        ]
-        _validate_headers(table_type, headers_for_check)
-
-        if len(header_row) <= status_idx:
-            raise ImportErrorFriendly(
-                reason="missing_columns",
-                preview=["special_status"],
-                template=TABLE_SCHEMAS[table_type]["template_path"],
-            )
+        data_start = header_index + 1
 
         items: list[dict] = []
-        for row in rows[header_index + 1 :]:
+        for row in rows[data_start:]:
             name = _string(_row_value(row, base_positions["name"]))
             if not name:
                 logger.debug(
@@ -624,10 +668,27 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
                 )
                 continue
 
-            def _num_at(pos: int, title: str) -> float | None:
-                return _number_or_error(_row_value(row, pos), title)
-
-            raw_status = _string(_row_value(row, status_idx))
+            special = None
+            status_search_start = col - 1
+            last_index = len(row) - 1
+            for idx in range(last_index, status_search_start - 1, -1):
+                cell = _row_value(row, idx)
+                if cell is None:
+                    continue
+                if isinstance(cell, str):
+                    candidate = cell.strip()
+                    if not candidate:
+                        continue
+                    if candidate.startswith("="):
+                        continue
+                    if _number(candidate) is not None:
+                        continue
+                    if not any(ch.isalpha() for ch in candidate):
+                        continue
+                    special = candidate
+                    break
+                if isinstance(cell, (int, float)):
+                    continue
 
             item = {
                 "city": "all",
@@ -640,43 +701,28 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
                     _row_value(row, base_positions["fabric_type"])
                 ),
                 "segment": _string(_row_value(row, base_positions["segment"])),
-                "wholesale_roll": _num_at(
-                    base_positions["wholesale_roll"], "wholesale_roll"
+                "wholesale_roll": _raw_text_value(
+                    _row_value(row, base_positions["wholesale_roll"])
                 ),
-                "wholesale_piece": _num_at(
-                    base_positions["wholesale_piece"], "wholesale_piece"
+                "wholesale_piece": _raw_text_value(
+                    _row_value(row, base_positions["wholesale_piece"])
                 ),
-                "price_piece_85_90": _num_at(
-                    price_positions["price_piece_85_90"], "price_piece_85_90"
-                ),
-                "price_roll_85_90": _num_at(
-                    price_positions["price_roll_85_90"], "price_roll_85_90"
-                ),
-                "price_piece_90_95": _num_at(
-                    price_positions["price_piece_90_95"], "price_piece_90_95"
-                ),
-                "price_roll_90_95": _num_at(
-                    price_positions["price_roll_90_95"], "price_roll_90_95"
-                ),
-                "price_piece_95_100": _num_at(
-                    price_positions["price_piece_95_100"], "price_piece_95_100"
-                ),
-                "price_roll_95_100": _num_at(
-                    price_positions["price_roll_95_100"], "price_roll_95_100"
-                ),
-                "special": raw_status or None,
-                "status": None,
-                "in_stock": None,
-                "article": None,
-                "collection": None,
-                "brand_country": None,
-                "multiplicity": None,
-                "unit": None,
-                "currency": None,
-                "price_rrc": None,
-                "price_opt": None,
+                "special": special,
                 "image_url": None,
             }
+
+            for range_key, cols in range_columns.items():
+                roll_value = _row_value(row, cols["roll"])
+                piece_value = _row_value(row, cols["piece"])
+
+                field_name_roll = f"price_roll_{range_key}"
+                field_name_piece = f"price_piece_{range_key}"
+
+                item[field_name_roll] = _number_or_error(roll_value, field_name_roll)
+                item[field_name_piece] = _number_or_error(
+                    piece_value, field_name_piece
+                )
+
             items.append(item)
             logger.debug("Строка добавлена: %s", item)
 
@@ -692,7 +738,7 @@ def parse_fabrics_catalog(stream: SourceType) -> list[dict]:
 
 
 def parse_hardware_catalog(stream: SourceType) -> list[dict]:
-    """Парсит общий каталог фурнитуры."""
+    """Парсит каталог фурнитуры строго по заполненности столбцов."""
 
     try:
         table_type = "hardware_catalog"
@@ -700,77 +746,200 @@ def parse_hardware_catalog(stream: SourceType) -> list[dict]:
         if not rows:
             return []
 
-        logger.info(f"Импорт {table_type} для города -")
+        logger.info("Импорт %s для города all", table_type)
 
-        required_titles = [
-            "Артикул",
-            "Фото",
-            "Наименование",
-            "Коллекция",
-            "Статус",
-            "Кратность",
-            "Бренд (Страна)",
-            "Ед.",
-            "Валюта",
-            "РРЦ",
-            "Оптовая",
-        ]
+        working_rows = rows[10:] if len(rows) > 10 else rows
+        if not working_rows:
+            raise ImportErrorFriendly(
+                reason="missing_columns",
+                details="Не найдена строка заголовков каталога фурнитуры.",
+            )
 
-        header_index = None
-        columns: dict[str, str] = {}
-        header_row: list[object] | None = None
-        for idx, row in enumerate(rows):
-            temp_columns = {_normalize_header(val): val for val in row}
+        header_row_full: list[object] | None = None
+        header_cells: list[object] = []
+        normalized_headers: dict[str, int] = {}
+        for row in working_rows:
+            candidate_cells = row[1:]
+            normalized = {_normalize_header(val): idx for idx, val in enumerate(candidate_cells)}
+            required_titles = [
+                "Артикул",
+                "Наименование",
+                "Коллекция",
+                "Статус",
+                "Кратность",
+                "Бренд (Страна)",
+                "Ед.",
+                "Валюта",
+                "РРЦ",
+                "Оптовая",
+            ]
             try:
-                _ensure_columns(temp_columns, required_titles)
-                header_index = idx
-                columns = temp_columns
-                header_row = row
-                break
-            except Exception:
+                _ensure_columns(normalized, required_titles)
+            except ImportErrorFriendly:
                 continue
+            header_row_full = row
+            header_cells = candidate_cells
+            normalized_headers = normalized
+            break
 
-        if header_index is None or header_row is None:
-            temp_columns = {_normalize_header(val): val for val in rows[0]}
-            _ensure_columns(temp_columns, required_titles)
-            header_index = 0
-            header_row = rows[0]
-            columns = temp_columns
+        if not header_cells:
+            raise ImportErrorFriendly(
+                reason="missing_columns",
+                details="Не найдена строка заголовков каталога фурнитуры.",
+            )
 
-        headers = [(_string(val) or "").strip() for val in header_row]
+        headers = [(_string(val) or "").strip() for val in header_cells]
         _validate_headers(table_type, headers)
 
-        data_rows = rows[header_index + 1 :]
-        df = pd.DataFrame(data_rows, columns=header_row)
-        df = df.dropna(how="all")
+        header_index = working_rows.index(header_row_full)
+        data_rows = working_rows[header_index + 1 :]
+        trimmed_rows = [row[1 : len(header_cells) + 1] for row in data_rows]
 
+        col_article = normalized_headers[_normalize_header("Артикул")]
+        col_name = normalized_headers[_normalize_header("Наименование")]
+        col_status = normalized_headers[_normalize_header("Статус")]
+        col_multiplicity = normalized_headers[_normalize_header("Кратность")]
+        col_brand = normalized_headers[_normalize_header("Бренд (Страна)")]
+        col_unit = normalized_headers[_normalize_header("Ед.")]
+        col_currency = normalized_headers[_normalize_header("Валюта")]
+        col_rrc = normalized_headers[_normalize_header("РРЦ")]
+        col_opt = normalized_headers[_normalize_header("Оптовая")]
+
+        current_cat1: str | None = None
+        current_cat2: str | None = None
+        current_cat3: str | None = None
         items: list[dict] = []
-        for _, row in df.iterrows():
-            article = _string(row.get(columns["артикул"]))
-            name = _string(row.get(columns["наименование"]))
-            if not article and not name:
+
+        def _is_up_marker(value: object) -> bool:
+            text = _string(value)
+            return bool(text) and text.strip().lower() == "вверх"
+
+        def _is_empty(value: object) -> bool:
+            """Пустая ячейка или служебная надпись «вверх».
+
+            «ВВЕРХ» игнорируется на уровне ячейки, чтобы не ломать разметку
+            категорий, если ссылка соседствует с названием уровня.
+            """
+
+            text = _string(value)
+            return text is None or text == "" or _is_up_marker(text)
+
+        def _only_column_has_text(row_values: list[object], idx: int) -> bool:
+            return bool(_string(row_values[idx])) and all(
+                _is_empty(val) for pos, val in enumerate(row_values) if pos != idx
+            )
+
+        def _has_letters(value: object) -> bool:
+            return isinstance(value, str) and any(ch.isalpha() for ch in value)
+
+        category_totals: dict[str, dict[str | None, dict[str | None, int]]]
+        category_totals = defaultdict(lambda: defaultdict(lambda: defaultdict(int)))
+
+        for row in trimmed_rows:
+            if all(_is_empty(cell) for cell in row):
                 continue
 
-            currency = _string(row.get(columns["валюта"]))
-            if currency:
-                currency = currency.upper()
+            article_cell = row[col_article]
+            name_cell = row[col_name]
+            status_cell = row[col_status]
+            price_rrc_raw = row[col_rrc]
+            price_opt_raw = row[col_opt]
+
+            if (
+                str(article_cell).strip().lower() == "артикул"
+                and str(name_cell).strip().lower() == "наименование"
+            ):
+                continue
+
+            price_rrc = _number(price_rrc_raw)
+            price_opt = _number(price_opt_raw)
+            has_price = not (_is_empty(price_rrc_raw) and _is_empty(price_opt_raw))
+
+            is_cat_level1 = (
+                _only_column_has_text(row, 0)
+                and _string(row[0])
+                and all(_is_empty(cell) for cell in row[1:])
+            )
+            is_cat_level2 = _only_column_has_text(row, 1) and all(
+                _is_empty(cell) for cell in row[2:]
+            )
+            is_cat_level3 = _only_column_has_text(row, 2) and all(
+                _is_empty(cell) for cell in row[3:]
+            )
+
+            if is_cat_level1:
+                title = _string(row[0])
+                if title and title.strip().lower() != "вверх":
+                    current_cat1 = title
+                else:
+                    current_cat1 = None
+                current_cat2 = None
+                current_cat3 = None
+                continue
+
+            if is_cat_level2:
+                title = _string(row[1])
+                if title and title.strip().lower() != "вверх":
+                    current_cat2 = title
+                else:
+                    current_cat2 = None
+                current_cat3 = None
+                continue
+
+            if is_cat_level3:
+                title = _string(row[2])
+                if title and title.strip().lower() != "вверх":
+                    if title != current_cat3:
+                        logger.info("[IMPORT]     category_3: %s", title)
+                    current_cat3 = title
+                else:
+                    current_cat3 = None
+                continue
+
+            article = _string(article_cell)
+            name = _string(name_cell)
+
+            if not article or not name or not has_price or not current_cat1:
+                continue
+
+            status_text = _string(status_cell)
+            if not _has_letters(status_text):
+                status_text = None
+            else:
+                status_text = status_text.strip()
 
             item = {
+                "city": "all",
+                "section": "hardware",
+                "category": current_cat1,
+                "subcategory": current_cat2,
+                "group": current_cat3,
                 "article": article,
                 "name": name,
-                "collection": _string(row.get(columns["коллекция"])),
-                "status": _string(row.get(columns["статус"])),
-                "multiplicity": _string(row.get(columns["кратность"])),
-                "brand_country": _string(row.get(columns["бренд (страна)"])),
-                "unit": _string(row.get(columns["ед."])),
-                "currency": currency,
-                "price_rrc": _number_or_error(row.get(columns["ррц"]), "РРЦ"),
-                "price_opt": _number_or_error(row.get(columns["оптовая"]), "Оптовая"),
+                "special": status_text,
+                "multiplicity": _string(row[col_multiplicity]),
+                "brand_country": _string(row[col_brand]),
+                "unit": _string(row[col_unit]),
+                "currency": _string(row[col_currency]),
+                "price_rrc": price_rrc,
+                "price_opt": price_opt,
                 "image_url": None,
             }
-            items.append(item)
 
-        logger.info(f"Получено валидных записей: {len(items)}")
+            items.append(item)
+            category_totals[current_cat1][current_cat2][current_cat3] += 1
+
+        for cat1, sub_map in category_totals.items():
+            logger.info("[IMPORT] category_1: %s", cat1)
+            for cat2, grp_map in sub_map.items():
+                if cat2:
+                    logger.info("[IMPORT]   category_2: %s", cat2)
+                for cat3, count in grp_map.items():
+                    if cat3:
+                        logger.info("[IMPORT]     category_3: %s", cat3)
+                    logger.info("[IMPORT]       products: %s", count)
+
+        logger.info("Получено валидных записей каталога фурнитуры: %s", len(items))
 
         return items
     except ImportErrorFriendly:

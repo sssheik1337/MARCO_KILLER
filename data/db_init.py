@@ -14,33 +14,35 @@ async def init_db() -> None:
         os.makedirs(db_dir, exist_ok=True)
 
     create_sql = """
+    DROP TABLE IF EXISTS products;
+
     CREATE TABLE IF NOT EXISTS products (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         city TEXT NOT NULL,
         section TEXT NOT NULL,
         category TEXT,
         subcategory TEXT,
+        "group" TEXT,
         name TEXT,
-        article TEXT,
         country TEXT,
         fabric_type TEXT,
         segment TEXT,
-        collection TEXT,
-        brand_country TEXT,
-        multiplicity TEXT,
-        unit TEXT,
-        currency TEXT,
-        status TEXT,
+        wholesale_roll TEXT,
+        wholesale_piece TEXT,
         price_piece_85_90 REAL,
         price_roll_85_90 REAL,
         price_piece_90_95 REAL,
         price_roll_90_95 REAL,
         price_piece_95_100 REAL,
         price_roll_95_100 REAL,
+        article TEXT,
+        multiplicity TEXT,
+        brand_country TEXT,
+        unit TEXT,
+        currency TEXT,
         price_rrc REAL,
         price_opt REAL,
         special TEXT,
-        in_stock REAL,
         image_url TEXT
     );
 

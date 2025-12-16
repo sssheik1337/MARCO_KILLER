@@ -1,5 +1,6 @@
 """Обработчики пользовательского меню."""
 import logging
+import logging
 from collections import defaultdict
 from typing import Any
 
@@ -31,7 +32,6 @@ from data import db_utils
 from services.exchange import current_range, range_label
 from services.product_render import (
     as_float as _as_float,
-    build_product_caption,
     format_money as _format_money,
     format_money_with_currency as _format_money_with_currency,
 )
@@ -196,7 +196,7 @@ async def on_catalog(cb: CallbackQuery):
 async def on_catalog_fabrics(cb: CallbackQuery):
     """Открывает каталог тканей из общего прайс-листа."""
     city = _user_city(cb.from_user.id)
-    categories = await db_utils.fetch_categories("fabrics", city)
+    categories = [c for c in await db_utils.fetch_categories("fabrics", city) if c]
     if not categories:
         await send_md_safe(
             cb.message,
@@ -220,8 +220,22 @@ async def on_catalog_fabrics(cb: CallbackQuery):
 async def on_catalog_hardware(cb: CallbackQuery):
     """Открывает каталог фурнитуры из общего прайс-листа."""
 
-    await _show_catalog_status(
-        cb.message, cb.from_user.id, "hardware_catalog", "фурнитуры"
+    categories = [c for c in await db_utils.fetch_categories("hardware") if c]
+    if not categories:
+        await send_md_safe(
+            cb.message,
+            "Каталог пока пуст. Позиции появятся позже.",
+            reply_markup=await _main_menu(cb.from_user.id),
+        )
+        await cb.answer()
+        return
+
+    enumerated = [(name, str(idx)) for idx, name in enumerate(categories)]
+    page_items, page, total = slice_page(enumerated, 1, PAGE_SIZE)
+    await send_md_safe(
+        cb.message,
+        "Категории:",
+        reply_markup=pager(f"{CAT_CAT_PREFIX}:hardware", page_items, page, total),
     )
     await cb.answer()
 
@@ -242,6 +256,8 @@ async def on_stock(cb: CallbackQuery):
 # --- каталог: разделы → категории → товары ---
 CAT_SEC_PREFIX = "csec"
 CAT_CAT_PREFIX = "ccat"
+CAT_SUB_PREFIX = "csub"
+CAT_GRP_PREFIX = "cgrp"
 CAT_PROD_PREFIX = "cprodlist"
 
 STOCK_SEC_PREFIX = "ssec"
@@ -375,37 +391,70 @@ def _build_fabrics_caption(product: dict, rng: str, usd: float | None) -> str:
     lines.append(escape_user(f"Тип ткани: {product.get('fabric_type') or '—'}"))
     lines.append(escape_user(f"Сегмент: {product.get('segment') or '—'}"))
 
-    if product.get("wholesale_roll") is not None:
-        lines.append("")
-        lines.append(
-            escape_user(
-                f"💵 Оптовая от ролика: {_format_money_value(product.get('wholesale_roll'))}"
-            )
-        )
-    if product.get("wholesale_piece") is not None:
-        lines.append(
-            escape_user(
-                f"💵 Оптовая в отрез: {_format_money_value(product.get('wholesale_piece'))}"
-            )
-        )
+    def _text_or_dash(value: object) -> str:
+        return str(value) if value not in (None, "") else "—"
+
+    lines.append("")
+    lines.append("Оптовые цены:")
+    lines.append(
+        escape_user(f"• От ролика: {_text_or_dash(product.get('wholesale_roll'))}")
+    )
+    lines.append(
+        escape_user(f"• В отрез: {_text_or_dash(product.get('wholesale_piece'))}")
+    )
 
     price_piece_range = _format_money_value(product.get(f"price_piece_{rng}"))
+    price_roll_range = _format_money_value(product.get(f"price_roll_{rng}"))
     lines.append("")
-    lines.append("🟢 Розница по курсу:")
-    lines.append(escape_user(f"→ {price_piece_range}"))
+    lines.append("Розница по курсу:")
+    lines.append(escape_user(f"• Ролик: {price_roll_range}"))
+    lines.append(escape_user(f"• Отрез: {price_piece_range}"))
     range_hint = range_label(rng, usd)
     if range_hint:
         lines.append(escape_user(range_hint))
 
-    def _range_line(label: str, roll_key: str, piece_key: str) -> str:
-        roll_val = _format_money_value(product.get(roll_key))
-        piece_val = _format_money_value(product.get(piece_key))
-        return escape_user(f"{label}: ролик {roll_val}, отрез {piece_val}")
+    special = product.get("special")
+    if special:
+        lines.append("")
+        lines.append(escape_user(f"Статус: {special}"))
 
+    return "\n".join(lines)
+
+
+def _build_hardware_caption(product: dict) -> str:
+    """Формирует карточку фурнитуры по требованиям меню."""
+
+    lines: list[str] = []
+    lines.append(f"*{escape_user(product.get('name'))}*")
+
+    def _line(label: str, value: object) -> str:
+        text = value if value not in (None, "") else "—"
+        return escape_user(f"{label}: {text}")
+
+    lines.append(_line("Артикул", product.get("article")))
+    lines.append(_line("Категория", product.get("category")))
+    lines.append(_line("Подкатегория", product.get("subcategory")))
+    lines.append(_line("Группа", product.get("group")))
     lines.append("")
-    lines.append(_range_line("85–90", "price_roll_85_90", "price_piece_85_90"))
-    lines.append(_range_line("90–95", "price_roll_90_95", "price_piece_90_95"))
-    lines.append(_range_line("95–100", "price_roll_95_100", "price_piece_95_100"))
+    lines.append(_line("Бренд", product.get("brand_country")))
+    lines.append(_line("Ед.", product.get("unit")))
+    lines.append(_line("Кратность", product.get("multiplicity")))
+
+    currency = product.get("currency") or ""
+    rrc_value = product.get("price_rrc")
+    opt_value = product.get("price_opt")
+    lines.append("")
+    lines.append("Цена:")
+    lines.append(
+        escape_user(
+            f"• РРЦ: {_format_money_with_currency(_as_float(rrc_value), currency)}"
+        )
+    )
+    lines.append(
+        escape_user(
+            f"• Опт: {_format_money_with_currency(_as_float(opt_value), currency)}"
+        )
+    )
 
     special = product.get("special")
     if special:
@@ -462,7 +511,7 @@ async def catalog_sections_page(cb: CallbackQuery):
 async def open_catalog_section(cb: CallbackQuery):
     section = cb.data.split(":")[-1]
     city = _user_city(cb.from_user.id)
-    cats = await db_utils.fetch_categories(section, city)
+    cats = [c for c in await db_utils.fetch_categories(section, city) if c]
     if not cats:
         await send_md_safe(cb.message, "В этом разделе пока нет позиций.")
         await cb.answer()
@@ -483,11 +532,82 @@ async def open_category_page(cb: CallbackQuery):
     section = parts[1]
     page = int(parts[-1])
     city = _user_city(cb.from_user.id)
-    cats = await db_utils.fetch_categories(section, city)
+    cats = [c for c in await db_utils.fetch_categories(section, city) if c]
     enumerated = [(name, str(idx)) for idx, name in enumerate(cats)]
     page_items, page, total = slice_page(enumerated, page, PAGE_SIZE)
     await cb.message.edit_reply_markup(
         reply_markup=pager(f"{CAT_CAT_PREFIX}:{section}", page_items, page, total)
+    )
+    await cb.answer()
+
+
+@router.callback_query(F.data.regexp(rf"^{CAT_SUB_PREFIX}:[^:]+:[^:]+:page:"))
+async def open_subcategory_page(cb: CallbackQuery):
+    parts = cb.data.split(":")
+    section = parts[1]
+    try:
+        category_idx = int(parts[2])
+    except ValueError:
+        await cb.answer("Категория недоступна", show_alert=True)
+        return
+    page = int(parts[-1])
+
+    categories = [c for c in await db_utils.fetch_categories(section) if c]
+    if category_idx < 0 or category_idx >= len(categories):
+        await cb.answer("Категория недоступна", show_alert=True)
+        return
+
+    category = categories[category_idx]
+    subs = [s for s in await db_utils.fetch_subcategories(category) if s]
+    enumerated = [(name, str(idx)) for idx, name in enumerate(subs)]
+    page_items, page, total = slice_page(enumerated, page, PAGE_SIZE)
+    await cb.message.edit_reply_markup(
+        reply_markup=pager(
+            f"{CAT_SUB_PREFIX}:{section}:{category_idx}", page_items, page, total
+        )
+    )
+    await cb.answer()
+
+
+@router.callback_query(F.data.regexp(rf"^{CAT_GRP_PREFIX}:[^:]+:[^:]+:[^:]+:page:"))
+async def open_group_page(cb: CallbackQuery):
+    parts = cb.data.split(":")
+    section = parts[1]
+    try:
+        category_idx = int(parts[2])
+        sub_idx_raw = parts[3]
+        subcategory_idx = int(sub_idx_raw) if sub_idx_raw else None
+    except ValueError:
+        await cb.answer("Раздел недоступен", show_alert=True)
+        return
+    page = int(parts[-1])
+
+    categories = [c for c in await db_utils.fetch_categories(section) if c]
+    if category_idx < 0 or category_idx >= len(categories):
+        await cb.answer("Раздел недоступен", show_alert=True)
+        return
+
+    category = categories[category_idx]
+    subcategory = None
+    if subcategory_idx is not None:
+        subs = [s for s in await db_utils.fetch_subcategories(category) if s]
+        if subcategory_idx < 0 or subcategory_idx >= len(subs):
+            await cb.answer("Раздел недоступен", show_alert=True)
+            return
+        subcategory = subs[subcategory_idx]
+
+    groups = [
+        g for g in await db_utils.fetch_groups(category, subcategory if subcategory else None) if g
+    ]
+    enumerated = [(name, str(idx)) for idx, name in enumerate(groups)]
+    page_items, page, total = slice_page(enumerated, page, PAGE_SIZE)
+    await cb.message.edit_reply_markup(
+        reply_markup=pager(
+            f"{CAT_GRP_PREFIX}:{section}:{category_idx}:{subcategory_idx if subcategory_idx is not None else ''}",
+            page_items,
+            page,
+            total,
+        )
     )
     await cb.answer()
 
@@ -515,36 +635,267 @@ async def open_category(cb: CallbackQuery):
 
     category = cats[category_idx]
 
-    prods = await db_utils.fetch_items_by_category(section, category, city)
-    items = [(name, str(pid)) for pid, name in prods]
-    page_items, page, total = slice_page(items, 1, PAGE_SIZE)
-    reply_markup = _catalog_products_keyboard(
-        f"{CAT_PROD_PREFIX}:{section}:{category}",
-        page_items,
-        page,
-        total,
-        back_cb=f"{CAT_CAT_PREFIX}:{section}:page:1",
-    )
-    await send_md_safe(cb.message, category, reply_markup=reply_markup)
+    if section == "hardware":
+        subs = [s for s in await db_utils.fetch_subcategories(category) if s]
+        if subs:
+            enumerated = [(name, str(idx)) for idx, name in enumerate(subs)]
+            page_items, page, total = slice_page(enumerated, 1, PAGE_SIZE)
+            await send_md_safe(
+                cb.message,
+                category,
+                reply_markup=pager(
+                    f"{CAT_SUB_PREFIX}:{section}:{category_idx}",
+                    page_items,
+                    page,
+                    total,
+                ),
+            )
+        else:
+            groups = [g for g in await db_utils.fetch_groups(category, None) if g]
+            if groups:
+                enumerated = [(name, str(idx)) for idx, name in enumerate(groups)]
+                page_items, page, total = slice_page(enumerated, 1, PAGE_SIZE)
+                await send_md_safe(
+                    cb.message,
+                    category,
+                    reply_markup=pager(
+                        f"{CAT_GRP_PREFIX}:{section}:{category_idx}:-",
+                        page_items,
+                        page,
+                        total,
+                    ),
+                )
+            else:
+                prods = [
+                    p
+                    for p in await db_utils.fetch_products_by_category(
+                        category, section=section
+                    )
+                    if p.get("name")
+                ]
+                items = [(p["name"], str(idx)) for idx, p in enumerate(prods)]
+                page_items, page, total = slice_page(items, 1, PAGE_SIZE)
+                reply_markup = _catalog_products_keyboard(
+                    f"{CAT_PROD_PREFIX}:{section}:{category_idx}:-:-",
+                    page_items,
+                    page,
+                    total,
+                    back_cb=f"{CAT_CAT_PREFIX}:{section}:page:1",
+                )
+                await send_md_safe(cb.message, category, reply_markup=reply_markup)
+    else:
+        prods = [
+            p for p in await db_utils.fetch_products_by_category(category) if p.get("name")
+        ]
+        items = [(p["name"], str(idx)) for idx, p in enumerate(prods)]
+        page_items, page, total = slice_page(items, 1, PAGE_SIZE)
+        reply_markup = _catalog_products_keyboard(
+            f"{CAT_PROD_PREFIX}:{section}:{category}",
+            page_items,
+            page,
+            total,
+            back_cb=f"{CAT_CAT_PREFIX}:{section}:page:1",
+        )
+        await send_md_safe(cb.message, category, reply_markup=reply_markup)
     await cb.answer()
 
 
-@router.callback_query(F.data.regexp(rf"^{CAT_PROD_PREFIX}:[^:]+:[^:]+:page:"))
-async def product_list_page(cb: CallbackQuery):
+@router.callback_query(F.data.regexp(rf"^{CAT_SUB_PREFIX}:[^:]+:[^:]+:open:"))
+async def open_subcategory(cb: CallbackQuery):
     parts = cb.data.split(":")
     section = parts[1]
-    category = parts[2]
-    page = int(parts[-1])
-    city = _user_city(cb.from_user.id)
-    prods = await db_utils.fetch_items_by_category(section, category, city)
-    items = [(name, str(pid)) for pid, name in prods]
-    page_items, page, total = slice_page(items, page, PAGE_SIZE)
+    category_idx = int(parts[2])
+    sub_idx_raw = parts[-1]
+    try:
+        sub_idx = int(sub_idx_raw)
+    except ValueError:
+        await cb.answer("Раздел недоступен", show_alert=True)
+        return
+
+    categories = [c for c in await db_utils.fetch_categories(section) if c]
+    if category_idx < 0 or category_idx >= len(categories):
+        await cb.answer("Раздел недоступен", show_alert=True)
+        return
+
+    category = categories[category_idx]
+    subs = [s for s in await db_utils.fetch_subcategories(category) if s]
+    if sub_idx < 0 or sub_idx >= len(subs):
+        await cb.answer("Раздел недоступен", show_alert=True)
+        return
+
+    subcategory = subs[sub_idx]
+    groups = [g for g in await db_utils.fetch_groups(category, subcategory) if g]
+    if groups:
+        enumerated = [(name, str(idx)) for idx, name in enumerate(groups)]
+        page_items, page, total = slice_page(enumerated, 1, PAGE_SIZE)
+        await send_md_safe(
+            cb.message,
+            subcategory,
+            reply_markup=pager(
+                f"{CAT_GRP_PREFIX}:{section}:{category_idx}:{sub_idx}",
+                page_items,
+                page,
+                total,
+            ),
+        )
+    else:
+        prods = [
+            p
+            for p in await db_utils.fetch_products_by_category(
+                category, section=section, subcategory=subcategory
+            )
+            if p.get("name")
+        ]
+        items = [(p["name"], str(idx)) for idx, p in enumerate(prods)]
+        page_items, page, total = slice_page(items, 1, PAGE_SIZE)
+        reply_markup = _catalog_products_keyboard(
+            f"{CAT_PROD_PREFIX}:{section}:{category_idx}:{sub_idx}:-",
+            page_items,
+            page,
+            total,
+            back_cb=f"{CAT_SUB_PREFIX}:{section}:{category_idx}:page:1",
+        )
+        await send_md_safe(cb.message, subcategory, reply_markup=reply_markup)
+
+    await cb.answer()
+
+
+@router.callback_query(F.data.regexp(rf"^{CAT_GRP_PREFIX}:[^:]+:[^:]+:[^:]+:open:"))
+async def open_group(cb: CallbackQuery):
+    parts = cb.data.split(":")
+    section = parts[1]
+    category_idx_raw = parts[2]
+    subcategory_idx_raw = parts[3]
+    grp_idx_raw = parts[-1]
+    try:
+        category_idx = int(category_idx_raw)
+        subcategory_idx = (
+            None if subcategory_idx_raw in {"", "-"} else int(subcategory_idx_raw)
+        )
+        grp_idx = int(grp_idx_raw)
+    except ValueError:
+        await cb.answer("Раздел недоступен", show_alert=True)
+        return
+
+    categories = [c for c in await db_utils.fetch_categories(section) if c]
+    if category_idx < 0 or category_idx >= len(categories):
+        await cb.answer("Раздел недоступен", show_alert=True)
+        return
+
+    category = categories[category_idx]
+    subcategory = None
+    if subcategory_idx is not None:
+        subs = [s for s in await db_utils.fetch_subcategories(category) if s]
+        if subcategory_idx < 0 or subcategory_idx >= len(subs):
+            await cb.answer("Раздел недоступен", show_alert=True)
+            return
+        subcategory = subs[subcategory_idx]
+
+    groups = [g for g in await db_utils.fetch_groups(category, subcategory) if g]
+    if grp_idx < 0 or grp_idx >= len(groups):
+        await cb.answer("Раздел недоступен", show_alert=True)
+        return
+
+    group = groups[grp_idx]
+    prods = [
+        p
+        for p in await db_utils.fetch_products_by_category(
+            category, section=section, subcategory=subcategory, group=group
+        )
+        if p.get("name")
+    ]
+    items = [(p["name"], str(idx)) for idx, p in enumerate(prods)]
+    page_items, page, total = slice_page(items, 1, PAGE_SIZE)
     reply_markup = _catalog_products_keyboard(
-        f"{CAT_PROD_PREFIX}:{section}:{category}",
+        f"{CAT_PROD_PREFIX}:{section}:{category_idx}:{subcategory_idx or ''}:{grp_idx}",
         page_items,
         page,
         total,
-        back_cb=f"{CAT_CAT_PREFIX}:{section}:page:1",
+        back_cb=f"{CAT_GRP_PREFIX}:{section}:{category_idx}:{subcategory_idx_raw}:page:1",
+    )
+    await send_md_safe(cb.message, group, reply_markup=reply_markup)
+    await cb.answer()
+
+
+@router.callback_query(F.data.regexp(rf"^{CAT_PROD_PREFIX}:.+:page:"))
+async def product_list_page(cb: CallbackQuery):
+    parts = cb.data.split(":")
+    section = parts[1]
+    category = parts[2] if section != "hardware" else None
+    page = int(parts[-1])
+    city = _user_city(cb.from_user.id)
+    if section == "hardware":
+        try:
+            category_idx = int(parts[2])
+            sub_token = parts[3] if len(parts) > 3 else "-"
+            group_token = parts[4] if len(parts) > 4 else "-"
+            subcategory_idx = None if sub_token in {"", "-"} else int(sub_token)
+            group_idx = None if group_token in {"", "-"} else int(group_token)
+        except ValueError:
+            await cb.answer("Товар недоступен", show_alert=True)
+            return
+
+        categories = [c for c in await db_utils.fetch_categories(section, city) if c]
+        if category_idx < 0 or category_idx >= len(categories):
+            await cb.answer("Товар недоступен", show_alert=True)
+            return
+        category = categories[category_idx]
+
+        subcategory = None
+        if subcategory_idx is not None:
+            subs = [s for s in await db_utils.fetch_subcategories(category) if s]
+            if subcategory_idx < 0 or subcategory_idx >= len(subs):
+                await cb.answer("Товар недоступен", show_alert=True)
+                return
+            subcategory = subs[subcategory_idx]
+
+        group = None
+        if group_idx is not None:
+            groups = [
+                g
+                for g in await db_utils.fetch_groups(category, subcategory if subcategory else None)
+                if g
+            ]
+            if group_idx < 0 or group_idx >= len(groups):
+                await cb.answer("Товар недоступен", show_alert=True)
+                return
+            group = groups[group_idx]
+
+        prods = [
+            p
+            for p in await db_utils.fetch_products_by_category(
+                category, section=section, subcategory=subcategory, group=group
+            )
+            if p.get("name")
+        ]
+        if group_idx is not None:
+            back_cb = f"{CAT_GRP_PREFIX}:{section}:{category_idx}:{subcategory_idx if subcategory_idx is not None else '-'}:page:1"
+        elif subcategory_idx is not None:
+            back_cb = f"{CAT_SUB_PREFIX}:{section}:{category_idx}:page:1"
+        else:
+            back_cb = f"{CAT_CAT_PREFIX}:{section}:page:1"
+        list_prefix = (
+            f"{CAT_PROD_PREFIX}:{section}:{category_idx}:"
+            f"{subcategory_idx if subcategory_idx is not None else '-'}:"
+            f"{group_idx if group_idx is not None else '-'}"
+        )
+    else:
+        prods = [
+            p
+            for p in await db_utils.fetch_products_by_category(category)
+            if p.get("name")
+        ]
+        back_cb = f"{CAT_CAT_PREFIX}:{section}:page:1"
+        list_prefix = f"{CAT_PROD_PREFIX}:{section}:{category}"
+
+    items = [(p["name"], str(idx)) for idx, p in enumerate(prods)]
+    page_items, page, total = slice_page(items, page, PAGE_SIZE)
+    reply_markup = _catalog_products_keyboard(
+        list_prefix,
+        page_items,
+        page,
+        total,
+        back_cb=back_cb,
     )
     await cb.message.edit_reply_markup(reply_markup=reply_markup)
     await cb.answer()
@@ -555,50 +906,115 @@ async def product_card(cb: CallbackQuery):
     """Показывает карточку товара и запоминает, как вернуться назад."""
 
     parts = cb.data.split(":")
-    pid = int(parts[-1])
+    try:
+        product_idx = int(parts[-1])
+    except ValueError:
+        await cb.answer("Товар недоступен", show_alert=True)
+        return
     section = parts[1] if len(parts) > 1 else ""
-    category = ":".join(parts[2:-2]) if len(parts) > 3 else ""
+    try:
+        category_idx = int(parts[2]) if section == "hardware" and len(parts) > 2 else None
+        sub_token = parts[3] if section == "hardware" and len(parts) > 3 else "-"
+        group_token = parts[4] if section == "hardware" and len(parts) > 4 else "-"
+        subcategory_idx = None if sub_token in {"", "-"} else int(sub_token)
+        group_idx = None if group_token in {"", "-"} else int(group_token)
+    except ValueError:
+        await cb.answer("Товар недоступен", show_alert=True)
+        return
+    category = parts[2] if section != "hardware" and len(parts) > 2 else ""
 
     city = _user_city(cb.from_user.id)
-    p = await db_utils.fetch_product(pid)
+    if section == "hardware":
+        categories = [c for c in await db_utils.fetch_categories(section, city) if c]
+        if category_idx < 0 or category_idx >= len(categories):
+            await cb.answer("Товар недоступен", show_alert=True)
+            return
+        category = categories[category_idx]
+
+        subcategory = None
+        if subcategory_idx is not None:
+            subs = [s for s in await db_utils.fetch_subcategories(category) if s]
+            if subcategory_idx < 0 or subcategory_idx >= len(subs):
+                await cb.answer("Товар недоступен", show_alert=True)
+                return
+            subcategory = subs[subcategory_idx]
+
+        group = None
+        if group_idx is not None:
+            groups = [
+                g
+                for g in await db_utils.fetch_groups(category, subcategory if subcategory else None)
+                if g
+            ]
+            if group_idx < 0 or group_idx >= len(groups):
+                await cb.answer("Товар недоступен", show_alert=True)
+                return
+            group = groups[group_idx]
+
+        products = [
+            p
+            for p in await db_utils.fetch_products_by_category(
+                category, section=section, subcategory=subcategory, group=group
+            )
+            if p.get("name")
+        ]
+    else:
+        products = [
+            p
+            for p in await db_utils.fetch_products_by_category(category)
+            if p.get("name")
+        ]
+    if product_idx < 0 or product_idx >= len(products):
+        await cb.answer("Товар недоступен", show_alert=True)
+        return
+
+    product_info = products[product_idx]
+    p = await db_utils.fetch_product(product_info.get("name", ""), section=section)
 
     rng, usd = await current_range()
     if logger.isEnabledFor(logging.DEBUG):
-        logger.debug("Карточка товара %s, диапазон %s, данные: %s", pid, rng, p)
+        logger.debug(
+            "Карточка товара %s, диапазон %s, данные: %s",
+            product_info.get("name"),
+            rng,
+            p,
+        )
 
     if section == "fabrics":
         caption = _build_fabrics_caption(p, rng, usd)
     else:
-        caption = build_product_caption(p, rng, usd)
+        caption = _build_hardware_caption(p)
 
-    products = await db_utils.fetch_items_by_category(section, category, city)
-    product_ids = [prod_id for prod_id, _ in products]
-    try:
-        index = product_ids.index(pid)
-    except ValueError:
-        index = 0
-    page = index // PAGE_SIZE + 1 if product_ids else 1
+    page = product_idx // PAGE_SIZE + 1 if products else 1
 
-    list_prefix = f"{CAT_PROD_PREFIX}:{section}:{category}"
+    list_prefix = (
+        f"{CAT_PROD_PREFIX}:{section}:{category_idx}:"
+        f"{subcategory_idx if subcategory_idx is not None else '-'}:"
+        f"{group_idx if group_idx is not None else '-'}"
+        if section == "hardware"
+        else f"{CAT_PROD_PREFIX}:{section}:{category}"
+    )
 
     if p.get("image_url"):
         msg = await cb.message.answer_photo(
             p["image_url"], caption=caption,
-            reply_markup=product_controls(pid)
+            reply_markup=product_controls(product_idx)
         )
     else:
         msg = await send_md_safe(
             cb.message,
             caption,
-            reply_markup=product_controls(pid),
+            reply_markup=product_controls(product_idx),
         )
 
     _PRODUCT_CONTEXT[cb.from_user.id][msg.message_id] = {
         "section": section,
         "category": category,
+        "subcategory": subcategory,
+        "group": group,
         "prefix": list_prefix,
         "page": page,
-        "product_id": pid,
+        "product_id": product_idx,
         "city": city,
     }
 
@@ -796,11 +1212,26 @@ async def prod_back(cb: CallbackQuery):
     if context:
         if context_source == "catalog":
             city = context.get("city") or _user_city(user_id)
-            products = await db_utils.fetch_items_by_category(
-                context["section"],
-                context["category"],
-                city,
-            )
+            section = context.get("section", "fabrics")
+            if section == "hardware":
+                products = [
+                    p
+                    for p in await db_utils.fetch_products_by_category(
+                        context.get("category"),
+                        section=section,
+                        subcategory=context.get("subcategory"),
+                        group=context.get("group"),
+                    )
+                    if p.get("name")
+                ]
+            else:
+                products = [
+                    p
+                    for p in await db_utils.fetch_products_by_category(
+                        context.get("category", "")
+                    )
+                    if p.get("name")
+                ]
         else:
             city = context.get("city") or _user_city(user_id)
             products = await db_utils.fetch_stock_products_by_category(
@@ -809,7 +1240,7 @@ async def prod_back(cb: CallbackQuery):
                 city,
             )
 
-        items = [(name, str(pid)) for pid, name in products]
+        items = [(p["name"], str(idx)) for idx, p in enumerate(products)]
         page_items, page, total = slice_page(
             items, context.get("page", 1), PAGE_SIZE
         )
