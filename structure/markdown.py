@@ -333,4 +333,5 @@ async def _send_with_fallback(
     except TelegramBadRequest:
         pass
 
-    return await sender(strip_markdown(text), None)
+    plain_safe = MarkdownV2Escaper.escape_plain(strip_markdown(text))
+    return await sender(plain_safe, ParseMode.MARKDOWN_V2)
