@@ -49,7 +49,7 @@ def _line(label: str, value: object, *, raw: bool = False) -> str:
     text = value if value not in (None, "") else "-"
     label_text = escape_user(label)
     if raw:
-        return f"{label_text}: {text}"
+        return f"{label_text}: {escape_user(str(text))}"
     return escape_user(f"{label}: {text}")
 
 
