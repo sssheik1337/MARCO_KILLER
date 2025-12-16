@@ -43,8 +43,13 @@ def format_money_with_currency(value: float | None, currency: str | None) -> str
     return f"{value:.2f} {code}"
 
 
-def _line(label: str, value: object) -> str:
+def _line(label: str, value: object, *, raw: bool = False) -> str:
+    """Формирует строку с экранированием или готовым фрагментом."""
+
     text = value if value not in (None, "") else "-"
+    label_text = escape_user(label)
+    if raw:
+        return f"{label_text}: {text}"
     return escape_user(f"{label}: {text}")
 
 
@@ -53,6 +58,17 @@ def _city_label(city: str | None) -> str:
         return ""
     key = city.strip().lower()
     return _CITY_LABELS.get(key, city)
+
+
+def _inline_code(value: object | None) -> str:
+    """Возвращает значение в моноширинном формате MarkdownV2."""
+
+    if value in (None, ""):
+        return "`-`"
+
+    normalized = str(value)
+    escaped = normalized.replace("\\", "\\\\").replace("`", "\\`")
+    return f"`{escaped}`"
 
 
 def build_product_caption(
@@ -80,7 +96,7 @@ def build_product_caption(
         opt = format_money_with_currency(as_float(product.get("price_opt")), currency)
         price_line = f"РРЦ: {rrc} · Опт: {opt}"
         course_line = lbl
-        article_value = product.get("article")
+        article_value = _inline_code(product.get("article"))
 
     lines: list[str] = []
     if prefix:
@@ -92,7 +108,13 @@ def build_product_caption(
         if city_label:
             lines.append(escape_user(f"Город: {city_label}"))
 
-    lines.append(_line("Артикул", article_value or "-"))
+    lines.append(
+        _line(
+            "Артикул",
+            article_value or "-",
+            raw=bool(product.get("section") == "hardware"),
+        )
+    )
 
     if product.get("section") == "fabrics":
         lines.extend(
@@ -127,3 +149,4 @@ def build_product_caption(
         lines.append(_line("Статус", special_flag))
 
     return "\n".join(lines)
+
