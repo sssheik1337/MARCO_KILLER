@@ -808,6 +808,8 @@ def parse_hardware_catalog(stream: SourceType) -> list[dict]:
         current_cat1: str | None = None
         current_cat2: str | None = None
         current_cat3: str | None = None
+        pending_cat2_list: list[str] = []
+        goods_started = False
         items: list[dict] = []
 
         def _is_up_marker(value: object) -> bool:
@@ -871,16 +873,22 @@ def parse_hardware_catalog(stream: SourceType) -> list[dict]:
                 title = _string(row[0])
                 if title and title.strip().lower() != "вверх":
                     current_cat1 = title
+                    logger.info("[IMPORT] category_1: %s", current_cat1)
                 else:
                     current_cat1 = None
                 current_cat2 = None
                 current_cat3 = None
+                pending_cat2_list = []
+                goods_started = False
                 continue
 
             if is_cat_level2:
                 title = _string(row[1])
                 if title and title.strip().lower() != "вверх":
                     current_cat2 = title
+                    logger.info("[IMPORT]   category_2: %s", current_cat2)
+                    if not goods_started and current_cat2 not in pending_cat2_list:
+                        pending_cat2_list.append(current_cat2)
                 else:
                     current_cat2 = None
                 current_cat3 = None
@@ -889,6 +897,10 @@ def parse_hardware_catalog(stream: SourceType) -> list[dict]:
             if is_cat_level3:
                 title = _string(row[2])
                 if title and title.strip().lower() != "вверх":
+                    if current_cat2 is None and pending_cat2_list:
+                        current_cat2 = pending_cat2_list[0]
+                        logger.info("[IMPORT]   category_2: %s", current_cat2)
+                        logger.info("[IMPORT FIX] implicit cat2 from contents")
                     if title != current_cat3:
                         logger.info("[IMPORT]     category_3: %s", title)
                     current_cat3 = title
@@ -927,6 +939,7 @@ def parse_hardware_catalog(stream: SourceType) -> list[dict]:
             }
 
             items.append(item)
+            goods_started = True
             category_totals[current_cat1][current_cat2][current_cat3] += 1
 
         for cat1, sub_map in category_totals.items():
