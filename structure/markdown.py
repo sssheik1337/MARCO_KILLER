@@ -317,7 +317,7 @@ async def _send_with_fallback(
     """Выполняет отправку с несколькими попытками для сохранения Markdown."""
 
     try:
-        return await sender(text, None)
+        return await sender(text, ParseMode.MARKDOWN_V2)
     except TelegramBadRequest:
         pass
 
