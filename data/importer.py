@@ -897,10 +897,12 @@ def parse_hardware_catalog(stream: SourceType) -> list[dict]:
             if is_cat_level3:
                 title = _string(row[2])
                 if title and title.strip().lower() != "вверх":
-                    if current_cat2 is None and pending_cat2_list:
+                    if current_cat2 is None and not goods_started and pending_cat2_list:
                         current_cat2 = pending_cat2_list[0]
                         logger.info("[IMPORT]   category_2: %s", current_cat2)
-                        logger.info("[IMPORT FIX] implicit cat2 from contents")
+                        logger.info(
+                            "[IMPORT][FIX] implicit category_2 applied: %s", current_cat2
+                        )
                     if title != current_cat3:
                         logger.info("[IMPORT]     category_3: %s", title)
                     current_cat3 = title
