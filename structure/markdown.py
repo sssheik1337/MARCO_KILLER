@@ -199,6 +199,12 @@ def escape_user(text: str | None) -> str:
     return MarkdownV2Escaper.escape_preserving(normalized)
 
 
+def escape_md(text: str | None) -> str:
+    """Единый метод экранирования строк под MarkdownV2."""
+
+    return escape_user(text)
+
+
 def escape_full(text: str) -> str:
     """Полностью экранирует текст на случай некорректной разметки."""
 
@@ -254,6 +260,11 @@ async def send_md_safe(
     destination = target if isinstance(target, Message) else target.message
     can_edit = bool(destination and destination.from_user and destination.from_user.is_bot)
 
+    if can_edit:
+        current_text = destination.text or destination.caption or ""
+        if current_text == text and destination.reply_markup == reply_markup:
+            return destination
+
     async def _sender(payload: str, parse_mode: ParseMode | None):
         kwargs: dict[str, object] = {"reply_markup": reply_markup}
         if parse_mode is not None:
@@ -280,6 +291,10 @@ async def edit_md_safe(
     """
 
     destination = target if isinstance(target, Message) else target.message
+
+    current_text = destination.text or destination.caption or ""
+    if current_text == text and destination.reply_markup == reply_markup:
+        return destination
 
     async def _sender(payload: str, parse_mode: ParseMode | None):
         kwargs: dict[str, object] = {"reply_markup": reply_markup}
@@ -322,7 +337,7 @@ async def _send_with_fallback(
         pass
 
     preserved = MarkdownV2Escaper.escape_preserving(text)
-    if preserved:
+    if preserved and preserved != text:
         try:
             return await sender(preserved, ParseMode.MARKDOWN_V2)
         except TelegramBadRequest:

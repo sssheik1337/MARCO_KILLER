@@ -19,7 +19,7 @@ from structure.keyboards import (
     kb_stock_kinds,
     kb_stock_sections,
 )
-from structure.markdown import MarkdownV2Escaper, edit_md_safe, send_md_safe
+from structure.markdown import MarkdownV2Escaper, edit_md_safe, escape_md, send_md_safe
 
 router = Router()
 
@@ -31,13 +31,6 @@ ITEM_PAGE_SIZE = 5
 HARDWARE_ITEM_PAGE_SIZE = 5
 
 _STOCK_SELECTIONS: dict[int, dict] = defaultdict(dict)
-
-
-def escape_md(text: str | None) -> str:
-    """Экранирует текст для MarkdownV2."""
-
-    return MarkdownV2Escaper.escape_plain(text or "")
-
 
 def _plain_title(section: str, city: str) -> str:
     """Возвращает заголовок раздела без Markdown-экранирования."""

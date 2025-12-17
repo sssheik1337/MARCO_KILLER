@@ -1,4 +1,22 @@
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton as _InlineKeyboardButton
+
+
+def _validate_button(text: str | None, callback_data: str | None) -> None:
+    """Проверяет корректность данных кнопки для Telegram."""
+
+    if text is None or not str(text).strip():
+        raise ValueError("пустой текст кнопки")
+    if callback_data is not None and len(callback_data.encode()) > 64:
+        raise ValueError("callback_data overflow")
+
+
+def InlineKeyboardButton(
+    *, text: str, callback_data: str | None = None, url: str | None = None
+) -> _InlineKeyboardButton:
+    """Создаёт кнопку с проверкой длины callback_data."""
+
+    _validate_button(text, callback_data)
+    return _InlineKeyboardButton(text=text, callback_data=callback_data, url=url)
 from data import db_utils
 
 
