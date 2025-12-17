@@ -8,7 +8,7 @@ from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramNetworkError
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand
-from config import BOT_TOKEN, LOG_LEVEL, TELEGRAM_SOCKS5_PROXY
+from config import BOT_TOKEN, LOG_LEVEL, TG_PROXY_URL
 from handlers import start as start_handlers
 from handlers import menu as menu_handlers
 from handlers import stock as stock_handlers
@@ -18,44 +18,33 @@ from data.db_init import init_db
 from middlewares.user_registry import UserRegistry
 
 def create_session(proxy: str | None) -> AiohttpSession:
-    """Создаёт HTTP-сессию с заданным SOCKS5-прокси."""
+    """Создаёт HTTP-сессию с опциональным прокси."""
 
     return AiohttpSession(proxy=proxy or None, timeout=90)
 
 
 async def create_bot(token: str) -> Bot | None:
-    """Создаёт экземпляр бота с fallback с SOCKS5 на прямое подключение."""
+    """Создаёт экземпляр бота с одним выбранным режимом подключения."""
 
-    proxy_url = TELEGRAM_SOCKS5_PROXY or None
-    attempts = [proxy_url] if proxy_url else []
-    attempts.append(None)
-
-    for proxy in attempts:
-        session: AiohttpSession | None = None
-        try:
-            session = create_session(proxy)
-            bot = Bot(
-                token,
-                session=session,
-                default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN_V2),
-                request_timeout=60,
-            )
-            await bot.get_me()
-            if proxy:
-                logging.info("[BOT] запущен через SOCKS5")
-            else:
-                logging.info("[BOT] запущен без прокси")
-            return bot
-        except Exception as exc:  # noqa: BLE001
-            logging.warning("[BOT] не удалось запустить с proxy=%s: %s", proxy or "direct", exc)
-            if session:
-                try:
-                    await session.close()
-                except Exception:  # noqa: BLE001
-                    logging.debug("[BOT] не удалось корректно закрыть сессию после ошибки")
-
-    logging.error("[BOT] не удалось инициализировать бота ни с прокси, ни напрямую")
-    return None
+    proxy_url = TG_PROXY_URL or None
+    session = create_session(proxy_url)
+    try:
+        bot = Bot(
+            token,
+            session=session,
+            default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN_V2),
+            request_timeout=60,
+        )
+        await bot.get_me()
+        if proxy_url:
+            logging.info("[BOT] запущен с proxy=%s", proxy_url)
+        else:
+            logging.info("[BOT] запущен без proxy")
+        return bot
+    except Exception as exc:  # noqa: BLE001
+        logging.exception("[BOT] не удалось инициализировать бота: %s", exc)
+        await session.close()
+        return None
 
 
 async def main() -> None:
