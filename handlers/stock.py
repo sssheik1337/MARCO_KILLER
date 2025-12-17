@@ -39,6 +39,14 @@ def escape_md(text: str | None) -> str:
     return MarkdownV2Escaper.escape_plain(text or "")
 
 
+def _plain_title(section: str, city: str) -> str:
+    """Возвращает заголовок раздела без Markdown-экранирования."""
+
+    section_title = SECTION_TITLES.get(section, section)
+    city_title = CITY_TITLES.get(city, city)
+    return f"{section_title} • {city_title}"
+
+
 def _slugify(value: str, used: set[str]) -> str:
     """Создаёт компактный slug для callback-data."""
 
@@ -152,17 +160,14 @@ async def send_stock_page(message: Message, stock: StockItemCity, page: int) -> 
 
         lines.append("\n".join(item_lines))
 
-    city_label = escape_md(CITY_TITLES.get(stock.city, stock.city))
-    section_label = escape_md(SECTION_TITLES.get(stock.section, stock.section))
-
-    header: list[str] = [f"{section_label} • {city_label}"]
+    header: list[str] = [_plain_title(stock.section, stock.city)]
     if stock.kind:
         if stock.city == "spb" and stock.section == "fabrics":
-            header.append(f"Коллекция: {escape_md(stock.kind)}")
+            header.append(f"Коллекция: {stock.kind}")
         else:
-            header.append(f"Вид: {escape_md(stock.kind)}")
+            header.append(f"Вид: {stock.kind}")
     if stock.item_type:
-        header.append(f"Тип: {escape_md(stock.item_type)}")
+        header.append(f"Тип: {stock.item_type}")
     header.append(f"Страница {page}/{total_pages}")
 
     text = "\n\n".join(["\n".join(header), *lines])
@@ -288,7 +293,7 @@ async def _show_spb_collections(
     )
 
     text = (
-        f"{escape_md(SECTION_TITLES.get(section, section))} • {escape_md(CITY_TITLES.get(city, city))}\n"
+        f"{_plain_title(section, city)}\n"
         f"Выберите коллекцию.\nСтраница {current_page}/{total_pages}"
     )
 
@@ -434,8 +439,8 @@ async def on_stock_types_hardware(cb: CallbackQuery):
     page_rows, current_page, total_pages = slice_page(type_rows, int(page_str), TYPE_PAGE_SIZE)
 
     text = (
-        f"{escape_md(SECTION_TITLES.get(section, section))} • {escape_md(CITY_TITLES.get(city, city))}\n"
-        f"Вид: {escape_md(selected_kind)}\n"
+        f"{_plain_title(section, city)}\n"
+        f"Вид: {selected_kind}\n"
         f"Выберите тип номенклатуры.\nСтраница {current_page}/{total_pages}"
     )
 

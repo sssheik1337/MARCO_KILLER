@@ -49,7 +49,7 @@ def _line(label: str, value: object, *, raw: bool = False) -> str:
     text = value if value not in (None, "") else "-"
     label_text = escape_user(label)
     if raw:
-        return f"{label_text}: {escape_user(str(text))}"
+        return f"{label_text}: {text}"
     return escape_user(f"{label}: {text}")
 
 
@@ -67,8 +67,7 @@ def _inline_code(value: object | None) -> str:
         return "`-`"
 
     normalized = str(value)
-    escaped = normalized.replace("\\", "\\\\").replace("`", "\\`")
-    return f"`{escaped}`"
+    return f"`{normalized}`"
 
 
 def build_product_caption(

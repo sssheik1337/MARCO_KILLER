@@ -431,7 +431,9 @@ def _build_hardware_caption(product: dict) -> str:
         text = value if value not in (None, "") else "—"
         return escape_user(f"{label}: {text}")
 
-    lines.append(_line("Артикул", product.get("article")))
+    article = product.get("article")
+    article_text = "`-`" if article in (None, "") else f"`{article}`"
+    lines.append(f"{escape_user('Артикул')}: {article_text}")
     lines.append(_line("Категория", product.get("category")))
     lines.append(_line("Подкатегория", product.get("subcategory")))
     lines.append(_line("Группа", product.get("group")))
