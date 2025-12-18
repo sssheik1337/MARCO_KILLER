@@ -14,8 +14,6 @@ async def init_db() -> None:
         os.makedirs(db_dir, exist_ok=True)
 
     create_sql = """
-    DROP TABLE IF EXISTS products;
-
     CREATE TABLE IF NOT EXISTS products (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         city TEXT NOT NULL,
