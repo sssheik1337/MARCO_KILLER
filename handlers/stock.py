@@ -4,7 +4,8 @@ import re
 from collections import defaultdict
 
 from aiogram import F, Router
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, Message, FSInputFile
+from pathlib import Path
 
 from data.stock_interface import load_city_stock
 from data.stock_models import StockItemCity
@@ -311,6 +312,16 @@ async def _show_spb_collections(
 
 async def _show_kinds(message: Message, user_id: int, city: str, section: str) -> None:
     """Показывает список видов номенклатуры или плоский список, если видов нет."""
+
+    if city == "spb" and section == "hardware":
+        file_path = Path("data/stocks/spb/hardware/hardware_stock_spb.xlsx")
+        if file_path.exists():
+            await message.answer_document(
+                FSInputFile(file_path),
+                caption="Остатки фурнитуры СПБ",
+                reply_markup=kb_stock_sections(city),
+            )
+            return
 
     stock = await load_city_stock(city, section)
     selection = _STOCK_SELECTIONS[user_id]
