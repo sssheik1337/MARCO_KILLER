@@ -23,6 +23,7 @@ from structure.keyboards import (
 from structure.markdown import (
     escape_user,
     inline_code,
+    edit_reply_markup_safe,
     send_md_safe,
     send_md_safe_to_chat,
 )
@@ -506,9 +507,7 @@ async def catalog_sections_page(cb: CallbackQuery):
     sections = await db_utils.fetch_sections(city)
     labeled = _label_sections(sections)
     page_items, page, total = slice_page(labeled, page, PAGE_SIZE)
-    await cb.message.edit_reply_markup(
-        reply_markup=pager(CAT_SEC_PREFIX, page_items, page, total)
-    )
+    await edit_reply_markup_safe(cb.message, pager(CAT_SEC_PREFIX, page_items, page, total))
     await cb.answer()
 
 
@@ -540,8 +539,8 @@ async def open_category_page(cb: CallbackQuery):
     cats = [c for c in await db_utils.fetch_categories(section, city) if c]
     enumerated = [(name, str(idx)) for idx, name in enumerate(cats)]
     page_items, page, total = slice_page(enumerated, page, PAGE_SIZE)
-    await cb.message.edit_reply_markup(
-        reply_markup=pager(f"{CAT_CAT_PREFIX}:{section}", page_items, page, total)
+    await edit_reply_markup_safe(
+        cb.message, pager(f"{CAT_CAT_PREFIX}:{section}", page_items, page, total)
     )
     await cb.answer()
 
@@ -590,15 +589,16 @@ async def open_subcategory_page(cb: CallbackQuery):
     subs = [s for s in await db_utils.fetch_subcategories(category) if s]
     enumerated = [(name, str(idx)) for idx, name in enumerate(subs)]
     page_items, page, total = slice_page(enumerated, page, PAGE_SIZE)
-    await cb.message.edit_reply_markup(
-        reply_markup=pager(
+    await edit_reply_markup_safe(
+        cb.message,
+        pager(
             f"{CAT_SUB_PREFIX}:{section}:{category_idx}",
             page_items,
             page,
             total,
             back_cb=f"{CAT_CAT_BACK_PREFIX}:{section}",
             back_text="◀️ К категориям",
-        )
+        ),
     )
     await cb.answer()
 
@@ -635,13 +635,14 @@ async def open_group_page(cb: CallbackQuery):
     ]
     enumerated = [(name, str(idx)) for idx, name in enumerate(groups)]
     page_items, page, total = slice_page(enumerated, page, PAGE_SIZE)
-    await cb.message.edit_reply_markup(
-        reply_markup=pager(
+    await edit_reply_markup_safe(
+        cb.message,
+        pager(
             f"{CAT_GRP_PREFIX}:{section}:{category_idx}:{subcategory_idx if subcategory_idx is not None else ''}",
             page_items,
             page,
             total,
-        )
+        ),
     )
     await cb.answer()
 
@@ -935,7 +936,7 @@ async def product_list_page(cb: CallbackQuery):
         total,
         back_cb=back_cb,
     )
-    await cb.message.edit_reply_markup(reply_markup=reply_markup)
+    await edit_reply_markup_safe(cb.message, reply_markup=reply_markup)
     await cb.answer()
 
 
@@ -1067,9 +1068,7 @@ async def stock_sections_page(cb: CallbackQuery):
     sections = await db_utils.fetch_stock_sections(city)
     labeled = [(section.title(), section) for section in sections]
     page_items, page, total = slice_page(labeled, page, PAGE_SIZE)
-    await cb.message.edit_reply_markup(
-        reply_markup=pager(STOCK_SEC_PREFIX, page_items, page, total)
-    )
+    await edit_reply_markup_safe(cb.message, pager(STOCK_SEC_PREFIX, page_items, page, total))
     await cb.answer()
 
 
@@ -1101,8 +1100,8 @@ async def stock_category_page(cb: CallbackQuery):
     cats = await db_utils.fetch_stock_categories(section, city)
     enumerated = [(name, str(idx)) for idx, name in enumerate(cats)]
     page_items, page, total = slice_page(enumerated, page, PAGE_SIZE)
-    await cb.message.edit_reply_markup(
-        reply_markup=pager(f"{STOCK_CAT_PREFIX}:{section}", page_items, page, total)
+    await edit_reply_markup_safe(
+        cb.message, pager(f"{STOCK_CAT_PREFIX}:{section}", page_items, page, total)
     )
     await cb.answer()
 
@@ -1159,10 +1158,9 @@ async def stock_product_page(cb: CallbackQuery):
         return
     items = [(name, str(pid)) for pid, name in prods]
     page_items, page, total = slice_page(items, page, PAGE_SIZE)
-    await cb.message.edit_reply_markup(
-        reply_markup=pager(
-            f"{STOCK_PROD_PREFIX}:{section}:{category}", page_items, page, total
-        )
+    await edit_reply_markup_safe(
+        cb.message,
+        pager(f"{STOCK_PROD_PREFIX}:{section}:{category}", page_items, page, total),
     )
     await cb.answer()
 
