@@ -268,6 +268,19 @@ async def send_md_safe(
     destination = target if isinstance(target, Message) else target.message
     can_edit = bool(destination and destination.from_user and destination.from_user.is_bot)
 
+    # Если редактировать нечего (сообщение без текста/подписи, например документ/фото),
+    # удаляем его и отправляем новое, чтобы избежать ошибок Telegram.
+    if can_edit and not (destination.text or destination.caption):
+        try:
+            await destination.delete()
+        except TelegramBadRequest as exc:
+            if "message to delete not found" not in str(exc).lower():
+                raise
+        kwargs: dict[str, object] = {"reply_markup": reply_markup, "parse_mode": ParseMode.MARKDOWN_V2}
+        if disable_web_page_preview is not None:
+            kwargs["disable_web_page_preview"] = disable_web_page_preview
+        return await destination.answer(text, **kwargs)
+
     if can_edit:
         current_text = destination.text or destination.caption or ""
         if current_text == text and destination.reply_markup == reply_markup:
