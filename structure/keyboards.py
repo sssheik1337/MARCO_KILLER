@@ -454,12 +454,22 @@ def cancel_keyboard() -> InlineKeyboardMarkup:
         inline_keyboard=[[InlineKeyboardButton(text="Отмена", callback_data="cancel_fsm")]]
     )
 
-def pager(prefix: str, items: list[tuple[str, str]], page: int, total: int) -> InlineKeyboardMarkup:
+def pager(
+    prefix: str,
+    items: list[tuple[str, str]],
+    page: int,
+    total: int,
+    *,
+    back_cb: str | None = None,
+    back_text: str = "⬅️ Назад",
+) -> InlineKeyboardMarkup:
     rows = [[InlineKeyboardButton(text=title, callback_data=f"{prefix}:open:{item_id}")]
             for title, item_id in items]
     nav_row: list[InlineKeyboardButton] = []
     if page > 1:
         nav_row.append(InlineKeyboardButton(text="⬅️", callback_data=f"{prefix}:page:{page-1}"))
+    if back_cb:
+        nav_row.append(InlineKeyboardButton(text=back_text, callback_data=back_cb))
     nav_row.append(InlineKeyboardButton(text="🏠 Главное меню", callback_data="home"))
     if page < total:
         nav_row.append(InlineKeyboardButton(text="➡️", callback_data=f"{prefix}:page:{page+1}"))

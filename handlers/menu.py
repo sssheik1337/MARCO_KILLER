@@ -256,6 +256,7 @@ async def on_stock(cb: CallbackQuery):
 # --- каталог: разделы → категории → товары ---
 CAT_SEC_PREFIX = "csec"
 CAT_CAT_PREFIX = "ccat"
+CAT_CAT_BACK_PREFIX = "ccatback"
 CAT_SUB_PREFIX = "csub"
 CAT_GRP_PREFIX = "cgrp"
 CAT_PROD_PREFIX = "cprodlist"
@@ -543,6 +544,30 @@ async def open_category_page(cb: CallbackQuery):
     await cb.answer()
 
 
+@router.callback_query(F.data.regexp(rf"^{CAT_CAT_BACK_PREFIX}:[^:]+$"))
+async def back_to_categories(cb: CallbackQuery):
+    section = cb.data.split(":")[1]
+    city = _user_city(cb.from_user.id)
+    cats = [c for c in await db_utils.fetch_categories(section, city) if c]
+    if not cats:
+        await send_md_safe(
+            cb.message,
+            "Каталог пока пуст. Позиции появятся позже.",
+            reply_markup=await _main_menu(cb.from_user.id),
+        )
+        await cb.answer()
+        return
+
+    enumerated = [(name, str(idx)) for idx, name in enumerate(cats)]
+    page_items, page, total = slice_page(enumerated, 1, PAGE_SIZE)
+    await send_md_safe(
+        cb.message,
+        "Категории:",
+        reply_markup=pager(f"{CAT_CAT_PREFIX}:{section}", page_items, page, total),
+    )
+    await cb.answer()
+
+
 @router.callback_query(F.data.regexp(rf"^{CAT_SUB_PREFIX}:[^:]+:[^:]+:page:"))
 async def open_subcategory_page(cb: CallbackQuery):
     parts = cb.data.split(":")
@@ -565,7 +590,12 @@ async def open_subcategory_page(cb: CallbackQuery):
     page_items, page, total = slice_page(enumerated, page, PAGE_SIZE)
     await cb.message.edit_reply_markup(
         reply_markup=pager(
-            f"{CAT_SUB_PREFIX}:{section}:{category_idx}", page_items, page, total
+            f"{CAT_SUB_PREFIX}:{section}:{category_idx}",
+            page_items,
+            page,
+            total,
+            back_cb=f"{CAT_CAT_BACK_PREFIX}:{section}",
+            back_text="◀️ К категориям",
         )
     )
     await cb.answer()
@@ -650,6 +680,8 @@ async def open_category(cb: CallbackQuery):
                     page_items,
                     page,
                     total,
+                    back_cb=f"{CAT_CAT_BACK_PREFIX}:{section}",
+                    back_text="◀️ К категориям",
                 ),
             )
         else:
@@ -665,6 +697,8 @@ async def open_category(cb: CallbackQuery):
                         page_items,
                         page,
                         total,
+                        back_cb=f"{CAT_CAT_BACK_PREFIX}:{section}",
+                        back_text="◀️ К категориям",
                     ),
                 )
             else:
