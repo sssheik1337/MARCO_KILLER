@@ -926,6 +926,8 @@ async def product_card(cb: CallbackQuery):
     category = parts[2] if section != "hardware" and len(parts) > 2 else ""
 
     city = _user_city(cb.from_user.id)
+    subcategory = None
+    group = None
     if section == "hardware":
         categories = [c for c in await db_utils.fetch_categories(section, city) if c]
         if category_idx < 0 or category_idx >= len(categories):
@@ -941,7 +943,6 @@ async def product_card(cb: CallbackQuery):
                 return
             subcategory = subs[subcategory_idx]
 
-        group = None
         if group_idx is not None:
             groups = [
                 g
