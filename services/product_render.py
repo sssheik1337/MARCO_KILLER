@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from structure.markdown import escape_user
+from structure.markdown import escape_user, inline_code
 from services.exchange import range_label
 
 _CITY_LABELS = {
@@ -60,16 +60,6 @@ def _city_label(city: str | None) -> str:
     return _CITY_LABELS.get(key, city)
 
 
-def _inline_code(value: object | None) -> str:
-    """Возвращает значение в моноширинном формате MarkdownV2."""
-
-    if value in (None, ""):
-        return "`-`"
-
-    normalized = str(value)
-    return f"`{normalized}`"
-
-
 def build_product_caption(
     product: dict,
     rng: str,
@@ -88,32 +78,26 @@ def build_product_caption(
         roll = format_money(as_float(product.get(f"price_roll_{range_key}")))
         price_line = f"Отрез: {piece} · Ролик: {roll}"
         course_line = f"💵 {lbl}"
-        article_value = "-"
+        article_value = inline_code(product.get("article"))
     else:
         currency = product.get("currency") or ""
         rrc = format_money_with_currency(as_float(product.get("price_rrc")), currency)
         opt = format_money_with_currency(as_float(product.get("price_opt")), currency)
         price_line = f"РРЦ: {rrc} · Опт: {opt}"
         course_line = lbl
-        article_value = _inline_code(product.get("article"))
+        article_value = inline_code(product.get("article"))
 
     lines: list[str] = []
     if prefix:
         lines.append(escape_user(prefix))
-    lines.append(f"*{escape_user(product.get('name'))}*")
+    lines.append(inline_code(product.get("name")))
 
     if include_city:
         city_label = _city_label(product.get("city"))
         if city_label:
             lines.append(escape_user(f"Город: {city_label}"))
 
-    lines.append(
-        _line(
-            "Артикул",
-            article_value or "-",
-            raw=bool(product.get("section") == "hardware"),
-        )
-    )
+    lines.append(_line("Артикул", article_value or "-", raw=True))
 
     if product.get("section") == "fabrics":
         lines.extend(
@@ -148,4 +132,3 @@ def build_product_caption(
         lines.append(_line("Статус", special_flag))
 
     return "\n".join(lines)
-

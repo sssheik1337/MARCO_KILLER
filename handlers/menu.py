@@ -22,6 +22,7 @@ from structure.keyboards import (
 )
 from structure.markdown import (
     escape_user,
+    inline_code,
     send_md_safe,
     send_md_safe_to_chat,
 )
@@ -1181,14 +1182,16 @@ async def stock_product_card(cb: CallbackQuery):
         await cb.answer()
         return
 
-    lines = [f"*{escape_user(item.get('name'))}*"]
+    lines = [inline_code(item.get("name"))]
 
-    def _line(label: str, value: object) -> str:
-        text = value if value not in (None, "") else "-"
+    def _line(label: str, value: object, *, raw: bool = False) -> str:
+        text = value if value not in (None, "") else "`-`"
+        if raw:
+            return f"{escape_user(label)}: {text}"
         return escape_user(f"{label}: {text}")
 
-    lines.append(_line("Артикул", item.get("article")))
-    lines.append(_line("Код", item.get("code")))
+    lines.append(_line("Артикул", inline_code(item.get("article")), raw=True))
+    lines.append(_line("Код", inline_code(item.get("code")), raw=True))
     lines.append(_line("Доп. информация", item.get("extra_info")))
     lines.append(_line("Дата прихода", item.get("date_in")))
     qty_text = _format_quantity_value(

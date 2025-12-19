@@ -19,7 +19,7 @@ from structure.keyboards import (
     kb_stock_kinds,
     kb_stock_sections,
 )
-from structure.markdown import MarkdownV2Escaper, edit_md_safe, escape_md, send_md_safe
+from structure.markdown import MarkdownV2Escaper, edit_md_safe, escape_md, inline_code, send_md_safe
 
 router = Router()
 
@@ -121,20 +121,20 @@ async def send_stock_page(message: Message, stock: StockItemCity, page: int) -> 
         item_lines: list[str] = []
 
         if stock.city == "spb" and stock.section == "fabrics":
-            item_lines.append(f"{offset}) `{escape_md(item.name)}`")
+            item_lines.append(f"{offset}) {inline_code(item.name)}")
             qty_text = "" if item.quantity is None else str(item.quantity)
             free_text = "" if getattr(item, "free_quantity", None) is None else str(item.free_quantity)
             item_lines.append(f"Остаток: {qty_text} {item.unit or ''}".rstrip())
             item_lines.append(f"Свободный: {free_text} {item.unit or ''}".rstrip())
         elif stock.section == "hardware" and stock.city == "msk":
-            item_lines.append(f"{offset}) *{escape_md(item.name)}*")
+            item_lines.append(f"{offset}) {inline_code(item.name)}")
             if item.code:
-                item_lines.append(f"Код: `{escape_md(item.code)}`")
+                item_lines.append(f"Код: {inline_code(item.code)}")
             else:
                 item_lines.append("Код: отсутствует")
 
             if item.article:
-                item_lines.append(f"Артикул: `{escape_md(item.article)}`")
+                item_lines.append(f"Артикул: {inline_code(item.article)}")
             else:
                 item_lines.append("Артикул: отсутствует")
 
@@ -143,7 +143,7 @@ async def send_stock_page(message: Message, stock: StockItemCity, page: int) -> 
             unit_value = item.unit or ""
             item_lines.append(f"Ед.: {unit_value}")
         else:
-            item_lines.append(f"{offset}) *{escape_md(item.name)}*")
+            item_lines.append(f"{offset}) {inline_code(item.name)}")
             if item.quantity is not None and item.unit:
                 item_lines.append(f"Наличие: {item.quantity} {item.unit}")
 
@@ -774,4 +774,3 @@ async def on_stock_flat(cb: CallbackQuery):
     stock.type_slug = None
     await send_stock_page(cb.message, stock, int(page_str))
     await cb.answer()
-

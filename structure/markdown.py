@@ -205,6 +205,14 @@ def escape_md(text: str | None) -> str:
     return escape_user(text)
 
 
+def inline_code(value: object | None) -> str:
+    """Возвращает строку в моноширинном формате MarkdownV2 без экранирования внутри."""
+
+    if value in (None, ""):
+        return "`-`"
+    return f"`{value}`"
+
+
 def escape_full(text: str) -> str:
     """Полностью экранирует текст на случай некорректной разметки."""
 
