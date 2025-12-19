@@ -152,7 +152,7 @@ def kb_stock_kinds(city: str, section: str, kinds: list[tuple[str, str]]) -> Inl
     ]
     rows.append(
         [
-            InlineKeyboardButton(text="↩️ Назад", callback_data=f"stock_section:{city}:{section}"),
+            InlineKeyboardButton(text="↩️ Назад", callback_data=f"stock_city:{city}"),
             InlineKeyboardButton(text="🏠 Главное меню", callback_data="home"),
         ]
     )
@@ -198,7 +198,7 @@ def build_hardware_kinds_keyboard(
         rows.append(nav_row)
     rows.append(
         [
-            InlineKeyboardButton(text="↩️ Назад", callback_data=f"stock_section:{city}:hardware"),
+            InlineKeyboardButton(text="↩️ Назад", callback_data=f"stock_city:{city}"),
             InlineKeyboardButton(text="🏠 Главное меню", callback_data="home"),
         ]
     )
@@ -343,7 +343,7 @@ def build_spb_collections_keyboard(
         rows.append(nav_row)
     rows.append(
         [
-            InlineKeyboardButton(text="↩️ Назад", callback_data=f"stock_section:{city}:{section}"),
+            InlineKeyboardButton(text="↩️ Назад", callback_data=f"stock_city:{city}"),
             InlineKeyboardButton(text="🏠 Главное меню", callback_data="home"),
         ]
     )

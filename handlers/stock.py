@@ -214,7 +214,7 @@ async def _show_hardware_kinds(message: Message, user_id: int, city: str, page: 
 
     kinds = sorted({item.kind for item in stock.items if item.kind})
 
-    stock.back_callback = f"stock_section:{city}:{section}"
+    stock.back_callback = f"stock_city:{city}"
     stock.kind_slug = None
     stock.type_slug = None
 
@@ -270,14 +270,14 @@ async def _show_spb_collections(
     )
 
     if not stock.items:
-        stock.back_callback = f"stock_section:{city}:{section}"
+        stock.back_callback = f"stock_city:{city}"
         stock.kind_slug = None
         stock.type_slug = None
         await send_stock_page(message, stock, 1)
         return
 
     if not collections:
-        stock.back_callback = f"stock_section:{city}:{section}"
+        stock.back_callback = f"stock_city:{city}"
         stock.kind_slug = None
         stock.type_slug = None
         await send_stock_page(message, stock, 1)
@@ -331,14 +331,14 @@ async def _show_kinds(message: Message, user_id: int, city: str, section: str) -
 
     kinds = sorted({item.kind for item in stock.items if item.kind})
     if not stock.items:
-        stock.back_callback = f"stock_section:{city}:{section}"
+        stock.back_callback = f"stock_city:{city}"
         stock.kind_slug = None
         stock.type_slug = None
         await send_stock_page(message, stock, 1)
         return
 
     if not kinds:
-        stock.back_callback = f"stock_section:{city}:{section}"
+        stock.back_callback = f"stock_city:{city}"
         stock.kind_slug = None
         stock.type_slug = None
         await send_stock_page(message, stock, 1)
@@ -775,7 +775,7 @@ async def on_stock_list(cb: CallbackQuery):
         else (
             f"stock:types:{city}:{section}:{kind_slug}:1"
             if kind_slug != "all"
-            else f"stock_section:{city}:{section}"
+            else f"stock_city:{city}"
         )
     )
 
@@ -800,7 +800,7 @@ async def on_stock_flat(cb: CallbackQuery):
 
     _, _, city, section, page_str = cb.data.split(":")
     stock = await load_city_stock(city, section)
-    stock.back_callback = f"stock_section:{city}:{section}"
+    stock.back_callback = f"stock_city:{city}"
     stock.kind_slug = None
     stock.type_slug = None
     await send_stock_page(cb.message, stock, int(page_str))
