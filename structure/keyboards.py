@@ -152,7 +152,7 @@ def kb_stock_kinds(city: str, section: str, kinds: list[tuple[str, str]]) -> Inl
     ]
     rows.append(
         [
-            InlineKeyboardButton(text="⬅ Назад", callback_data=f"stock_section:{city}:{section}"),
+            InlineKeyboardButton(text="◀️ Назад", callback_data=f"stock_section:{city}:{section}"),
             InlineKeyboardButton(text="🏠 Главное меню", callback_data="home"),
         ]
     )
@@ -181,7 +181,7 @@ def build_hardware_kinds_keyboard(
     if page > 1:
         nav_row.append(
             InlineKeyboardButton(
-                text="◀ Назад",
+                text="⬅️ Стр. назад",
                 callback_data=f"stock:{city}:hardware:kinds:{page - 1}",
             )
         )
@@ -191,13 +191,13 @@ def build_hardware_kinds_keyboard(
     if page < total_pages:
         nav_row.append(
             InlineKeyboardButton(
-                text="Вперёд ▶",
+                text="➡️ Стр. вперёд",
                 callback_data=f"stock:{city}:hardware:kinds:{page + 1}",
             )
         )
 
     rows.append(nav_row)
-    rows.append([InlineKeyboardButton(text="⬅ Назад", callback_data=f"stock_section:{city}:hardware")])
+    rows.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"stock_section:{city}:hardware")])
 
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -226,7 +226,7 @@ def build_types_keyboard(
     if page > 1:
         nav_row.append(
             InlineKeyboardButton(
-                text="◀ Назад",
+                text="⬅️ Стр. назад",
                 callback_data=f"stock:types:{city}:{section}:{kind_slug}:{page - 1}",
             )
         )
@@ -236,13 +236,13 @@ def build_types_keyboard(
     if page < total_pages:
         nav_row.append(
             InlineKeyboardButton(
-                text="Вперёд ▶",
+                text="➡️ Стр. вперёд",
                 callback_data=f"stock:types:{city}:{section}:{kind_slug}:{page + 1}",
             )
         )
 
     rows.append(nav_row)
-    rows.append([InlineKeyboardButton(text="⬅ Назад", callback_data=f"stock:kindlist:{city}:{section}")])
+    rows.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"stock:kindlist:{city}:{section}")])
 
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -270,7 +270,7 @@ def build_hardware_types_keyboard(
     if page > 1:
         nav_row.append(
             InlineKeyboardButton(
-                text="◀ Назад",
+                text="⬅️ Стр. назад",
                 callback_data=f"stock:{city}:hardware:types:{kind_slug}:{page - 1}",
             )
         )
@@ -280,13 +280,13 @@ def build_hardware_types_keyboard(
     if page < total_pages:
         nav_row.append(
             InlineKeyboardButton(
-                text="Вперёд ▶",
+                text="➡️ Стр. вперёд",
                 callback_data=f"stock:{city}:hardware:types:{kind_slug}:{page + 1}",
             )
         )
 
     rows.append(nav_row)
-    rows.append([InlineKeyboardButton(text="⬅ Назад", callback_data=f"stock:{city}:hardware:kinds:1")])
+    rows.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"stock:{city}:hardware:kinds:1")])
 
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -314,7 +314,7 @@ def build_spb_collections_keyboard(
     if page > 1:
         nav_row.append(
             InlineKeyboardButton(
-                text="◀ Назад",
+                text="⬅️ Стр. назад",
                 callback_data=f"stock:collections:{city}:{section}:{page - 1}",
             )
         )
@@ -324,13 +324,13 @@ def build_spb_collections_keyboard(
     if page < total_pages:
         nav_row.append(
             InlineKeyboardButton(
-                text="Вперёд ▶",
+                text="➡️ Стр. вперёд",
                 callback_data=f"stock:collections:{city}:{section}:{page + 1}",
             )
         )
 
     rows.append(nav_row)
-    rows.append([InlineKeyboardButton(text="⬅ Назад", callback_data=f"stock_section:{city}:{section}")])
+    rows.append([InlineKeyboardButton(text="◀️ Назад", callback_data=f"stock_section:{city}:{section}")])
 
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -355,16 +355,20 @@ def build_stock_list_keyboard(
 
     nav_row: list[InlineKeyboardButton] = []
     if page > 1:
-        nav_row.append(InlineKeyboardButton(text="◀ Назад", callback_data=_page_callback(page - 1)))
+        nav_row.append(
+            InlineKeyboardButton(text="⬅️ Стр. назад", callback_data=_page_callback(page - 1))
+        )
 
     nav_row.append(InlineKeyboardButton(text="🏠 Главное меню", callback_data="home"))
 
     if page < total_pages:
-        nav_row.append(InlineKeyboardButton(text="Вперёд ▶", callback_data=_page_callback(page + 1)))
+        nav_row.append(
+            InlineKeyboardButton(text="➡️ Стр. вперёд", callback_data=_page_callback(page + 1))
+        )
 
     rows: list[list[InlineKeyboardButton]] = [nav_row]
     if back_callback:
-        rows.append([InlineKeyboardButton(text="⬅ Назад", callback_data=back_callback)])
+        rows.append([InlineKeyboardButton(text="◀️ Назад", callback_data=back_callback)])
 
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -384,16 +388,20 @@ def build_hardware_items_keyboard(
 
     nav_row: list[InlineKeyboardButton] = []
     if page > 1:
-        nav_row.append(InlineKeyboardButton(text="◀ Назад", callback_data=_page_callback(page - 1)))
+        nav_row.append(
+            InlineKeyboardButton(text="⬅️ Стр. назад", callback_data=_page_callback(page - 1))
+        )
 
     nav_row.append(InlineKeyboardButton(text="🏠 Главное меню", callback_data="home"))
 
     if page < total_pages:
-        nav_row.append(InlineKeyboardButton(text="Вперёд ▶", callback_data=_page_callback(page + 1)))
+        nav_row.append(
+            InlineKeyboardButton(text="➡️ Стр. вперёд", callback_data=_page_callback(page + 1))
+        )
 
     rows: list[list[InlineKeyboardButton]] = [nav_row]
     if back_callback:
-        rows.append([InlineKeyboardButton(text="⬅ Назад", callback_data=back_callback)])
+        rows.append([InlineKeyboardButton(text="◀️ Назад", callback_data=back_callback)])
 
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -461,18 +469,22 @@ def pager(
     total: int,
     *,
     back_cb: str | None = None,
-    back_text: str = "⬅️ Назад",
+    back_text: str = "◀️ Назад",
 ) -> InlineKeyboardMarkup:
     rows = [[InlineKeyboardButton(text=title, callback_data=f"{prefix}:open:{item_id}")]
             for title, item_id in items]
     nav_row: list[InlineKeyboardButton] = []
     if page > 1:
-        nav_row.append(InlineKeyboardButton(text="⬅️", callback_data=f"{prefix}:page:{page-1}"))
+        nav_row.append(
+            InlineKeyboardButton(text="⬅️ Стр. назад", callback_data=f"{prefix}:page:{page-1}")
+        )
     if back_cb:
         nav_row.append(InlineKeyboardButton(text=back_text, callback_data=back_cb))
     nav_row.append(InlineKeyboardButton(text="🏠 Главное меню", callback_data="home"))
     if page < total:
-        nav_row.append(InlineKeyboardButton(text="➡️", callback_data=f"{prefix}:page:{page+1}"))
+        nav_row.append(
+            InlineKeyboardButton(text="➡️ Стр. вперёд", callback_data=f"{prefix}:page:{page+1}")
+        )
     rows.append(nav_row)
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -481,7 +493,7 @@ def product_controls(product_id: int) -> InlineKeyboardMarkup:
 
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data="back")],
+            [InlineKeyboardButton(text="◀️ Назад", callback_data="back")],
             [InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")],
         ]
     )
@@ -492,7 +504,7 @@ def stock_product_controls(product_id: int) -> InlineKeyboardMarkup:
 
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data="back")],
+            [InlineKeyboardButton(text="◀️ Назад", callback_data="back")],
             [InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")],
         ]
     )
