@@ -357,24 +357,25 @@ def _catalog_products_keyboard(
         for title, item_id in items
     ]
 
-    nav_back = [
-        InlineKeyboardButton(text="⬅️ Назад", callback_data=back_cb),
-        InlineKeyboardButton(text="🏠 Главное меню", callback_data="home"),
-    ]
-
     nav_pages: list[InlineKeyboardButton] = []
     if page > 1:
         nav_pages.append(
-            InlineKeyboardButton(text="⬅️", callback_data=f"{prefix}:page:{page-1}")
+            InlineKeyboardButton(text="⬅️ Стр. назад", callback_data=f"{prefix}:page:{page-1}")
         )
     if page < total:
         nav_pages.append(
-            InlineKeyboardButton(text="➡️", callback_data=f"{prefix}:page:{page+1}")
+            InlineKeyboardButton(text="➡️ Стр. вперёд", callback_data=f"{prefix}:page:{page+1}")
         )
 
-    rows.append(nav_back)
     if nav_pages:
         rows.append(nav_pages)
+
+    rows.append(
+        [
+            InlineKeyboardButton(text="↩️ Назад", callback_data=back_cb),
+            InlineKeyboardButton(text="🏠 Главное меню", callback_data="home"),
+        ]
+    )
 
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
