@@ -352,6 +352,16 @@ async def _show_kinds(message: Message, user_id: int, city: str, section: str) -
         selection["kind_map"][slug] = kind
         kind_rows.append((kind, slug))
 
+    if (
+        message.from_user
+        and message.from_user.is_bot
+        and (message.text or message.caption or "") == "Выберите вид номенклатуры:"
+    ):
+        current_keyboard = getattr(message.reply_markup, "inline_keyboard", None)
+        new_keyboard = kb_stock_kinds(city, section, kind_rows).inline_keyboard
+        if current_keyboard == new_keyboard:
+            return
+
     await send_md_safe(
         message,
         "Выберите вид номенклатуры:",
