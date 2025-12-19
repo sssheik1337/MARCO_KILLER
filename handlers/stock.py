@@ -104,7 +104,17 @@ async def send_stock_page(message: Message, stock: StockItemCity, page: int) -> 
                 back_callback=stock.back_callback,
                 flat=not (stock.kind_slug or stock.type_slug),
             )
-        await send_md_safe(message, "Данные об остатках пока отсутствуют.", reply_markup=markup)
+        empty_text = "Данные об остатках пока отсутствуют."
+        if (
+            message.from_user
+            and message.from_user.is_bot
+            and (message.text or message.caption or "") == empty_text
+        ):
+            current_keyboard = getattr(message.reply_markup, "inline_keyboard", None)
+            if current_keyboard == getattr(markup, "inline_keyboard", None):
+                return
+
+        await send_md_safe(message, empty_text, reply_markup=markup)
         return
 
     page_size = (
