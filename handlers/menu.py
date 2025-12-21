@@ -1035,16 +1035,28 @@ async def product_card(cb: CallbackQuery):
         else f"{CAT_PROD_PREFIX}:{section}:{category}"
     )
 
+    prev_cb = None
+    next_cb = None
+    if product_idx > 0:
+        prev_cb = f"{list_prefix}:open:{product_idx - 1}"
+    if product_idx + 1 < len(products):
+        next_cb = f"{list_prefix}:open:{product_idx + 1}"
+
+    controls = product_controls(product_idx, prev_cb=prev_cb, next_cb=next_cb)
+
     if p.get("image_url"):
-        msg = await cb.message.answer_photo(
-            p["image_url"], caption=caption,
-            reply_markup=product_controls(product_idx)
-        )
+        if cb.message.photo:
+            msg = await cb.message.edit_caption(caption, reply_markup=controls, parse_mode=None)
+        else:
+            msg = await cb.message.answer_photo(
+                p["image_url"], caption=caption,
+                reply_markup=controls
+            )
     else:
-        msg = await send_md_safe(
+        msg = await edit_md_safe(
             cb.message,
             caption,
-            reply_markup=product_controls(product_idx),
+            reply_markup=controls,
         )
 
     _PRODUCT_CONTEXT[cb.from_user.id][msg.message_id] = {
