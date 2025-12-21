@@ -293,7 +293,11 @@ async def send_md_safe(
         if disable_web_page_preview is not None:
             kwargs["disable_web_page_preview"] = disable_web_page_preview
         if can_edit:
-            return await destination.edit_text(payload, **kwargs)
+            if destination.text is not None:
+                return await destination.edit_text(payload, **kwargs)
+            if destination.caption is not None:
+                return await destination.edit_caption(payload, **kwargs)
+            return await destination.answer(payload, **kwargs)
         return await destination.answer(payload, **kwargs)
 
     return await _send_with_fallback(_sender, text, destination)
@@ -321,7 +325,11 @@ async def edit_md_safe(
         kwargs: dict[str, object] = {"reply_markup": reply_markup}
         if parse_mode is not None:
             kwargs["parse_mode"] = parse_mode
-        return await destination.edit_text(payload, **kwargs)
+        if destination.text is not None:
+            return await destination.edit_text(payload, **kwargs)
+        if destination.caption is not None:
+            return await destination.edit_caption(payload, **kwargs)
+        return await destination.answer(payload, **kwargs)
 
     return await _send_with_fallback(_sender, text, destination)
 
