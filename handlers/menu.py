@@ -23,6 +23,7 @@ from structure.keyboards import (
 from structure.markdown import (
     escape_user,
     inline_code,
+    edit_md_safe,
     edit_reply_markup_safe,
     send_md_safe,
     send_md_safe_to_chat,
