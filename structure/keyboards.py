@@ -513,15 +513,31 @@ def pager(
     rows.append(back_row)
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
-def product_controls(product_id: int) -> InlineKeyboardMarkup:
-    """Клавиатура карточки товара без корзины."""
+def product_controls(
+    product_id: int,
+    *,
+    prev_cb: str | None = None,
+    next_cb: str | None = None,
+) -> InlineKeyboardMarkup:
+    """Клавиатура карточки товара с навигацией между позициями."""
 
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="↩️ Назад", callback_data="back")],
-            [InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")],
+    rows: list[list[InlineKeyboardButton]] = []
+    nav_row: list[InlineKeyboardButton] = []
+    if prev_cb:
+        nav_row.append(InlineKeyboardButton(text="⬅️ Стр. назад", callback_data=prev_cb))
+    if next_cb:
+        nav_row.append(InlineKeyboardButton(text="➡️ Стр. вперёд", callback_data=next_cb))
+    if nav_row:
+        rows.append(nav_row)
+
+    rows.append(
+        [
+            InlineKeyboardButton(text="↩️ Назад", callback_data="back"),
+            InlineKeyboardButton(text="🏠 Главное меню", callback_data="home"),
         ]
     )
+
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def stock_product_controls(product_id: int) -> InlineKeyboardMarkup:
