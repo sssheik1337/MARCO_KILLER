@@ -324,7 +324,8 @@ async def on_catalog_fabrics(cb: CallbackQuery):
 async def on_catalog_hardware(cb: CallbackQuery):
     """Открывает каталог фурнитуры из общего прайс-листа."""
 
-    categories = [c for c in await db_utils.fetch_categories("hardware") if c]
+    city = _user_city(cb.from_user.id)
+    categories = [c for c in await db_utils.fetch_categories("hardware", city) if c]
     if not categories:
         await send_md_safe(
             cb.message,
@@ -675,6 +676,7 @@ async def back_to_categories(cb: CallbackQuery):
 async def open_subcategory_page(cb: CallbackQuery):
     parts = cb.data.split(":")
     section = parts[1]
+    city = _user_city(cb.from_user.id)
     try:
         category_idx = int(parts[2])
     except ValueError:
@@ -682,7 +684,7 @@ async def open_subcategory_page(cb: CallbackQuery):
         return
     page = int(parts[-1])
 
-    categories = [c for c in await db_utils.fetch_categories(section) if c]
+    categories = [c for c in await db_utils.fetch_categories(section, city) if c]
     if category_idx < 0 or category_idx >= len(categories):
         await cb.answer("Категория недоступна", show_alert=True)
         return
@@ -709,6 +711,7 @@ async def open_subcategory_page(cb: CallbackQuery):
 async def open_group_page(cb: CallbackQuery):
     parts = cb.data.split(":")
     section = parts[1]
+    city = _user_city(cb.from_user.id)
     try:
         category_idx = int(parts[2])
         sub_idx_raw = parts[3]
@@ -718,7 +721,7 @@ async def open_group_page(cb: CallbackQuery):
         return
     page = int(parts[-1])
 
-    categories = [c for c in await db_utils.fetch_categories(section) if c]
+    categories = [c for c in await db_utils.fetch_categories(section, city) if c]
     if category_idx < 0 or category_idx >= len(categories):
         await cb.answer("Раздел недоступен", show_alert=True)
         return
@@ -810,7 +813,7 @@ async def open_category(cb: CallbackQuery):
                 prods = [
                     p
                     for p in await db_utils.fetch_products_by_category(
-                        category, section=section
+                        category, section=section, city=city
                     )
                     if p.get("name")
                 ]
@@ -826,7 +829,9 @@ async def open_category(cb: CallbackQuery):
                 await send_md_safe(cb.message, category, reply_markup=reply_markup)
     else:
         prods = [
-            p for p in await db_utils.fetch_products_by_category(category) if p.get("name")
+            p
+            for p in await db_utils.fetch_products_by_category(category, city=city)
+            if p.get("name")
         ]
         items = [(p["name"], str(idx)) for idx, p in enumerate(prods)]
         page_items, page, total = slice_page(items, 1, PAGE_SIZE)
@@ -845,6 +850,7 @@ async def open_category(cb: CallbackQuery):
 async def open_subcategory(cb: CallbackQuery):
     parts = cb.data.split(":")
     section = parts[1]
+    city = _user_city(cb.from_user.id)
     category_idx = int(parts[2])
     sub_idx_raw = parts[-1]
     try:
@@ -853,7 +859,7 @@ async def open_subcategory(cb: CallbackQuery):
         await cb.answer("Раздел недоступен", show_alert=True)
         return
 
-    categories = [c for c in await db_utils.fetch_categories(section) if c]
+    categories = [c for c in await db_utils.fetch_categories(section, city) if c]
     if category_idx < 0 or category_idx >= len(categories):
         await cb.answer("Раздел недоступен", show_alert=True)
         return
@@ -883,7 +889,7 @@ async def open_subcategory(cb: CallbackQuery):
         prods = [
             p
             for p in await db_utils.fetch_products_by_category(
-                category, section=section, subcategory=subcategory
+                category, section=section, subcategory=subcategory, city=city
             )
             if p.get("name")
         ]
@@ -905,6 +911,7 @@ async def open_subcategory(cb: CallbackQuery):
 async def open_group(cb: CallbackQuery):
     parts = cb.data.split(":")
     section = parts[1]
+    city = _user_city(cb.from_user.id)
     category_idx_raw = parts[2]
     subcategory_idx_raw = parts[3]
     grp_idx_raw = parts[-1]
@@ -918,7 +925,7 @@ async def open_group(cb: CallbackQuery):
         await cb.answer("Раздел недоступен", show_alert=True)
         return
 
-    categories = [c for c in await db_utils.fetch_categories(section) if c]
+    categories = [c for c in await db_utils.fetch_categories(section, city) if c]
     if category_idx < 0 or category_idx >= len(categories):
         await cb.answer("Раздел недоступен", show_alert=True)
         return
@@ -941,7 +948,7 @@ async def open_group(cb: CallbackQuery):
     prods = [
         p
         for p in await db_utils.fetch_products_by_category(
-            category, section=section, subcategory=subcategory, group=group
+            category, section=section, subcategory=subcategory, group=group, city=city
         )
         if p.get("name")
     ]
@@ -1005,7 +1012,7 @@ async def product_list_page(cb: CallbackQuery):
         prods = [
             p
             for p in await db_utils.fetch_products_by_category(
-                category, section=section, subcategory=subcategory, group=group
+                category, section=section, subcategory=subcategory, group=group, city=city
             )
             if p.get("name")
         ]
@@ -1023,7 +1030,7 @@ async def product_list_page(cb: CallbackQuery):
     else:
         prods = [
             p
-            for p in await db_utils.fetch_products_by_category(category)
+            for p in await db_utils.fetch_products_by_category(category, city=city)
             if p.get("name")
         ]
         back_cb = f"{CAT_CAT_PREFIX}:{section}:page:1"
@@ -1096,14 +1103,14 @@ async def product_card(cb: CallbackQuery):
         products = [
             p
             for p in await db_utils.fetch_products_by_category(
-                category, section=section, subcategory=subcategory, group=group
+                category, section=section, subcategory=subcategory, group=group, city=city
             )
             if p.get("name")
         ]
     else:
         products = [
             p
-            for p in await db_utils.fetch_products_by_category(category)
+            for p in await db_utils.fetch_products_by_category(category, city=city)
             if p.get("name")
         ]
     if product_idx < 0 or product_idx >= len(products):
@@ -1374,6 +1381,7 @@ async def prod_back(cb: CallbackQuery):
                         section=section,
                         subcategory=context.get("subcategory"),
                         group=context.get("group"),
+                        city=city,
                     )
                     if p.get("name")
                 ]
@@ -1381,7 +1389,8 @@ async def prod_back(cb: CallbackQuery):
                 products = [
                     p
                     for p in await db_utils.fetch_products_by_category(
-                        context.get("category", "")
+                        context.get("category", ""),
+                        city=city,
                     )
                     if p.get("name")
                 ]
