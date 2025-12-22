@@ -716,7 +716,8 @@ async def promo_url(msg: Message, state: FSMContext):
     product = data.get("promo_product")
     promo_type = data.get("promo_type")
     city = data.get("promo_city")
-    if not product or not promo_type or not city:
+    source = data.get("promo_source", "catalog")
+    if not product or not promo_type or (source == "stock" and not city):
         await state.clear()
         await send_md_safe(msg, "Не удалось собрать данные для рассылки. Начните заново.", reply_markup=admin_kb())
         return
@@ -869,7 +870,10 @@ async def announce_url(msg: Message, state: FSMContext):
 
     preview_text = _build_announcement_preview(announce_type, announce_text)
 
-    await state.update_data(announce_url=url_value, announce_preview=preview_text)
+    await state.update_data(
+        announce_url=url_value,
+        announce_preview=preview_text,
+    )
     await state.set_state(AnnouncementState.waiting_confirm)
 
     button_markup = None
@@ -932,7 +936,12 @@ async def announce_confirm(cb: CallbackQuery, state: FSMContext):
     preview_text = data.get("announce_preview")
     announce_url = data.get("announce_url")
     announce_text = data.get("announce_text", "")
-    if not preview_text or not announce_text:
+    if not preview_text:
+        if not announce_text:
+            await cb.answer("Нечего отправлять", show_alert=True)
+            return
+        preview_text = _build_announcement_preview(data.get("announce_type", ""), announce_text)
+    if not announce_text:
         await cb.answer("Нечего отправлять", show_alert=True)
         return
 
