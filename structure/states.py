@@ -15,10 +15,26 @@ class SupportRequestState(StatesGroup):
     waiting_text = State()
 
 
-class BroadcastState(StatesGroup):
-    """Состояния для рассылки по артикулу в админ-панели."""
+class PromoBroadcastState(StatesGroup):
+    """Состояния для промо-рассылки по выбранному товару."""
 
-    waiting_article = State()
+    waiting_source = State()
+    waiting_city = State()
+    waiting_section = State()
+    waiting_product = State()
+    waiting_type = State()
+    waiting_extra = State()
+    waiting_url = State()
+    waiting_confirm = State()
+
+
+class AnnouncementState(StatesGroup):
+    """Состояния для объявления без привязки к товару."""
+
+    waiting_type = State()
+    waiting_text = State()
+    waiting_url = State()
+    waiting_confirm = State()
 
 
 class ReadyCatalogState(StatesGroup):

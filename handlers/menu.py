@@ -29,9 +29,10 @@ from structure.markdown import (
     send_md_safe,
     send_md_safe_to_chat,
 )
-from structure.states import SupportRequestState
+from structure.states import SupportRequestState, PromoBroadcastState
 from services.pagination import slice_page
 from services import profiles
+from handlers.admin import promo_type_kb
 from data import db_utils
 from data.ready_catalogs import get_ready_catalogs, get_ready_catalog_by_id
 from services.exchange import current_range, range_label
@@ -70,6 +71,46 @@ def _user_city(user_id: int) -> str:
     """Возвращает выбранный пользователем город или значение по умолчанию."""
 
     return profiles.get_city_or_default(user_id, DEFAULT_CITY)
+
+
+async def _try_capture_promo_selection(
+    cb: CallbackQuery,
+    state: FSMContext,
+    product: dict,
+    section: str,
+    city: str,
+) -> bool:
+    """Перехватывает выбор товара, если админ запустил промо-сценарий."""
+
+    state_name = await state.get_state()
+    if state_name != PromoBroadcastState.waiting_product.state:
+        return False
+
+    data = await state.get_data()
+    promo_section = data.get("promo_section")
+    promo_city = data.get("promo_city")
+    promo_source = data.get("promo_source")
+    if promo_section and promo_section != section:
+        await cb.answer("Этот товар из другого раздела", show_alert=True)
+        return True
+    if promo_source == "stock" and promo_city and promo_city != city:
+        await cb.answer("Выбран другой город", show_alert=True)
+        return True
+
+    product_payload = dict(product)
+    product_payload.setdefault("section", section)
+    product_payload.setdefault("city", city)
+
+    await state.update_data(promo_product=product_payload)
+    await state.set_state(PromoBroadcastState.waiting_type)
+    await send_md_safe(
+        cb.message,
+        f"Товар выбран: {inline_code(product_payload.get('name') or 'Без названия')}\n"
+        "Выберите тип акции:",
+        reply_markup=promo_type_kb(),
+    )
+    await cb.answer("Товар выбран")
+    return True
 
 def _has_media(message: Message) -> bool:
     """Проверяет, содержит ли сообщение вложение, которое нельзя отредактировать как текст."""
@@ -1050,7 +1091,7 @@ async def product_list_page(cb: CallbackQuery):
 
 
 @router.callback_query(F.data.regexp(rf"^{CAT_PROD_PREFIX}:.+:open:"))
-async def product_card(cb: CallbackQuery):
+async def product_card(cb: CallbackQuery, state: FSMContext):
     """Показывает карточку товара и запоминает, как вернуться назад."""
 
     parts = cb.data.split(":")
@@ -1119,6 +1160,9 @@ async def product_card(cb: CallbackQuery):
 
     product_info = products[product_idx]
     p = await db_utils.fetch_product(product_info.get("name", ""), section=section)
+
+    if await _try_capture_promo_selection(cb, state, p, section, city):
+        return
 
     rng, usd = await current_range()
     if logger.isEnabledFor(logging.DEBUG):
@@ -1287,7 +1331,7 @@ async def stock_product_page(cb: CallbackQuery):
 
 
 @router.callback_query(F.data.regexp(rf"^{STOCK_PROD_PREFIX}:.+:open:"))
-async def stock_product_card(cb: CallbackQuery):
+async def stock_product_card(cb: CallbackQuery, state: FSMContext):
     """Показывает карточку остатка и запоминает контекст возврата."""
 
     parts = cb.data.split(":")
@@ -1300,6 +1344,9 @@ async def stock_product_card(cb: CallbackQuery):
     if not item:
         await send_md_safe(cb.message, "Данные об остатках пока отсутствуют.")
         await cb.answer()
+        return
+
+    if await _try_capture_promo_selection(cb, state, item, section, city):
         return
 
     lines = [inline_code(item.get("name"))]

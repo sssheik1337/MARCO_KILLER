@@ -66,7 +66,10 @@ async def init_db() -> None:
 
     CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        tg_id INTEGER UNIQUE NOT NULL
+        tg_id INTEGER UNIQUE NOT NULL,
+        is_active INTEGER DEFAULT 1,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE TABLE IF NOT EXISTS settings (
@@ -185,6 +188,16 @@ async def init_db() -> None:
         await ensure_column(db, "stock_items", "code", "TEXT")
         await ensure_column(db, "stock_items", "extra_info", "TEXT")
         await ensure_column(db, "stock_items", "date_in", "TEXT")
+        await ensure_column(db, "users", "is_active", "INTEGER DEFAULT 1")
+        await ensure_column(db, "users", "created_at", "TEXT DEFAULT CURRENT_TIMESTAMP")
+        await ensure_column(db, "users", "updated_at", "TEXT DEFAULT CURRENT_TIMESTAMP")
+        await db.execute("UPDATE users SET is_active=1 WHERE is_active IS NULL")
+        await db.execute(
+            "UPDATE users SET created_at=COALESCE(created_at, CURRENT_TIMESTAMP)"
+        )
+        await db.execute(
+            "UPDATE users SET updated_at=COALESCE(updated_at, CURRENT_TIMESTAMP)"
+        )
         await db.commit()
 
 

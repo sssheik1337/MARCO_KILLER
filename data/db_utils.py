@@ -12,25 +12,47 @@ async def upsert_user(tg_id: int) -> None:
 
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
-            "INSERT OR IGNORE INTO users(tg_id) VALUES(?)",
+            """
+            INSERT INTO users(tg_id, is_active, created_at, updated_at)
+            VALUES(?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            ON CONFLICT(tg_id) DO UPDATE SET
+                is_active=1,
+                updated_at=CURRENT_TIMESTAMP
+            """,
             (tg_id,),
         )
         await db.commit()
 
 
 async def mark_user_blocked(tg_id: int) -> None:
-    """Удаляет пользователя из рассылки, если он заблокировал бота."""
+    """Помечает пользователя неактивным, если он заблокировал бота."""
 
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("DELETE FROM users WHERE tg_id=?", (tg_id,))
+        await db.execute(
+            """
+            UPDATE users
+            SET is_active=0,
+                updated_at=CURRENT_TIMESTAMP
+            WHERE tg_id=?
+            """,
+            (tg_id,),
+        )
         await db.commit()
 
 
 async def fetch_active_users() -> list[int]:
-    """Возвращает список Telegram ID для рассылки."""
+    """Возвращает список активных Telegram ID для рассылки."""
+
+    return await get_active_user_ids()
+
+
+async def get_active_user_ids() -> list[int]:
+    """Возвращает список ID активных пользователей."""
 
     async with aiosqlite.connect(DB_PATH) as db:
-        cur = await db.execute("SELECT tg_id FROM users ORDER BY id")
+        cur = await db.execute(
+            "SELECT tg_id FROM users WHERE coalesce(is_active, 1)=1 ORDER BY id",
+        )
         rows = await cur.fetchall()
     return [int(row[0]) for row in rows]
 

@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 import sqlite3
@@ -5,7 +6,7 @@ from pathlib import Path
 
 from aiogram import Router, F
 from aiogram.filters import Command, CommandObject
-from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.types import (
     CallbackQuery,
@@ -18,11 +19,8 @@ from aiogram.types import (
 from middlewares.admin_filter import AdminOnly
 from data.db_utils import (
     add_stock_items,
-    fetch_active_users,
     find_catalog_product_by_article,
-    find_product_by_code,
     get_setting,
-    mark_user_blocked,
     set_setting,
 )
 from data import importer
@@ -33,8 +31,9 @@ from formatter import escape_md, send_md_safe
 from data.admins import is_superadmin
 from structure.markdown import edit_md_safe, message_to_markdown, escape_user, send_md_safe_to_chat
 from structure.keyboards import usd_keyboard, import_result_keyboard, cancel_keyboard
+from services import profiles
 from structure.ready_catalogs import ready_catalogs_manage_keyboard, ready_catalog_item_keyboard
-from structure.states import BroadcastState, ReadyCatalogState
+from structure.states import AnnouncementState, PromoBroadcastState, ReadyCatalogState
 from data.ready_catalogs import (
     add_ready_catalog,
     delete_ready_catalog,
@@ -44,7 +43,7 @@ from data.ready_catalogs import (
     update_ready_catalog_title,
 )
 from services.exchange import current_range, refresh_range
-from services.notifications import broadcast, build_product_card
+from services.notifications import broadcast, build_product_card, send_bulk_message
 from services.product_render import build_product_caption
 
 router = Router()
@@ -160,7 +159,8 @@ def admin_kb(show_credentials: bool = False):
          InlineKeyboardButton(text="📦 Остатки фурнитуры СПБ", callback_data="admin:import:stock_hardware_spb")],
         [InlineKeyboardButton(text="➕ Добавить каталог готовых изделий", callback_data="admin:ready:add")],
         [InlineKeyboardButton(text="✏️ Управление каталогами готовых изделий", callback_data="admin:ready:manage")],
-        [InlineKeyboardButton(text="Публикация акции / новинки / распродажи", callback_data="admin:broadcast")],
+        [InlineKeyboardButton(text="📣 Промо по товару", callback_data="admin:promo:start")],
+        [InlineKeyboardButton(text="📢 Объявление (без товара)", callback_data="admin:announce:start")],
         [InlineKeyboardButton(text="💵 Курс USD: авто/ручной", callback_data="admin:usd")],
     ]
     if show_credentials:
@@ -169,11 +169,26 @@ def admin_kb(show_credentials: bool = False):
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def broadcast_type_kb() -> InlineKeyboardMarkup:
-    """Возвращает клавиатуру выбора типа рассылки."""
+def promo_type_kb() -> InlineKeyboardMarkup:
+    """Клавиатура выбора типа акции для промо-рассылки."""
 
     buttons = [
-        InlineKeyboardButton(text=cfg["label"], callback_data=f"admin:broadcast:type:{key}")
+        InlineKeyboardButton(text=cfg["label"], callback_data=f"admin:promo:type:{key}")
+        for key, cfg in _BROADCAST_TYPES.items()
+    ]
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            buttons,
+            [InlineKeyboardButton(text="🏠 В меню", callback_data="home")],
+        ]
+    )
+
+
+def announce_type_kb() -> InlineKeyboardMarkup:
+    """Клавиатура выбора типа акции для объявления без товара."""
+
+    buttons = [
+        InlineKeyboardButton(text=cfg["label"], callback_data=f"admin:announce:type:{key}")
         for key, cfg in _BROADCAST_TYPES.items()
     ]
     return InlineKeyboardMarkup(
@@ -204,6 +219,109 @@ def import_cancel_keyboard() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="🏠 В меню", callback_data="home")],
         ]
     )
+
+
+def promo_city_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура выбора города для промо-сценария остатков."""
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="Москва", callback_data="admin:promo:city:msk"),
+                InlineKeyboardButton(text="Санкт-Петербург", callback_data="admin:promo:city:spb"),
+            ],
+            [InlineKeyboardButton(text="🏠 В меню", callback_data="home")],
+        ]
+    )
+
+
+def promo_section_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура выбора раздела для промо-сценария."""
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="🧵 Ткани", callback_data="admin:promo:section:fabrics"),
+                InlineKeyboardButton(text="🔩 Фурнитура", callback_data="admin:promo:section:hardware"),
+            ],
+            [InlineKeyboardButton(text="🏠 В меню", callback_data="home")],
+        ]
+    )
+
+
+def promo_preview_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура подтверждения отправки промо-рассылки."""
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Отправить всем", callback_data="admin:promo:confirm"),
+                InlineKeyboardButton(text="❌ Отмена", callback_data="admin:promo:cancel"),
+            ],
+            [InlineKeyboardButton(text="🏠 В меню", callback_data="home")],
+        ]
+    )
+
+
+def announce_preview_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура подтверждения отправки объявления без товара."""
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Отправить всем", callback_data="admin:announce:confirm"),
+                InlineKeyboardButton(text="❌ Отмена", callback_data="admin:announce:cancel"),
+            ],
+            [InlineKeyboardButton(text="🏠 В меню", callback_data="home")],
+        ]
+    )
+
+
+def promo_source_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура выбора источника товара для промо (каталог или наличие)."""
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="📦 Каталог", callback_data="admin:promo:source:catalog"),
+                InlineKeyboardButton(text="📦 Наличие", callback_data="admin:promo:source:stock"),
+            ],
+            [InlineKeyboardButton(text="🏠 В меню", callback_data="home")],
+        ]
+    )
+
+
+def _build_promo_preview(
+    product: dict,
+    promo_type: str,
+    extra_text: str | None,
+    rng: str,
+    usd: float | None,
+    *,
+    source: str,
+) -> str:
+    """Собирает текст предпросмотра промо-рассылки."""
+
+    label = _BROADCAST_TYPES[promo_type]["label"]
+    header = f"*{escape_user(label)}*"
+
+    include_city = source == "stock"
+    caption = build_product_caption(product, rng, usd, include_city=include_city)
+
+    blocks = [header, caption]
+    if extra_text:
+        blocks.append(escape_user(extra_text))
+    return "\n\n".join(blocks)
+
+
+def _build_announcement_preview(promo_type: str, text: str) -> str:
+    """Собирает предпросмотр объявления без привязки к товару."""
+
+    label = _BROADCAST_TYPES[promo_type]["label"]
+    header = f"*{escape_user(label)}*"
+    if text:
+        return "\n\n".join([header, text])
+    return header
 
 
 @router.callback_query(F.data == "admin:open")
@@ -290,6 +408,120 @@ async def ready_catalog_manage(cb: CallbackQuery, state: FSMContext):
         "Выберите каталог для управления:",
         reply_markup=ready_catalogs_manage_keyboard(catalogs),
     )
+    await cb.answer()
+
+
+@router.callback_query(F.data == "admin:promo:start")
+async def promo_start(cb: CallbackQuery, state: FSMContext):
+    """Запускает сценарий промо-рассылки по выбранному товару."""
+
+    await state.clear()
+    await state.set_state(PromoBroadcastState.waiting_source)
+    await send_md_safe(
+        cb.message,
+        "Выберите источник товара для промо:",
+        reply_markup=promo_source_keyboard(),
+    )
+    await cb.answer()
+
+
+@router.callback_query(F.data.startswith("admin:promo:source:"))
+async def promo_choose_source(cb: CallbackQuery, state: FSMContext):
+    """Фиксирует источник (каталог или наличие) и предлагает следующий шаг."""
+
+    source = cb.data.split(":")[-1]
+    if source not in {"catalog", "stock"}:
+        await cb.answer("Источник недоступен", show_alert=True)
+        return
+
+    await state.update_data(promo_source=source, promo_city=None)
+
+    if source == "catalog":
+        await state.set_state(PromoBroadcastState.waiting_section)
+        await send_md_safe(
+            cb.message,
+            "Выберите тип из каталога:",
+            reply_markup=promo_section_keyboard(),
+        )
+    else:
+        await state.set_state(PromoBroadcastState.waiting_city)
+        await send_md_safe(
+            cb.message,
+            "Выберите город для промо из наличия:",
+            reply_markup=promo_city_keyboard(),
+        )
+    await cb.answer()
+
+
+@router.callback_query(F.data.startswith("admin:promo:city:"))
+async def promo_choose_city(cb: CallbackQuery, state: FSMContext):
+    """Фиксирует город промо-рассылки для остатков и предлагает выбрать раздел."""
+
+    city = cb.data.split(":")[-1]
+    if city not in {"msk", "spb"}:
+        await cb.answer("Город недоступен", show_alert=True)
+        return
+
+    data = await state.get_data()
+    if data.get("promo_source") != "stock":
+        await cb.answer("Сначала выберите источник «Наличие»", show_alert=True)
+        return
+
+    await state.update_data(promo_city=city)
+    profiles.set_city(cb.from_user.id, city)
+    await state.set_state(PromoBroadcastState.waiting_section)
+    await send_md_safe(
+        cb.message,
+        "Выберите тип из наличия: ткани или фурнитура.",
+        reply_markup=promo_section_keyboard(),
+    )
+    await cb.answer("Город установлен")
+
+
+@router.callback_query(F.data.startswith("admin:promo:section:"))
+async def promo_choose_section(cb: CallbackQuery, state: FSMContext):
+    """Фиксирует раздел и запускает штатную навигацию каталога."""
+
+    section = cb.data.split(":")[-1]
+    if section not in {"fabrics", "hardware"}:
+        await cb.answer("Раздел недоступен", show_alert=True)
+        return
+
+    data = await state.get_data()
+    source = data.get("promo_source")
+    if source not in {"catalog", "stock"}:
+        await cb.answer("Сначала выберите источник", show_alert=True)
+        return
+
+    if source == "stock" and not data.get("promo_city"):
+        await cb.answer("Сначала выберите город", show_alert=True)
+        return
+
+    await state.update_data(promo_section=section)
+    await state.set_state(PromoBroadcastState.waiting_product)
+
+    if source == "catalog":
+        await send_md_safe(
+            cb.message,
+            "Выберите товар из каталога (город не требуется):",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="Открыть категории", callback_data=f"csec:open:{section}")],
+                    [InlineKeyboardButton(text="🏠 В меню", callback_data="home")],
+                ]
+            ),
+        )
+    else:
+        await send_md_safe(
+            cb.message,
+            "Выберите товар из наличия:",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="Открыть категории", callback_data=f"ssec:open:{section}")],
+                    [InlineKeyboardButton(text="🏠 В меню", callback_data="home")],
+                ]
+            ),
+        )
     await cb.answer()
 
 
@@ -438,95 +670,310 @@ async def refresh_usd(cb: CallbackQuery):
         raise
 
 
-@router.callback_query(F.data == "admin:broadcast")
-async def broadcast_menu(cb: CallbackQuery, state: FSMContext):
-    """Запускает сценарий рассылки по артикулу."""
+@router.callback_query(F.data.startswith("admin:promo:type:"))
+async def promo_choose_type(cb: CallbackQuery, state: FSMContext):
+    """Фиксирует тип акции для промо-рассылки."""
 
-    await state.clear()
-    await send_md_safe(
-        cb.message,
-        "Выберите тип рассылки:",
-        reply_markup=broadcast_type_kb(),
-    )
-    await cb.answer()
+    current_state = await state.get_state()
+    if current_state != PromoBroadcastState.waiting_type.state:
+        await cb.answer("Сначала выберите товар", show_alert=True)
+        return
 
-
-@router.callback_query(F.data.startswith("admin:broadcast:type:"))
-async def choose_broadcast_type(cb: CallbackQuery, state: FSMContext):
-    """Фиксирует выбранный тип и запрашивает артикул товара."""
-
-    broadcast_type = cb.data.split(":")[-1]
-    if broadcast_type not in _BROADCAST_TYPES:
+    promo_type = cb.data.split(":")[-1]
+    if promo_type not in _BROADCAST_TYPES:
         await cb.answer("Неизвестный тип", show_alert=True)
         return
 
-    await state.set_state(BroadcastState.waiting_article)
-    await state.update_data(broadcast_type=broadcast_type)
-    label = _BROADCAST_TYPES[broadcast_type]["label"]
+    await state.update_data(promo_type=promo_type)
+    await state.set_state(PromoBroadcastState.waiting_extra)
     await send_md_safe(
         cb.message,
-        f"Вы выбрали {label}. Пришлите артикул товара или серийный номер для рассылки.",
+        "Введите дополнительный текст акции (можно оставить пустым):",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="⏭ Пропустить", callback_data="admin:promo:extra_skip")],
+                [InlineKeyboardButton(text="🏠 В меню", callback_data="home")],
+            ]
+        ),
     )
     await cb.answer()
 
 
-@router.message(BroadcastState.waiting_article)
-async def process_broadcast(msg: Message, state: FSMContext):
-    """Ищет товар по артикулу и отправляет карточку всем пользователям."""
+@router.message(PromoBroadcastState.waiting_extra)
+async def promo_extra_text(msg: Message, state: FSMContext):
+    """Сохраняет дополнительный текст и запрашивает URL кнопки."""
+
+    extra_text = message_to_markdown(msg)
+    await state.update_data(promo_extra=extra_text)
+    await state.set_state(PromoBroadcastState.waiting_url)
+    await send_md_safe(msg, "Пришлите URL для кнопки (или «-» если кнопка не нужна):")
+
+
+@router.callback_query(F.data == "admin:promo:extra_skip")
+async def promo_extra_skip(cb: CallbackQuery, state: FSMContext):
+    """Пропускает ввод дополнительного текста и переходит к шагу URL."""
+
+    await state.update_data(promo_extra="")
+    await state.set_state(PromoBroadcastState.waiting_url)
+    await send_md_safe(cb.message, "Пришлите URL для кнопки (или «-» если кнопка не нужна):")
+    await cb.answer("Текст пропущен")
+
+
+@router.message(PromoBroadcastState.waiting_url)
+async def promo_url(msg: Message, state: FSMContext):
+    """Сохраняет URL кнопки и показывает предпросмотр."""
+
+    url_text = (msg.text or msg.caption or "").strip()
+    url_value = None if not url_text or url_text == "-" else url_text
 
     data = await state.get_data()
-    broadcast_type = data.get("broadcast_type")
-    if not broadcast_type or broadcast_type not in _BROADCAST_TYPES:
-        await send_md_safe(msg, "Сначала выберите тип рассылки через меню админа.")
+    product = data.get("promo_product")
+    promo_type = data.get("promo_type")
+    city = data.get("promo_city")
+    source = data.get("promo_source", "catalog")
+    if not product or not promo_type or (source == "stock" and not city):
         await state.clear()
-        return
-
-    article = (msg.text or msg.caption or "").strip()
-    if not article:
-        await send_md_safe(msg, "Пришлите артикул товара для рассылки.")
-        return
-
-    product = await find_product_by_code(article)
-    if not product:
-        await send_md_safe(msg, "Товар с таким артикулом не найден.")
-        await state.clear()
+        await send_md_safe(msg, "Не удалось собрать данные для рассылки. Начните заново.", reply_markup=admin_kb())
         return
 
     rng, usd = await current_range()
-    caption = build_product_caption(
+    preview_text = _build_promo_preview(
         product,
+        promo_type,
+        data.get("promo_extra"),
         rng,
         usd,
-        include_city=True,
-        prefix=_BROADCAST_TYPES[broadcast_type]["label"],
+        source=data.get("promo_source", "catalog"),
     )
 
-    recipients = await fetch_active_users()
-    if not recipients:
-        await send_md_safe(msg, "Список пользователей пуст, отправлять некому.")
-        await state.clear()
-        return
+    await state.update_data(promo_url=url_value, promo_preview=preview_text)
+    await state.set_state(PromoBroadcastState.waiting_confirm)
 
-    sent = 0
-    blocked = 0
-    for user_id in recipients:
-        try:
-            await send_md_safe_to_chat(msg.bot, user_id, caption)
-            sent += 1
-        except TelegramForbiddenError:
-            blocked += 1
-            await mark_user_blocked(user_id)
-        except TelegramBadRequest as exc:
-            logging.warning("Не удалось отправить рассылку пользователю %s: %s", user_id, exc)
-        except Exception as exc:  # pragma: no cover - логирование сетевых ошибок
-            logging.warning("Сбой отправки рассылки пользователю %s: %s", user_id, exc)
+    button_markup = None
+    if url_value:
+        button_markup = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="Подробнее", url=url_value)],
+            ]
+        )
 
-    await state.clear()
     await send_md_safe(
         msg,
-        f"Рассылка завершена. Доставлено: {sent}. Заблокировали: {blocked}.",
-        reply_markup=admin_kb(),
+        "Предпросмотр промо:\n\n" + preview_text,
+        reply_markup=button_markup or promo_preview_keyboard(),
     )
+    if button_markup:
+        await send_md_safe(msg, "Подтвердите отправку.", reply_markup=promo_preview_keyboard())
+
+
+async def _run_promo_broadcast(bot, text: str, promo_url: str | None, chat_id: int):
+    """Фоновая отправка промо-рассылки с уведомлением администратора."""
+
+    reply_markup = None
+    if promo_url:
+        reply_markup = InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text="Подробнее", url=promo_url)]]
+        )
+
+    delivered, blocked, failed = await send_bulk_message(
+        bot,
+        text,
+        parse_mode="MarkdownV2",
+        reply_markup=reply_markup,
+    )
+    summary_lines = [
+        "Промо-рассылка завершена:",
+        f"✅ Доставлено: {delivered}",
+        f"🚫 Заблокировано: {blocked}",
+        f"⚠️ Ошибок: {failed}",
+    ]
+    await send_md_safe_to_chat(bot, chat_id, "\n".join(summary_lines))
+
+
+@router.callback_query(F.data == "admin:promo:confirm")
+async def promo_confirm(cb: CallbackQuery, state: FSMContext):
+    """Запускает массовую промо-рассылку."""
+
+    current_state = await state.get_state()
+    if current_state != PromoBroadcastState.waiting_confirm.state:
+        await cb.answer("Нечего отправлять", show_alert=True)
+        return
+
+    data = await state.get_data()
+    preview_text = data.get("promo_preview")
+    promo_url = data.get("promo_url")
+    product = data.get("promo_product")
+    if not preview_text or not product:
+        await cb.answer("Нечего отправлять", show_alert=True)
+        return
+
+    await send_md_safe(cb.message, "Рассылка запущена, сообщим об итогах.")
+    await state.clear()
+
+    asyncio.create_task(_run_promo_broadcast(cb.bot, preview_text, promo_url, cb.from_user.id))
+    await cb.answer()
+
+
+@router.callback_query(F.data == "admin:promo:cancel")
+async def promo_cancel(cb: CallbackQuery, state: FSMContext):
+    """Отменяет промо-рассылку и очищает состояние."""
+
+    await state.clear()
+    await send_md_safe(cb.message, "Рассылка отменена.", reply_markup=admin_kb())
+    await cb.answer()
+
+
+@router.callback_query(F.data == "admin:announce:start")
+async def announce_start(cb: CallbackQuery, state: FSMContext):
+    """Запускает сценарий объявления без товара."""
+
+    await state.clear()
+    await state.set_state(AnnouncementState.waiting_type)
+    await send_md_safe(
+        cb.message,
+        "Выберите тип объявления:",
+        reply_markup=announce_type_kb(),
+    )
+    await cb.answer()
+
+
+@router.callback_query(F.data.startswith("admin:announce:type:"))
+async def announce_choose_type(cb: CallbackQuery, state: FSMContext):
+    """Фиксирует тип объявления и запрашивает текст."""
+
+    current_state = await state.get_state()
+    if current_state != AnnouncementState.waiting_type.state:
+        await cb.answer("Сначала начните сценарий объявления", show_alert=True)
+        return
+
+    announce_type = cb.data.split(":")[-1]
+    if announce_type not in _BROADCAST_TYPES:
+        await cb.answer("Неизвестный тип", show_alert=True)
+        return
+
+    await state.update_data(announce_type=announce_type)
+    await state.set_state(AnnouncementState.waiting_text)
+    await send_md_safe(cb.message, "Пришлите текст объявления. Можно использовать форматирование.")
+    await cb.answer()
+
+
+@router.message(AnnouncementState.waiting_text)
+async def announce_text(msg: Message, state: FSMContext):
+    """Сохраняет текст объявления и запрашивает URL кнопки."""
+
+    announce_text = message_to_markdown(msg)
+    await state.update_data(announce_text=announce_text)
+    await state.set_state(AnnouncementState.waiting_url)
+    await send_md_safe(msg, "Пришлите URL для кнопки (или «-» если кнопка не нужна):")
+
+
+@router.message(AnnouncementState.waiting_url)
+async def announce_url(msg: Message, state: FSMContext):
+    """Готовит предпросмотр объявления и запрашивает подтверждение."""
+
+    url_text = (msg.text or msg.caption or "").strip()
+    url_value = None if not url_text or url_text == "-" else url_text
+
+    data = await state.get_data()
+    announce_type = data.get("announce_type")
+    announce_text = data.get("announce_text", "")
+    if not announce_type:
+        await state.clear()
+        await send_md_safe(msg, "Сценарий сброшен. Начните заново.", reply_markup=admin_kb())
+        return
+
+    preview_text = _build_announcement_preview(announce_type, announce_text)
+
+    await state.update_data(
+        announce_url=url_value,
+        announce_preview=preview_text,
+    )
+    await state.set_state(AnnouncementState.waiting_confirm)
+
+    button_markup = None
+    if url_value:
+        button_markup = InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text="Подробнее", url=url_value)]]
+        )
+        await send_md_safe(
+            msg,
+            preview_text,
+            reply_markup=button_markup,
+        )
+        await send_md_safe(
+            msg,
+            "Подтвердите отправку.",
+            reply_markup=announce_preview_keyboard(),
+        )
+    else:
+        await send_md_safe(
+            msg,
+            preview_text,
+            reply_markup=announce_preview_keyboard(),
+        )
+
+
+async def _run_announce_broadcast(bot, text: str, url: str | None, chat_id: int):
+    """Фоновая отправка объявления без товара."""
+
+    reply_markup = None
+    if url:
+        reply_markup = InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text="Подробнее", url=url)]]
+        )
+
+    delivered, blocked, failed = await send_bulk_message(
+        bot,
+        text,
+        parse_mode="MarkdownV2",
+        reply_markup=reply_markup,
+    )
+    summary_lines = [
+        "Объявление отправлено:",
+        f"✅ Доставлено: {delivered}",
+        f"🚫 Заблокировано: {blocked}",
+        f"⚠️ Ошибок: {failed}",
+    ]
+    await send_md_safe_to_chat(bot, chat_id, "\n".join(summary_lines))
+
+
+@router.callback_query(F.data == "admin:announce:confirm")
+async def announce_confirm(cb: CallbackQuery, state: FSMContext):
+    """Запускает массовую рассылку объявления."""
+
+    current_state = await state.get_state()
+    if current_state != AnnouncementState.waiting_confirm.state:
+        await cb.answer("Нечего отправлять", show_alert=True)
+        return
+
+    data = await state.get_data()
+    preview_text = data.get("announce_preview")
+    announce_url = data.get("announce_url")
+    announce_text = data.get("announce_text", "")
+    if not preview_text:
+        if not announce_text:
+            await cb.answer("Нечего отправлять", show_alert=True)
+            return
+        preview_text = _build_announcement_preview(data.get("announce_type", ""), announce_text)
+    if not announce_text:
+        await cb.answer("Нечего отправлять", show_alert=True)
+        return
+
+    await send_md_safe(cb.message, "Рассылка запущена, сообщим об итогах.")
+    await state.clear()
+
+    asyncio.create_task(_run_announce_broadcast(cb.bot, preview_text, announce_url, cb.from_user.id))
+    await cb.answer()
+
+
+@router.callback_query(F.data == "admin:announce:cancel")
+async def announce_cancel(cb: CallbackQuery, state: FSMContext):
+    """Отменяет сценарий объявления и очищает состояние."""
+
+    await state.clear()
+    await send_md_safe(cb.message, "Рассылка отменена.", reply_markup=admin_kb())
+    await cb.answer()
+
 
 # простые текстовые поля (без JSON)
 @router.callback_query(F.data.startswith("admin:edit:"))
