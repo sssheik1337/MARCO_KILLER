@@ -248,6 +248,7 @@ async def ready_catalog_send(cb: CallbackQuery):
     await cb.message.answer_document(
         catalog["file_id"],
         caption=catalog.get("title") or catalog.get("filename"),
+        filename=f"{catalog.get('title') or catalog.get('filename')}.xlsx",
         reply_markup=ready_catalog_file_keyboard(),
         parse_mode=None,
     )
