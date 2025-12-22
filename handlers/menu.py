@@ -1,5 +1,6 @@
 """Обработчики пользовательского меню."""
 import logging
+from aiogram.exceptions import TelegramBadRequest
 import logging
 from collections import defaultdict
 from typing import Any
@@ -64,6 +65,29 @@ def _user_city(user_id: int) -> str:
     """Возвращает выбранный пользователем город или значение по умолчанию."""
 
     return profiles.get_city_or_default(user_id, DEFAULT_CITY)
+
+def _has_media(message: Message) -> bool:
+    """Проверяет, содержит ли сообщение вложение, которое нельзя отредактировать как текст."""
+
+    return bool(
+        message.document
+        or message.photo
+        or message.video
+        or message.audio
+        or message.animation
+        or message.sticker
+    )
+
+async def _safe_delete_message(message: Message) -> None:
+    """Безопасно удаляет сообщение, игнорируя отсутствие прав или уже удалённые сообщения."""
+
+    try:
+        await message.delete()
+    except TelegramBadRequest as exc:
+        text = str(exc).lower()
+        if "message to delete not found" in text or "message can't be deleted" in text:
+            return
+        raise
 
 
 async def _ask_city(target: Message, action: str) -> None:
@@ -173,11 +197,15 @@ def _label_sections(sections: list[str]) -> list[tuple[str, str]]:
 @router.callback_query(F.data == "home")
 async def on_home(cb: CallbackQuery):
     menu_markup = await _main_menu(cb.from_user.id)
-    await send_md_safe(
-        cb.message,
-        "Главное меню:",
-        reply_markup=menu_markup,
-    )
+    if _has_media(cb.message):
+        await _safe_delete_message(cb.message)
+        await cb.message.answer("Главное меню:", reply_markup=menu_markup)
+    else:
+        await send_md_safe(
+            cb.message,
+            "Главное меню:",
+            reply_markup=menu_markup,
+        )
     await cb.answer()
 
 

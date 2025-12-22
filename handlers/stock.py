@@ -316,6 +316,11 @@ async def _show_kinds(message: Message, user_id: int, city: str, section: str) -
     if city == "spb" and section == "hardware":
         file_path = Path("data/stocks/spb/hardware/hardware_stock_spb.xlsx")
         if file_path.exists():
+            # удаляем исходное сообщение меню, чтобы не засорять чат
+            try:
+                await message.delete()
+            except Exception:
+                pass
             await message.answer_document(
                 FSInputFile(file_path),
                 caption="Остатки фурнитуры СПБ",
