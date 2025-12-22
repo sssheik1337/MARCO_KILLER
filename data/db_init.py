@@ -74,6 +74,11 @@ async def init_db() -> None:
         value TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS admin_users (
+        user_id INTEGER PRIMARY KEY,
+        added_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
     CREATE TABLE IF NOT EXISTS ready_catalogs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         title TEXT NOT NULL,
