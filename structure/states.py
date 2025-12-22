@@ -15,12 +15,6 @@ class SupportRequestState(StatesGroup):
     waiting_text = State()
 
 
-class BroadcastState(StatesGroup):
-    """Состояния для рассылки по артикулу в админ-панели."""
-
-    waiting_article = State()
-
-
 class PromoBroadcastState(StatesGroup):
     """Состояния для промо-рассылки по выбранному товару."""
 
