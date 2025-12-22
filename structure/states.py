@@ -28,3 +28,10 @@ class ReadyCatalogState(StatesGroup):
     waiting_file = State()
     rename_title = State()
     replace_file = State()
+
+
+class GetAdminState(StatesGroup):
+    """Состояния авторизации администратора по логину/паролю."""
+
+    waiting_login = State()
+    waiting_password = State()

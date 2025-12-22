@@ -21,3 +21,11 @@ async def is_admin(user_id: int) -> bool:
         cur = await db.execute("SELECT 1 FROM admin_users WHERE user_id = ?", (user_id,))
         row = await cur.fetchone()
         return row is not None
+
+
+async def add_admin_user(user_id: int) -> None:
+    """Добавляет пользователя в список администраторов в БД."""
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("INSERT OR IGNORE INTO admin_users (user_id) VALUES (?)", (user_id,))
+        await db.commit()
