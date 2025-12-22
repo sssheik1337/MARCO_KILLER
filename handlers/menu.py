@@ -1,5 +1,6 @@
 """Обработчики пользовательского меню."""
 import logging
+from aiogram.exceptions import TelegramBadRequest
 import logging
 from collections import defaultdict
 from typing import Any
@@ -22,6 +23,9 @@ from structure.keyboards import (
 )
 from structure.markdown import (
     escape_user,
+    inline_code,
+    edit_md_safe,
+    edit_reply_markup_safe,
     send_md_safe,
     send_md_safe_to_chat,
 )
@@ -29,11 +33,16 @@ from structure.states import SupportRequestState
 from services.pagination import slice_page
 from services import profiles
 from data import db_utils
+from data.ready_catalogs import get_ready_catalogs, get_ready_catalog_by_id
 from services.exchange import current_range, range_label
 from services.product_render import (
     as_float as _as_float,
     format_money as _format_money,
     format_money_with_currency as _format_money_with_currency,
+)
+from structure.ready_catalogs import (
+    ready_catalogs_user_keyboard,
+    ready_catalog_file_keyboard,
 )
 
 router = Router()
@@ -61,6 +70,29 @@ def _user_city(user_id: int) -> str:
     """Возвращает выбранный пользователем город или значение по умолчанию."""
 
     return profiles.get_city_or_default(user_id, DEFAULT_CITY)
+
+def _has_media(message: Message) -> bool:
+    """Проверяет, содержит ли сообщение вложение, которое нельзя отредактировать как текст."""
+
+    return bool(
+        message.document
+        or message.photo
+        or message.video
+        or message.audio
+        or message.animation
+        or message.sticker
+    )
+
+async def _safe_delete_message(message: Message) -> None:
+    """Безопасно удаляет сообщение, игнорируя отсутствие прав или уже удалённые сообщения."""
+
+    try:
+        await message.delete()
+    except TelegramBadRequest as exc:
+        text = str(exc).lower()
+        if "message to delete not found" in text or "message can't be deleted" in text:
+            return
+        raise
 
 
 async def _ask_city(target: Message, action: str) -> None:
@@ -170,10 +202,55 @@ def _label_sections(sections: list[str]) -> list[tuple[str, str]]:
 @router.callback_query(F.data == "home")
 async def on_home(cb: CallbackQuery):
     menu_markup = await _main_menu(cb.from_user.id)
-    await send_md_safe(
-        cb.message,
-        "Главное меню:",
-        reply_markup=menu_markup,
+    if _has_media(cb.message):
+        await _safe_delete_message(cb.message)
+        await cb.message.answer("Главное меню:", reply_markup=menu_markup)
+    else:
+        await send_md_safe(
+            cb.message,
+            "Главное меню:",
+            reply_markup=menu_markup,
+        )
+    await cb.answer()
+
+
+@router.callback_query(F.data == "ready_catalog:back")
+async def ready_catalog_back(cb: CallbackQuery):
+    """Возврат из каталогов готовых изделий в главное меню."""
+
+    menu_markup = await _main_menu(cb.from_user.id)
+    if _has_media(cb.message):
+        await _safe_delete_message(cb.message)
+        await cb.message.answer("Главное меню:", reply_markup=menu_markup)
+    else:
+        await send_md_safe(cb.message, "Главное меню:", reply_markup=menu_markup)
+    await cb.answer()
+
+
+@router.callback_query(F.data.regexp(r"^ready_catalog:open:\d+$"))
+async def ready_catalog_send(cb: CallbackQuery):
+    """Отправляет файл выбранного каталога готовых изделий."""
+
+    catalog_id = int(cb.data.split(":")[-1])
+    catalog = await get_ready_catalog_by_id(catalog_id)
+    if not catalog:
+        await send_md_safe(
+            cb.message,
+            "Каталог не найден.",
+            reply_markup=await _main_menu(cb.from_user.id),
+        )
+        await cb.answer()
+        return
+
+    if _has_media(cb.message):
+        await _safe_delete_message(cb.message)
+
+    await cb.message.answer_document(
+        catalog["file_id"],
+        caption=catalog.get("title") or catalog.get("filename"),
+        filename=f"{catalog.get('title') or catalog.get('filename')}.xlsx",
+        reply_markup=ready_catalog_file_keyboard(),
+        parse_mode=None,
     )
     await cb.answer()
 
@@ -189,6 +266,33 @@ async def on_catalog(cb: CallbackQuery):
     """Показывает выбор раздела каталога."""
 
     await _show_catalog_menu(cb.message)
+    await cb.answer()
+
+
+@router.callback_query(F.data == "ready_catalog")
+async def on_ready_catalogs(cb: CallbackQuery):
+    """Показывает доступные каталоги готовых изделий."""
+
+    target_message = cb.message
+    if target_message.document:
+        await _safe_delete_message(target_message)
+        target_message = await cb.message.answer("Загрузка...", parse_mode=None)
+
+    catalogs = await get_ready_catalogs()
+    if not catalogs:
+        await send_md_safe(
+            target_message,
+            "Каталоги пока не добавлены.",
+            reply_markup=await _main_menu(cb.from_user.id),
+        )
+        await cb.answer()
+        return
+
+    await send_md_safe(
+        target_message,
+        "Каталоги готовых изделий:",
+        reply_markup=ready_catalogs_user_keyboard(catalogs),
+    )
     await cb.answer()
 
 
@@ -220,7 +324,8 @@ async def on_catalog_fabrics(cb: CallbackQuery):
 async def on_catalog_hardware(cb: CallbackQuery):
     """Открывает каталог фурнитуры из общего прайс-листа."""
 
-    categories = [c for c in await db_utils.fetch_categories("hardware") if c]
+    city = _user_city(cb.from_user.id)
+    categories = [c for c in await db_utils.fetch_categories("hardware", city) if c]
     if not categories:
         await send_md_safe(
             cb.message,
@@ -256,6 +361,7 @@ async def on_stock(cb: CallbackQuery):
 # --- каталог: разделы → категории → товары ---
 CAT_SEC_PREFIX = "csec"
 CAT_CAT_PREFIX = "ccat"
+CAT_CAT_BACK_PREFIX = "ccatback"
 CAT_SUB_PREFIX = "csub"
 CAT_GRP_PREFIX = "cgrp"
 CAT_PROD_PREFIX = "cprodlist"
@@ -355,24 +461,25 @@ def _catalog_products_keyboard(
         for title, item_id in items
     ]
 
-    nav_back = [
-        InlineKeyboardButton(text="⬅️ Назад", callback_data=back_cb),
-        InlineKeyboardButton(text="🏠 Главное меню", callback_data="home"),
-    ]
-
     nav_pages: list[InlineKeyboardButton] = []
     if page > 1:
         nav_pages.append(
-            InlineKeyboardButton(text="⬅️", callback_data=f"{prefix}:page:{page-1}")
+            InlineKeyboardButton(text="⬅️ Стр. назад", callback_data=f"{prefix}:page:{page-1}")
         )
     if page < total:
         nav_pages.append(
-            InlineKeyboardButton(text="➡️", callback_data=f"{prefix}:page:{page+1}")
+            InlineKeyboardButton(text="➡️ Стр. вперёд", callback_data=f"{prefix}:page:{page+1}")
         )
 
-    rows.append(nav_back)
     if nav_pages:
         rows.append(nav_pages)
+
+    rows.append(
+        [
+            InlineKeyboardButton(text="↩️ Назад", callback_data=back_cb),
+            InlineKeyboardButton(text="🏠 Главное меню", callback_data="home"),
+        ]
+    )
 
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -431,7 +538,9 @@ def _build_hardware_caption(product: dict) -> str:
         text = value if value not in (None, "") else "—"
         return escape_user(f"{label}: {text}")
 
-    lines.append(_line("Артикул", product.get("article")))
+    article = product.get("article")
+    article_text = "`-`" if article in (None, "") else f"`{article}`"
+    lines.append(f"{escape_user('Артикул')}: {article_text}")
     lines.append(_line("Категория", product.get("category")))
     lines.append(_line("Подкатегория", product.get("subcategory")))
     lines.append(_line("Группа", product.get("group")))
@@ -501,9 +610,7 @@ async def catalog_sections_page(cb: CallbackQuery):
     sections = await db_utils.fetch_sections(city)
     labeled = _label_sections(sections)
     page_items, page, total = slice_page(labeled, page, PAGE_SIZE)
-    await cb.message.edit_reply_markup(
-        reply_markup=pager(CAT_SEC_PREFIX, page_items, page, total)
-    )
+    await edit_reply_markup_safe(cb.message, pager(CAT_SEC_PREFIX, page_items, page, total))
     await cb.answer()
 
 
@@ -535,8 +642,32 @@ async def open_category_page(cb: CallbackQuery):
     cats = [c for c in await db_utils.fetch_categories(section, city) if c]
     enumerated = [(name, str(idx)) for idx, name in enumerate(cats)]
     page_items, page, total = slice_page(enumerated, page, PAGE_SIZE)
-    await cb.message.edit_reply_markup(
-        reply_markup=pager(f"{CAT_CAT_PREFIX}:{section}", page_items, page, total)
+    await edit_reply_markup_safe(
+        cb.message, pager(f"{CAT_CAT_PREFIX}:{section}", page_items, page, total)
+    )
+    await cb.answer()
+
+
+@router.callback_query(F.data.regexp(rf"^{CAT_CAT_BACK_PREFIX}:[^:]+$"))
+async def back_to_categories(cb: CallbackQuery):
+    section = cb.data.split(":")[1]
+    city = _user_city(cb.from_user.id)
+    cats = [c for c in await db_utils.fetch_categories(section, city) if c]
+    if not cats:
+        await send_md_safe(
+            cb.message,
+            "Каталог пока пуст. Позиции появятся позже.",
+            reply_markup=await _main_menu(cb.from_user.id),
+        )
+        await cb.answer()
+        return
+
+    enumerated = [(name, str(idx)) for idx, name in enumerate(cats)]
+    page_items, page, total = slice_page(enumerated, 1, PAGE_SIZE)
+    await send_md_safe(
+        cb.message,
+        "Категории:",
+        reply_markup=pager(f"{CAT_CAT_PREFIX}:{section}", page_items, page, total),
     )
     await cb.answer()
 
@@ -545,6 +676,7 @@ async def open_category_page(cb: CallbackQuery):
 async def open_subcategory_page(cb: CallbackQuery):
     parts = cb.data.split(":")
     section = parts[1]
+    city = _user_city(cb.from_user.id)
     try:
         category_idx = int(parts[2])
     except ValueError:
@@ -552,7 +684,7 @@ async def open_subcategory_page(cb: CallbackQuery):
         return
     page = int(parts[-1])
 
-    categories = [c for c in await db_utils.fetch_categories(section) if c]
+    categories = [c for c in await db_utils.fetch_categories(section, city) if c]
     if category_idx < 0 or category_idx >= len(categories):
         await cb.answer("Категория недоступна", show_alert=True)
         return
@@ -561,10 +693,16 @@ async def open_subcategory_page(cb: CallbackQuery):
     subs = [s for s in await db_utils.fetch_subcategories(category) if s]
     enumerated = [(name, str(idx)) for idx, name in enumerate(subs)]
     page_items, page, total = slice_page(enumerated, page, PAGE_SIZE)
-    await cb.message.edit_reply_markup(
-        reply_markup=pager(
-            f"{CAT_SUB_PREFIX}:{section}:{category_idx}", page_items, page, total
-        )
+    await edit_reply_markup_safe(
+        cb.message,
+        pager(
+            f"{CAT_SUB_PREFIX}:{section}:{category_idx}",
+            page_items,
+            page,
+            total,
+            back_cb=f"{CAT_CAT_BACK_PREFIX}:{section}",
+            back_text="◀️ К категориям",
+        ),
     )
     await cb.answer()
 
@@ -573,6 +711,7 @@ async def open_subcategory_page(cb: CallbackQuery):
 async def open_group_page(cb: CallbackQuery):
     parts = cb.data.split(":")
     section = parts[1]
+    city = _user_city(cb.from_user.id)
     try:
         category_idx = int(parts[2])
         sub_idx_raw = parts[3]
@@ -582,7 +721,7 @@ async def open_group_page(cb: CallbackQuery):
         return
     page = int(parts[-1])
 
-    categories = [c for c in await db_utils.fetch_categories(section) if c]
+    categories = [c for c in await db_utils.fetch_categories(section, city) if c]
     if category_idx < 0 or category_idx >= len(categories):
         await cb.answer("Раздел недоступен", show_alert=True)
         return
@@ -601,13 +740,14 @@ async def open_group_page(cb: CallbackQuery):
     ]
     enumerated = [(name, str(idx)) for idx, name in enumerate(groups)]
     page_items, page, total = slice_page(enumerated, page, PAGE_SIZE)
-    await cb.message.edit_reply_markup(
-        reply_markup=pager(
+    await edit_reply_markup_safe(
+        cb.message,
+        pager(
             f"{CAT_GRP_PREFIX}:{section}:{category_idx}:{subcategory_idx if subcategory_idx is not None else ''}",
             page_items,
             page,
             total,
-        )
+        ),
     )
     await cb.answer()
 
@@ -648,6 +788,8 @@ async def open_category(cb: CallbackQuery):
                     page_items,
                     page,
                     total,
+                    back_cb=f"{CAT_CAT_BACK_PREFIX}:{section}",
+                    back_text="◀️ К категориям",
                 ),
             )
         else:
@@ -663,13 +805,15 @@ async def open_category(cb: CallbackQuery):
                         page_items,
                         page,
                         total,
+                        back_cb=f"{CAT_CAT_BACK_PREFIX}:{section}",
+                        back_text="◀️ К категориям",
                     ),
                 )
             else:
                 prods = [
                     p
                     for p in await db_utils.fetch_products_by_category(
-                        category, section=section
+                        category, section=section, city=city
                     )
                     if p.get("name")
                 ]
@@ -685,7 +829,9 @@ async def open_category(cb: CallbackQuery):
                 await send_md_safe(cb.message, category, reply_markup=reply_markup)
     else:
         prods = [
-            p for p in await db_utils.fetch_products_by_category(category) if p.get("name")
+            p
+            for p in await db_utils.fetch_products_by_category(category, city=city)
+            if p.get("name")
         ]
         items = [(p["name"], str(idx)) for idx, p in enumerate(prods)]
         page_items, page, total = slice_page(items, 1, PAGE_SIZE)
@@ -704,6 +850,7 @@ async def open_category(cb: CallbackQuery):
 async def open_subcategory(cb: CallbackQuery):
     parts = cb.data.split(":")
     section = parts[1]
+    city = _user_city(cb.from_user.id)
     category_idx = int(parts[2])
     sub_idx_raw = parts[-1]
     try:
@@ -712,7 +859,7 @@ async def open_subcategory(cb: CallbackQuery):
         await cb.answer("Раздел недоступен", show_alert=True)
         return
 
-    categories = [c for c in await db_utils.fetch_categories(section) if c]
+    categories = [c for c in await db_utils.fetch_categories(section, city) if c]
     if category_idx < 0 or category_idx >= len(categories):
         await cb.answer("Раздел недоступен", show_alert=True)
         return
@@ -742,7 +889,7 @@ async def open_subcategory(cb: CallbackQuery):
         prods = [
             p
             for p in await db_utils.fetch_products_by_category(
-                category, section=section, subcategory=subcategory
+                category, section=section, subcategory=subcategory, city=city
             )
             if p.get("name")
         ]
@@ -764,6 +911,7 @@ async def open_subcategory(cb: CallbackQuery):
 async def open_group(cb: CallbackQuery):
     parts = cb.data.split(":")
     section = parts[1]
+    city = _user_city(cb.from_user.id)
     category_idx_raw = parts[2]
     subcategory_idx_raw = parts[3]
     grp_idx_raw = parts[-1]
@@ -777,7 +925,7 @@ async def open_group(cb: CallbackQuery):
         await cb.answer("Раздел недоступен", show_alert=True)
         return
 
-    categories = [c for c in await db_utils.fetch_categories(section) if c]
+    categories = [c for c in await db_utils.fetch_categories(section, city) if c]
     if category_idx < 0 or category_idx >= len(categories):
         await cb.answer("Раздел недоступен", show_alert=True)
         return
@@ -800,7 +948,7 @@ async def open_group(cb: CallbackQuery):
     prods = [
         p
         for p in await db_utils.fetch_products_by_category(
-            category, section=section, subcategory=subcategory, group=group
+            category, section=section, subcategory=subcategory, group=group, city=city
         )
         if p.get("name")
     ]
@@ -864,7 +1012,7 @@ async def product_list_page(cb: CallbackQuery):
         prods = [
             p
             for p in await db_utils.fetch_products_by_category(
-                category, section=section, subcategory=subcategory, group=group
+                category, section=section, subcategory=subcategory, group=group, city=city
             )
             if p.get("name")
         ]
@@ -882,7 +1030,7 @@ async def product_list_page(cb: CallbackQuery):
     else:
         prods = [
             p
-            for p in await db_utils.fetch_products_by_category(category)
+            for p in await db_utils.fetch_products_by_category(category, city=city)
             if p.get("name")
         ]
         back_cb = f"{CAT_CAT_PREFIX}:{section}:page:1"
@@ -897,7 +1045,7 @@ async def product_list_page(cb: CallbackQuery):
         total,
         back_cb=back_cb,
     )
-    await cb.message.edit_reply_markup(reply_markup=reply_markup)
+    await edit_reply_markup_safe(cb.message, reply_markup=reply_markup)
     await cb.answer()
 
 
@@ -924,6 +1072,8 @@ async def product_card(cb: CallbackQuery):
     category = parts[2] if section != "hardware" and len(parts) > 2 else ""
 
     city = _user_city(cb.from_user.id)
+    subcategory = None
+    group = None
     if section == "hardware":
         categories = [c for c in await db_utils.fetch_categories(section, city) if c]
         if category_idx < 0 or category_idx >= len(categories):
@@ -939,7 +1089,6 @@ async def product_card(cb: CallbackQuery):
                 return
             subcategory = subs[subcategory_idx]
 
-        group = None
         if group_idx is not None:
             groups = [
                 g
@@ -954,14 +1103,14 @@ async def product_card(cb: CallbackQuery):
         products = [
             p
             for p in await db_utils.fetch_products_by_category(
-                category, section=section, subcategory=subcategory, group=group
+                category, section=section, subcategory=subcategory, group=group, city=city
             )
             if p.get("name")
         ]
     else:
         products = [
             p
-            for p in await db_utils.fetch_products_by_category(category)
+            for p in await db_utils.fetch_products_by_category(category, city=city)
             if p.get("name")
         ]
     if product_idx < 0 or product_idx >= len(products):
@@ -995,16 +1144,28 @@ async def product_card(cb: CallbackQuery):
         else f"{CAT_PROD_PREFIX}:{section}:{category}"
     )
 
+    prev_cb = None
+    next_cb = None
+    if product_idx > 0:
+        prev_cb = f"{list_prefix}:open:{product_idx - 1}"
+    if product_idx + 1 < len(products):
+        next_cb = f"{list_prefix}:open:{product_idx + 1}"
+
+    controls = product_controls(product_idx, prev_cb=prev_cb, next_cb=next_cb)
+
     if p.get("image_url"):
-        msg = await cb.message.answer_photo(
-            p["image_url"], caption=caption,
-            reply_markup=product_controls(product_idx)
-        )
+        if cb.message.photo:
+            msg = await cb.message.edit_caption(caption, reply_markup=controls, parse_mode=None)
+        else:
+            msg = await cb.message.answer_photo(
+                p["image_url"], caption=caption,
+                reply_markup=controls
+            )
     else:
-        msg = await send_md_safe(
+        msg = await edit_md_safe(
             cb.message,
             caption,
-            reply_markup=product_controls(product_idx),
+            reply_markup=controls,
         )
 
     _PRODUCT_CONTEXT[cb.from_user.id][msg.message_id] = {
@@ -1028,9 +1189,7 @@ async def stock_sections_page(cb: CallbackQuery):
     sections = await db_utils.fetch_stock_sections(city)
     labeled = [(section.title(), section) for section in sections]
     page_items, page, total = slice_page(labeled, page, PAGE_SIZE)
-    await cb.message.edit_reply_markup(
-        reply_markup=pager(STOCK_SEC_PREFIX, page_items, page, total)
-    )
+    await edit_reply_markup_safe(cb.message, pager(STOCK_SEC_PREFIX, page_items, page, total))
     await cb.answer()
 
 
@@ -1062,8 +1221,8 @@ async def stock_category_page(cb: CallbackQuery):
     cats = await db_utils.fetch_stock_categories(section, city)
     enumerated = [(name, str(idx)) for idx, name in enumerate(cats)]
     page_items, page, total = slice_page(enumerated, page, PAGE_SIZE)
-    await cb.message.edit_reply_markup(
-        reply_markup=pager(f"{STOCK_CAT_PREFIX}:{section}", page_items, page, total)
+    await edit_reply_markup_safe(
+        cb.message, pager(f"{STOCK_CAT_PREFIX}:{section}", page_items, page, total)
     )
     await cb.answer()
 
@@ -1120,10 +1279,9 @@ async def stock_product_page(cb: CallbackQuery):
         return
     items = [(name, str(pid)) for pid, name in prods]
     page_items, page, total = slice_page(items, page, PAGE_SIZE)
-    await cb.message.edit_reply_markup(
-        reply_markup=pager(
-            f"{STOCK_PROD_PREFIX}:{section}:{category}", page_items, page, total
-        )
+    await edit_reply_markup_safe(
+        cb.message,
+        pager(f"{STOCK_PROD_PREFIX}:{section}:{category}", page_items, page, total),
     )
     await cb.answer()
 
@@ -1144,14 +1302,16 @@ async def stock_product_card(cb: CallbackQuery):
         await cb.answer()
         return
 
-    lines = [f"*{escape_user(item.get('name'))}*"]
+    lines = [inline_code(item.get("name"))]
 
-    def _line(label: str, value: object) -> str:
-        text = value if value not in (None, "") else "-"
+    def _line(label: str, value: object, *, raw: bool = False) -> str:
+        text = value if value not in (None, "") else "`-`"
+        if raw:
+            return f"{escape_user(label)}: {text}"
         return escape_user(f"{label}: {text}")
 
-    lines.append(_line("Артикул", item.get("article")))
-    lines.append(_line("Код", item.get("code")))
+    lines.append(_line("Артикул", inline_code(item.get("article")), raw=True))
+    lines.append(_line("Код", inline_code(item.get("code")), raw=True))
     lines.append(_line("Доп. информация", item.get("extra_info")))
     lines.append(_line("Дата прихода", item.get("date_in")))
     qty_text = _format_quantity_value(
@@ -1221,6 +1381,7 @@ async def prod_back(cb: CallbackQuery):
                         section=section,
                         subcategory=context.get("subcategory"),
                         group=context.get("group"),
+                        city=city,
                     )
                     if p.get("name")
                 ]
@@ -1228,7 +1389,8 @@ async def prod_back(cb: CallbackQuery):
                 products = [
                     p
                     for p in await db_utils.fetch_products_by_category(
-                        context.get("category", "")
+                        context.get("category", ""),
+                        city=city,
                     )
                     if p.get("name")
                 ]

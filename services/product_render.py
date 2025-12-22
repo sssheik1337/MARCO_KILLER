@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from structure.markdown import escape_user
+from structure.markdown import escape_user, inline_code
 from services.exchange import range_label
 
 _CITY_LABELS = {
@@ -43,8 +43,13 @@ def format_money_with_currency(value: float | None, currency: str | None) -> str
     return f"{value:.2f} {code}"
 
 
-def _line(label: str, value: object) -> str:
+def _line(label: str, value: object, *, raw: bool = False) -> str:
+    """Формирует строку с экранированием или готовым фрагментом."""
+
     text = value if value not in (None, "") else "-"
+    label_text = escape_user(label)
+    if raw:
+        return f"{label_text}: {text}"
     return escape_user(f"{label}: {text}")
 
 
@@ -73,26 +78,26 @@ def build_product_caption(
         roll = format_money(as_float(product.get(f"price_roll_{range_key}")))
         price_line = f"Отрез: {piece} · Ролик: {roll}"
         course_line = f"💵 {lbl}"
-        article_value = "-"
+        article_value = inline_code(product.get("article"))
     else:
         currency = product.get("currency") or ""
         rrc = format_money_with_currency(as_float(product.get("price_rrc")), currency)
         opt = format_money_with_currency(as_float(product.get("price_opt")), currency)
         price_line = f"РРЦ: {rrc} · Опт: {opt}"
         course_line = lbl
-        article_value = product.get("article")
+        article_value = inline_code(product.get("article"))
 
     lines: list[str] = []
     if prefix:
         lines.append(escape_user(prefix))
-    lines.append(f"*{escape_user(product.get('name'))}*")
+    lines.append(inline_code(product.get("name")))
 
     if include_city:
         city_label = _city_label(product.get("city"))
         if city_label:
             lines.append(escape_user(f"Город: {city_label}"))
 
-    lines.append(_line("Артикул", article_value or "-"))
+    lines.append(_line("Артикул", article_value or "-", raw=True))
 
     if product.get("section") == "fabrics":
         lines.extend(

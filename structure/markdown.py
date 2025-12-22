@@ -199,6 +199,20 @@ def escape_user(text: str | None) -> str:
     return MarkdownV2Escaper.escape_preserving(normalized)
 
 
+def escape_md(text: str | None) -> str:
+    """Единый метод экранирования строк под MarkdownV2."""
+
+    return escape_user(text)
+
+
+def inline_code(value: object | None) -> str:
+    """Возвращает строку в моноширинном формате MarkdownV2 без экранирования внутри."""
+
+    if value in (None, ""):
+        return "`-`"
+    return f"`{value}`"
+
+
 def escape_full(text: str) -> str:
     """Полностью экранирует текст на случай некорректной разметки."""
 
@@ -254,6 +268,24 @@ async def send_md_safe(
     destination = target if isinstance(target, Message) else target.message
     can_edit = bool(destination and destination.from_user and destination.from_user.is_bot)
 
+    # Если редактировать нечего (сообщение без текста/подписи, например документ/фото),
+    # удаляем его и отправляем новое, чтобы избежать ошибок Telegram.
+    if can_edit and not (destination.text or destination.caption):
+        try:
+            await destination.delete()
+        except TelegramBadRequest as exc:
+            if "message to delete not found" not in str(exc).lower():
+                raise
+        kwargs: dict[str, object] = {"reply_markup": reply_markup, "parse_mode": ParseMode.MARKDOWN_V2}
+        if disable_web_page_preview is not None:
+            kwargs["disable_web_page_preview"] = disable_web_page_preview
+        return await destination.answer(text, **kwargs)
+
+    if can_edit:
+        current_text = destination.text or destination.caption or ""
+        if current_text == text and destination.reply_markup == reply_markup:
+            return destination
+
     async def _sender(payload: str, parse_mode: ParseMode | None):
         kwargs: dict[str, object] = {"reply_markup": reply_markup}
         if parse_mode is not None:
@@ -261,10 +293,14 @@ async def send_md_safe(
         if disable_web_page_preview is not None:
             kwargs["disable_web_page_preview"] = disable_web_page_preview
         if can_edit:
-            return await destination.edit_text(payload, **kwargs)
+            if destination.text is not None:
+                return await destination.edit_text(payload, **kwargs)
+            if destination.caption is not None:
+                return await destination.edit_caption(payload, **kwargs)
+            return await destination.answer(payload, **kwargs)
         return await destination.answer(payload, **kwargs)
 
-    return await _send_with_fallback(_sender, text)
+    return await _send_with_fallback(_sender, text, destination)
 
 
 async def edit_md_safe(
@@ -281,13 +317,21 @@ async def edit_md_safe(
 
     destination = target if isinstance(target, Message) else target.message
 
+    current_text = destination.text or destination.caption or ""
+    if current_text == text and destination.reply_markup == reply_markup:
+        return destination
+
     async def _sender(payload: str, parse_mode: ParseMode | None):
         kwargs: dict[str, object] = {"reply_markup": reply_markup}
         if parse_mode is not None:
             kwargs["parse_mode"] = parse_mode
-        return await destination.edit_text(payload, **kwargs)
+        if destination.text is not None:
+            return await destination.edit_text(payload, **kwargs)
+        if destination.caption is not None:
+            return await destination.edit_caption(payload, **kwargs)
+        return await destination.answer(payload, **kwargs)
 
-    return await _send_with_fallback(_sender, text)
+    return await _send_with_fallback(_sender, text, destination)
 
 
 async def send_md_safe_to_chat(
@@ -312,25 +356,57 @@ async def send_md_safe_to_chat(
 
 
 async def _send_with_fallback(
-    sender: Callable[[str, ParseMode | None], Awaitable[Message]], text: str
+    sender: Callable[[str, ParseMode | None], Awaitable[Message]],
+    text: str,
+    destination: Message | None = None,
 ) -> Message:
     """Выполняет отправку с несколькими попытками для сохранения Markdown."""
 
     try:
-        return await sender(text, None)
-    except TelegramBadRequest:
+        return await sender(text, ParseMode.MARKDOWN_V2)
+    except TelegramBadRequest as exc:
+        if "message is not modified" in str(exc).lower() and destination:
+            return destination
         pass
 
     preserved = MarkdownV2Escaper.escape_preserving(text)
-    if preserved:
+    if preserved and preserved != text:
         try:
             return await sender(preserved, ParseMode.MARKDOWN_V2)
-        except TelegramBadRequest:
+        except TelegramBadRequest as exc:
+            if "message is not modified" in str(exc).lower() and destination:
+                return destination
             pass
 
     try:
         return await sender(escape_full(text), ParseMode.MARKDOWN_V2)
-    except TelegramBadRequest:
+    except TelegramBadRequest as exc:
+        if "message is not modified" in str(exc).lower() and destination:
+            return destination
         pass
 
-    return await sender(strip_markdown(text), None)
+    plain_safe = MarkdownV2Escaper.escape_plain(strip_markdown(text))
+    try:
+        return await sender(plain_safe, ParseMode.MARKDOWN_V2)
+    except TelegramBadRequest as exc:
+        if "message is not modified" in str(exc).lower() and destination:
+            return destination
+        raise
+
+
+async def edit_reply_markup_safe(
+    message: Message,
+    reply_markup: InlineKeyboardMarkup | ReplyKeyboardMarkup | ReplyKeyboardRemove | None,
+) -> Message:
+    """Редактирует только клавиатуру, игнорируя попытку установить то же значение."""
+
+    current_keyboard = getattr(message.reply_markup, "inline_keyboard", None)
+    new_keyboard = getattr(reply_markup, "inline_keyboard", None)
+    if current_keyboard == new_keyboard:
+        return message
+    try:
+        return await message.edit_reply_markup(reply_markup=reply_markup)
+    except TelegramBadRequest as exc:
+        if "message is not modified" in str(exc).lower():
+            return message
+        raise

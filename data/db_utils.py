@@ -91,7 +91,7 @@ async def fetch_sections(city: str = DEFAULT_CITY) -> list[str]:
 
 
 async def fetch_categories(section: str, city: str = DEFAULT_CITY) -> list[str]:
-    """Возвращает уникальные категории для выбранного раздела."""
+    """Возвращает уникальные категории для выбранного раздела и города."""
 
     target_section = section or ""
 
@@ -100,17 +100,19 @@ async def fetch_categories(section: str, city: str = DEFAULT_CITY) -> list[str]:
             "SELECT DISTINCT category "
             "FROM products "
             "WHERE section='hardware' "
+            "  AND city IN (?, 'all') "
             "ORDER BY category"
         )
-        params: tuple = ()
+        params: tuple = (city,)
     else:
         sql = (
             "SELECT DISTINCT category "
             "FROM products "
             "WHERE section='fabrics' "
+            "  AND city IN (?, 'all') "
             "ORDER BY category"
         )
-        params = ()
+        params = (city,)
 
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(sql, params)
@@ -123,29 +125,32 @@ async def fetch_products_by_category(
     section: str = "fabrics",
     subcategory: str | None = None,
     group: str | None = None,
+    city: str = DEFAULT_CITY,
 ) -> list[dict]:
-    """Возвращает товары выбранной категории (и иерархии для фурнитуры)."""
+    """Возвращает товары выбранной категории (и иерархии для фурнитуры) по городу."""
 
     if section == "hardware":
         sql = (
             "SELECT * "
             "FROM products "
             "WHERE section='hardware' "
+            "  AND city IN (?, 'all') "
             "  AND category = ? "
             "  AND (subcategory = ? OR (subcategory IS NULL AND ? IS NULL)) "
             "  AND (\"group\" = ? OR (\"group\" IS NULL AND ? IS NULL)) "
             "ORDER BY name"
         )
-        params = (category, subcategory, subcategory, group, group)
+        params = (city, category, subcategory, subcategory, group, group)
     else:
         sql = (
             "SELECT * "
             "FROM products "
             "WHERE section='fabrics' "
+            "  AND city IN (?, 'all') "
             "  AND category = ? "
             "ORDER BY name"
         )
-        params = (category,)
+        params = (city, category)
 
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(sql, params)

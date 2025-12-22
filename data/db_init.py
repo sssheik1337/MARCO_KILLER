@@ -14,8 +14,6 @@ async def init_db() -> None:
         os.makedirs(db_dir, exist_ok=True)
 
     create_sql = """
-    DROP TABLE IF EXISTS products;
-
     CREATE TABLE IF NOT EXISTS products (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         city TEXT NOT NULL,
@@ -74,6 +72,19 @@ async def init_db() -> None:
     CREATE TABLE IF NOT EXISTS settings (
         key TEXT PRIMARY KEY,
         value TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS admin_users (
+        user_id INTEGER PRIMARY KEY,
+        added_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS ready_catalogs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT NOT NULL,
+        file_id TEXT NOT NULL,
+        filename TEXT NOT NULL,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE TABLE IF NOT EXISTS fabrics_catalog (

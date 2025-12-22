@@ -19,3 +19,19 @@ class BroadcastState(StatesGroup):
     """Состояния для рассылки по артикулу в админ-панели."""
 
     waiting_article = State()
+
+
+class ReadyCatalogState(StatesGroup):
+    """Состояния управления каталогами готовых изделий."""
+
+    waiting_title = State()
+    waiting_file = State()
+    rename_title = State()
+    replace_file = State()
+
+
+class GetAdminState(StatesGroup):
+    """Состояния авторизации администратора по логину/паролю."""
+
+    waiting_login = State()
+    waiting_password = State()

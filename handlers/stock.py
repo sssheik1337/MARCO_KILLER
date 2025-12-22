@@ -4,7 +4,9 @@ import re
 from collections import defaultdict
 
 from aiogram import F, Router
-from aiogram.types import CallbackQuery, Message
+from aiogram.exceptions import TelegramBadRequest
+from aiogram.types import CallbackQuery, Message, FSInputFile
+from pathlib import Path
 
 from data.stock_interface import load_city_stock
 from data.stock_models import StockItemCity
@@ -19,7 +21,7 @@ from structure.keyboards import (
     kb_stock_kinds,
     kb_stock_sections,
 )
-from structure.markdown import MarkdownV2Escaper, edit_md_safe, send_md_safe
+from structure.markdown import MarkdownV2Escaper, edit_md_safe, escape_md, inline_code, send_md_safe
 
 router = Router()
 
@@ -32,11 +34,24 @@ HARDWARE_ITEM_PAGE_SIZE = 5
 
 _STOCK_SELECTIONS: dict[int, dict] = defaultdict(dict)
 
+async def _safe_delete_message(message: Message) -> None:
+    """Безопасно удаляет сообщение, игнорируя недоступные случаи."""
 
-def escape_md(text: str | None) -> str:
-    """Экранирует текст для MarkdownV2."""
+    try:
+        await message.delete()
+    except TelegramBadRequest as exc:
+        if "message to delete not found" in str(exc).lower() or "can't be deleted" in str(exc).lower():
+            return
+        raise
+    except Exception:
+        return
 
-    return MarkdownV2Escaper.escape_plain(text or "")
+def _plain_title(section: str, city: str) -> str:
+    """Возвращает заголовок раздела без Markdown-экранирования."""
+
+    section_title = SECTION_TITLES.get(section, section)
+    city_title = CITY_TITLES.get(city, city)
+    return f"{section_title} • {city_title}"
 
 
 def _slugify(value: str, used: set[str]) -> str:
@@ -103,7 +118,17 @@ async def send_stock_page(message: Message, stock: StockItemCity, page: int) -> 
                 back_callback=stock.back_callback,
                 flat=not (stock.kind_slug or stock.type_slug),
             )
-        await send_md_safe(message, "Данные об остатках пока отсутствуют.", reply_markup=markup)
+        empty_text = "Данные об остатках пока отсутствуют."
+        if (
+            message.from_user
+            and message.from_user.is_bot
+            and (message.text or message.caption or "") == empty_text
+        ):
+            current_keyboard = getattr(message.reply_markup, "inline_keyboard", None)
+            if current_keyboard == getattr(markup, "inline_keyboard", None):
+                return
+
+        await send_md_safe(message, empty_text, reply_markup=markup)
         return
 
     page_size = (
@@ -120,20 +145,20 @@ async def send_stock_page(message: Message, stock: StockItemCity, page: int) -> 
         item_lines: list[str] = []
 
         if stock.city == "spb" and stock.section == "fabrics":
-            item_lines.append(f"{offset}) `{escape_md(item.name)}`")
+            item_lines.append(f"{offset}) {inline_code(item.name)}")
             qty_text = "" if item.quantity is None else str(item.quantity)
             free_text = "" if getattr(item, "free_quantity", None) is None else str(item.free_quantity)
             item_lines.append(f"Остаток: {qty_text} {item.unit or ''}".rstrip())
             item_lines.append(f"Свободный: {free_text} {item.unit or ''}".rstrip())
         elif stock.section == "hardware" and stock.city == "msk":
-            item_lines.append(f"{offset}) *{escape_md(item.name)}*")
+            item_lines.append(f"{offset}) {inline_code(item.name)}")
             if item.code:
-                item_lines.append(f"Код: `{escape_md(item.code)}`")
+                item_lines.append(f"Код: {inline_code(item.code)}")
             else:
                 item_lines.append("Код: отсутствует")
 
             if item.article:
-                item_lines.append(f"Артикул: `{escape_md(item.article)}`")
+                item_lines.append(f"Артикул: {inline_code(item.article)}")
             else:
                 item_lines.append("Артикул: отсутствует")
 
@@ -142,7 +167,7 @@ async def send_stock_page(message: Message, stock: StockItemCity, page: int) -> 
             unit_value = item.unit or ""
             item_lines.append(f"Ед.: {unit_value}")
         else:
-            item_lines.append(f"{offset}) *{escape_md(item.name)}*")
+            item_lines.append(f"{offset}) {inline_code(item.name)}")
             if item.quantity is not None and item.unit:
                 item_lines.append(f"Наличие: {item.quantity} {item.unit}")
 
@@ -152,17 +177,14 @@ async def send_stock_page(message: Message, stock: StockItemCity, page: int) -> 
 
         lines.append("\n".join(item_lines))
 
-    city_label = escape_md(CITY_TITLES.get(stock.city, stock.city))
-    section_label = escape_md(SECTION_TITLES.get(stock.section, stock.section))
-
-    header: list[str] = [f"{section_label} • {city_label}"]
+    header: list[str] = [_plain_title(stock.section, stock.city)]
     if stock.kind:
         if stock.city == "spb" and stock.section == "fabrics":
-            header.append(f"Коллекция: {escape_md(stock.kind)}")
+            header.append(f"Коллекция: {stock.kind}")
         else:
-            header.append(f"Вид: {escape_md(stock.kind)}")
+            header.append(f"Вид: {stock.kind}")
     if stock.item_type:
-        header.append(f"Тип: {escape_md(stock.item_type)}")
+        header.append(f"Тип: {stock.item_type}")
     header.append(f"Страница {page}/{total_pages}")
 
     text = "\n\n".join(["\n".join(header), *lines])
@@ -205,7 +227,7 @@ async def _show_hardware_kinds(message: Message, user_id: int, city: str, page: 
 
     kinds = sorted({item.kind for item in stock.items if item.kind})
 
-    stock.back_callback = f"stock_section:{city}:{section}"
+    stock.back_callback = f"stock_city:{city}"
     stock.kind_slug = None
     stock.type_slug = None
 
@@ -261,14 +283,14 @@ async def _show_spb_collections(
     )
 
     if not stock.items:
-        stock.back_callback = f"stock_section:{city}:{section}"
+        stock.back_callback = f"stock_city:{city}"
         stock.kind_slug = None
         stock.type_slug = None
         await send_stock_page(message, stock, 1)
         return
 
     if not collections:
-        stock.back_callback = f"stock_section:{city}:{section}"
+        stock.back_callback = f"stock_city:{city}"
         stock.kind_slug = None
         stock.type_slug = None
         await send_stock_page(message, stock, 1)
@@ -288,7 +310,7 @@ async def _show_spb_collections(
     )
 
     text = (
-        f"{escape_md(SECTION_TITLES.get(section, section))} • {escape_md(CITY_TITLES.get(city, city))}\n"
+        f"{_plain_title(section, city)}\n"
         f"Выберите коллекцию.\nСтраница {current_page}/{total_pages}"
     )
 
@@ -304,6 +326,21 @@ async def _show_spb_collections(
 async def _show_kinds(message: Message, user_id: int, city: str, section: str) -> None:
     """Показывает список видов номенклатуры или плоский список, если видов нет."""
 
+    if city == "spb" and section == "hardware":
+        file_path = Path("data/stocks/spb/hardware/hardware_stock_spb.xlsx")
+        if file_path.exists():
+            # удаляем исходное сообщение меню, чтобы не засорять чат
+            try:
+                await message.delete()
+            except Exception:
+                pass
+            await message.answer_document(
+                FSInputFile(file_path),
+                caption="Остатки фурнитуры СПБ",
+                reply_markup=kb_stock_sections(city),
+            )
+            return
+
     stock = await load_city_stock(city, section)
     selection = _STOCK_SELECTIONS[user_id]
     selection["city"] = city
@@ -312,14 +349,14 @@ async def _show_kinds(message: Message, user_id: int, city: str, section: str) -
 
     kinds = sorted({item.kind for item in stock.items if item.kind})
     if not stock.items:
-        stock.back_callback = f"stock_section:{city}:{section}"
+        stock.back_callback = f"stock_city:{city}"
         stock.kind_slug = None
         stock.type_slug = None
         await send_stock_page(message, stock, 1)
         return
 
     if not kinds:
-        stock.back_callback = f"stock_section:{city}:{section}"
+        stock.back_callback = f"stock_city:{city}"
         stock.kind_slug = None
         stock.type_slug = None
         await send_stock_page(message, stock, 1)
@@ -332,6 +369,16 @@ async def _show_kinds(message: Message, user_id: int, city: str, section: str) -
         slug = _slugify(kind, used)
         selection["kind_map"][slug] = kind
         kind_rows.append((kind, slug))
+
+    if (
+        message.from_user
+        and message.from_user.is_bot
+        and (message.text or message.caption or "") == "Выберите вид номенклатуры:"
+    ):
+        current_keyboard = getattr(message.reply_markup, "inline_keyboard", None)
+        new_keyboard = kb_stock_kinds(city, section, kind_rows).inline_keyboard
+        if current_keyboard == new_keyboard:
+            return
 
     await send_md_safe(
         message,
@@ -347,11 +394,19 @@ async def on_stock_city_selected(cb: CallbackQuery):
     city = cb.data.split(":")[-1]
     _STOCK_SELECTIONS[cb.from_user.id].clear()
     _STOCK_SELECTIONS[cb.from_user.id]["city"] = city
-    await send_md_safe(
-        cb.message,
-        "Выберите раздел остатков:",
-        reply_markup=kb_stock_sections(city),
-    )
+    if cb.message.document:
+        await _safe_delete_message(cb.message)
+        await cb.message.answer(
+            "Выберите раздел остатков:",
+            reply_markup=kb_stock_sections(city),
+            parse_mode=None,
+        )
+    else:
+        await send_md_safe(
+            cb.message,
+            "Выберите раздел остатков:",
+            reply_markup=kb_stock_sections(city),
+        )
     await cb.answer("Город выбран")
 
 
@@ -360,12 +415,17 @@ async def on_stock_select_section(cb: CallbackQuery):
     """Фиксирует выбор раздела остатков и открывает список видов."""
 
     _, city, section = cb.data.split(":")
+    message = cb.message
+    if message.document:
+        await _safe_delete_message(message)
+        message = await cb.message.answer("Загрузка...", parse_mode=None)
+
     if city == "spb" and section == "fabrics":
-        await _show_spb_collections(cb.message, cb.from_user.id, city, section, 1)
+        await _show_spb_collections(message, cb.from_user.id, city, section, 1)
     elif city == "msk" and section == "hardware":
-        await _show_hardware_kinds(cb.message, cb.from_user.id, city, 1)
+        await _show_hardware_kinds(message, cb.from_user.id, city, 1)
     else:
-        await _show_kinds(cb.message, cb.from_user.id, city, section)
+        await _show_kinds(message, cb.from_user.id, city, section)
     await cb.answer()
 
 
@@ -434,8 +494,8 @@ async def on_stock_types_hardware(cb: CallbackQuery):
     page_rows, current_page, total_pages = slice_page(type_rows, int(page_str), TYPE_PAGE_SIZE)
 
     text = (
-        f"{escape_md(SECTION_TITLES.get(section, section))} • {escape_md(CITY_TITLES.get(city, city))}\n"
-        f"Вид: {escape_md(selected_kind)}\n"
+        f"{_plain_title(section, city)}\n"
+        f"Вид: {selected_kind}\n"
         f"Выберите тип номенклатуры.\nСтраница {current_page}/{total_pages}"
     )
 
@@ -746,7 +806,7 @@ async def on_stock_list(cb: CallbackQuery):
         else (
             f"stock:types:{city}:{section}:{kind_slug}:1"
             if kind_slug != "all"
-            else f"stock_section:{city}:{section}"
+            else f"stock_city:{city}"
         )
     )
 
@@ -771,9 +831,8 @@ async def on_stock_flat(cb: CallbackQuery):
 
     _, _, city, section, page_str = cb.data.split(":")
     stock = await load_city_stock(city, section)
-    stock.back_callback = f"stock_section:{city}:{section}"
+    stock.back_callback = f"stock_city:{city}"
     stock.kind_slug = None
     stock.type_slug = None
     await send_stock_page(cb.message, stock, int(page_str))
     await cb.answer()
-

@@ -28,11 +28,21 @@ from data.db_utils import (
 from data import importer
 from data.importer import ImportErrorFriendly, ParsedResult
 import aiosqlite
-from config import DB_PATH
+from config import DB_PATH, LOGIN_ADMIN, PASSWORD_ADMIN
 from formatter import escape_md, send_md_safe
+from data.admins import is_superadmin
 from structure.markdown import edit_md_safe, message_to_markdown, escape_user, send_md_safe_to_chat
-from structure.keyboards import usd_keyboard, import_result_keyboard
-from structure.states import BroadcastState
+from structure.keyboards import usd_keyboard, import_result_keyboard, cancel_keyboard
+from structure.ready_catalogs import ready_catalogs_manage_keyboard, ready_catalog_item_keyboard
+from structure.states import BroadcastState, ReadyCatalogState
+from data.ready_catalogs import (
+    add_ready_catalog,
+    delete_ready_catalog,
+    get_ready_catalog_by_id,
+    get_ready_catalogs,
+    update_ready_catalog_file,
+    update_ready_catalog_title,
+)
 from services.exchange import current_range, refresh_range
 from services.notifications import broadcast, build_product_card
 from services.product_render import build_product_caption
@@ -47,7 +57,6 @@ _EDITABLE_SETTINGS = {
     "address": "Адрес/маршрут",
     "worktime": "Режим работы",
     "requisites": "Реквизиты",
-    "ready_catalog_url": "Ссылка на каталог готовых изделий",
 }
 
 
@@ -137,23 +146,27 @@ async def notify_admin(msg: Message, command: CommandObject | None):
     )
 
 
-def admin_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
+def admin_kb(show_credentials: bool = False):
+    rows = [
         [InlineKeyboardButton(text="📇 Править контакты", callback_data="admin:edit:contacts"),
          InlineKeyboardButton(text="🗺️ Адрес/маршрут", callback_data="admin:edit:address")],
         [InlineKeyboardButton(text="🕘 Режим работы", callback_data="admin:edit:worktime"),
          InlineKeyboardButton(text="📄 Реквизиты", callback_data="admin:edit:requisites")],
-        [InlineKeyboardButton(text="Изменить ссылку на каталог готовых изделий", callback_data="admin:edit:ready_catalog_url")],
         [InlineKeyboardButton(text="📤 Каталог тканей", callback_data="admin:import:fabrics_catalog"),
          InlineKeyboardButton(text="📤 Каталог фурнитуры", callback_data="admin:import:hardware_catalog")],
         [InlineKeyboardButton(text="📦 Остатки тканей Москва", callback_data="admin:import:stock_fabrics_msk"),
          InlineKeyboardButton(text="📦 Остатки тканей СПБ", callback_data="admin:import:stock_fabrics_spb")],
         [InlineKeyboardButton(text="📦 Остатки фурнитуры Москва", callback_data="admin:import:stock_hardware_msk"),
          InlineKeyboardButton(text="📦 Остатки фурнитуры СПБ", callback_data="admin:import:stock_hardware_spb")],
+        [InlineKeyboardButton(text="➕ Добавить каталог готовых изделий", callback_data="admin:ready:add")],
+        [InlineKeyboardButton(text="✏️ Управление каталогами готовых изделий", callback_data="admin:ready:manage")],
         [InlineKeyboardButton(text="Публикация акции / новинки / распродажи", callback_data="admin:broadcast")],
         [InlineKeyboardButton(text="💵 Курс USD: авто/ручной", callback_data="admin:usd")],
-        [InlineKeyboardButton(text="🏠 В меню", callback_data="home")],
-    ])
+    ]
+    if show_credentials:
+        rows.insert(0, [InlineKeyboardButton(text="🔐 Данные для входа администратора", callback_data="admin:creds")])
+    rows.append([InlineKeyboardButton(text="🏠 В меню", callback_data="home")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def broadcast_type_kb() -> InlineKeyboardMarkup:
@@ -182,13 +195,191 @@ def edit_prompt_kb(target: str) -> InlineKeyboardMarkup:
     )
 
 
+def import_cancel_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура для отмены ожидаемой загрузки файла."""
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Отменить", callback_data="admin:import:cancel")],
+            [InlineKeyboardButton(text="🏠 В меню", callback_data="home")],
+        ]
+    )
+
+
 @router.callback_query(F.data == "admin:open")
 async def open_admin(cb: CallbackQuery):
+    show_creds = is_superadmin(cb.from_user.id) if cb.from_user else False
     await send_md_safe(
         cb.message,
         "Админ-панель:",
-        reply_markup=admin_kb(),
+        reply_markup=admin_kb(show_creds),
     )
+    await cb.answer()
+
+
+@router.callback_query(F.data == "admin:creds")
+async def show_admin_creds(cb: CallbackQuery):
+    """Показывает логин/пароль администратора только суперадминам."""
+
+    if not (cb.from_user and is_superadmin(cb.from_user.id)):
+        await cb.answer("Недостаточно прав", show_alert=True)
+        return
+
+    text = (
+        "Логин администратора:\n"
+        f"{LOGIN_ADMIN}\n\n"
+        "Пароль администратора:\n"
+        f"{PASSWORD_ADMIN}\n\n"
+        "⚠️ Передавайте эти данные только доверенным лицам.\n\n"
+        "Инструкция:\n"
+        "1) Введите /getadmin\n"
+        "2) Введите логин\n"
+        "3) Введите пароль"
+    )
+    await send_md_safe(cb.message, text, reply_markup=admin_kb(show_credentials=True))
+    await cb.answer()
+
+
+@router.callback_query(F.data == "admin:ready:add")
+async def ready_catalog_add(cb: CallbackQuery, state: FSMContext):
+    """Запрашивает название нового каталога готовых изделий."""
+
+    await state.clear()
+    await state.set_state(ReadyCatalogState.waiting_title)
+    await send_md_safe(cb.message, "Введите название каталога:", reply_markup=cancel_keyboard())
+    await cb.answer()
+
+
+@router.message(ReadyCatalogState.waiting_title)
+async def ready_catalog_title(msg: Message, state: FSMContext):
+    title = (msg.text or "").strip()
+    if not title:
+        await send_md_safe(msg, "Название не может быть пустым. Введите название каталога:")
+        return
+
+    await state.update_data(new_catalog_title=title)
+    await state.set_state(ReadyCatalogState.waiting_file)
+    await send_md_safe(
+        msg,
+        "Пришлите файл каталога (XLSX):",
+        reply_markup=cancel_keyboard(),
+    )
+
+
+@router.message(ReadyCatalogState.waiting_file, F.content_type == ContentType.DOCUMENT)
+async def ready_catalog_file(msg: Message, state: FSMContext):
+    data = await state.get_data()
+    title = data.get("new_catalog_title", "Каталог")
+    file_id = msg.document.file_id
+    await add_ready_catalog(title, file_id)
+    await state.clear()
+    await send_md_safe(msg, f"Каталог «{escape_user(title)}» добавлен ✅", reply_markup=admin_kb())
+
+
+@router.callback_query(F.data == "admin:ready:manage")
+async def ready_catalog_manage(cb: CallbackQuery, state: FSMContext):
+    await state.clear()
+    catalogs = await get_ready_catalogs()
+    if not catalogs:
+        await send_md_safe(cb.message, "Каталоги готовых изделий пока не добавлены.", reply_markup=admin_kb())
+        await cb.answer()
+        return
+
+    await send_md_safe(
+        cb.message,
+        "Выберите каталог для управления:",
+        reply_markup=ready_catalogs_manage_keyboard(catalogs),
+    )
+    await cb.answer()
+
+
+@router.callback_query(F.data.startswith("admin:ready:item:"))
+async def ready_catalog_item(cb: CallbackQuery, state: FSMContext):
+    catalog_id = cb.data.split(":")[-1]
+    catalog = await get_ready_catalog_by_id(int(catalog_id))
+    if not catalog:
+        await send_md_safe(cb.message, "Каталог не найден.", reply_markup=admin_kb())
+        await cb.answer()
+        return
+
+    await state.update_data(current_catalog_id=catalog["id"], current_catalog_title=catalog["title"])
+    await send_md_safe(
+        cb.message,
+        f"Каталог: {escape_user(catalog['title'])}",
+        reply_markup=ready_catalog_item_keyboard(catalog["id"]),
+    )
+    await cb.answer()
+
+
+@router.callback_query(F.data.startswith("admin:ready:rename:"))
+async def ready_catalog_rename(cb: CallbackQuery, state: FSMContext):
+    catalog_id = int(cb.data.split(":")[-1])
+    catalog = await get_ready_catalog_by_id(catalog_id)
+    if not catalog:
+        await send_md_safe(cb.message, "Каталог не найден.", reply_markup=admin_kb())
+        await cb.answer()
+        return
+
+    await state.update_data(current_catalog_id=catalog_id)
+    await state.set_state(ReadyCatalogState.rename_title)
+    await send_md_safe(cb.message, "Введите новое название каталога:", reply_markup=cancel_keyboard())
+    await cb.answer()
+
+
+@router.message(ReadyCatalogState.rename_title)
+async def ready_catalog_rename_title(msg: Message, state: FSMContext):
+    new_title = (msg.text or "").strip()
+    if not new_title:
+        await send_md_safe(msg, "Название не может быть пустым. Введите новое название:")
+        return
+
+    data = await state.get_data()
+    catalog_id = data.get("current_catalog_id")
+    if not catalog_id:
+        await state.clear()
+        await send_md_safe(msg, "Каталог не найден.", reply_markup=admin_kb())
+        return
+
+    await update_ready_catalog_title(int(catalog_id), new_title)
+    await state.clear()
+    await send_md_safe(msg, f"Каталог переименован в «{escape_user(new_title)}».", reply_markup=admin_kb())
+
+
+@router.callback_query(F.data.startswith("admin:ready:replace:"))
+async def ready_catalog_replace(cb: CallbackQuery, state: FSMContext):
+    catalog_id = int(cb.data.split(":")[-1])
+    catalog = await get_ready_catalog_by_id(catalog_id)
+    if not catalog:
+        await send_md_safe(cb.message, "Каталог не найден.", reply_markup=admin_kb())
+        await cb.answer()
+        return
+
+    await state.update_data(current_catalog_id=catalog_id)
+    await state.set_state(ReadyCatalogState.replace_file)
+    await send_md_safe(cb.message, "Пришлите новый файл каталога (XLSX):", reply_markup=cancel_keyboard())
+    await cb.answer()
+
+
+@router.message(ReadyCatalogState.replace_file, F.content_type == ContentType.DOCUMENT)
+async def ready_catalog_replace_file(msg: Message, state: FSMContext):
+    data = await state.get_data()
+    catalog_id = data.get("current_catalog_id")
+    if not catalog_id:
+        await state.clear()
+        await send_md_safe(msg, "Каталог не найден.", reply_markup=admin_kb())
+        return
+
+    await update_ready_catalog_file(int(catalog_id), msg.document.file_id)
+    await state.clear()
+    await send_md_safe(msg, "Файл каталога обновлён.", reply_markup=admin_kb())
+
+
+@router.callback_query(F.data.startswith("admin:ready:delete:"))
+async def ready_catalog_delete(cb: CallbackQuery, state: FSMContext):
+    catalog_id = int(cb.data.split(":")[-1])
+    await delete_ready_catalog(catalog_id)
+    await state.clear()
+    await send_md_safe(cb.message, "Каталог удалён.", reply_markup=admin_kb())
     await cb.answer()
 
 
@@ -347,20 +538,14 @@ async def ask_text(cb: CallbackQuery):
         return
     await set_setting("edit_target", key)
     cur = await get_setting(key, "")
-    if key == "ready_catalog_url":
-        prompt_lines = [
-            "Пришлите новую ссылку на каталог готовых изделий.",
-            "Текущая ссылка будет показана ниже, если она сохранена.",
-        ]
+    prompt_lines = [
+        f"Пришлите новый текст для «{pretty}». Поддерживается MarkdownV2.",
+        "Используйте кнопку «👁 Предпросмотр», чтобы оценить форматирование.",
+    ]
+    if cur:
+        prompt_lines.append("Текущая версия показана ниже.")
     else:
-        prompt_lines = [
-            f"Пришлите новый текст для «{pretty}». Поддерживается MarkdownV2.",
-            "Используйте кнопку «👁 Предпросмотр», чтобы оценить форматирование.",
-        ]
-        if cur:
-            prompt_lines.append("Текущая версия показана ниже.")
-        else:
-            prompt_lines.append("Текущая версия: —")
+        prompt_lines.append("Текущая версия: —")
 
     await send_md_safe(
         cb.message,
@@ -413,6 +598,13 @@ async def save_text(msg: Message):
 @router.callback_query(F.data.startswith("admin:import:"))
 async def imp_start(cb: CallbackQuery):
     target_key = cb.data.split(":", maxsplit=2)[-1]
+
+    if target_key == "cancel":
+        await set_setting("import_target", "")
+        await send_md_safe(cb.message, "Загрузка отменена.", reply_markup=admin_kb())
+        await cb.answer()
+        return
+
     target = _IMPORT_TARGETS.get(target_key)
 
     if not target:
@@ -424,7 +616,17 @@ async def imp_start(cb: CallbackQuery):
     await send_md_safe(
         cb.message,
         target["prompt"],
+        reply_markup=import_cancel_keyboard(),
     )
+    await cb.answer()
+
+
+@router.callback_query(F.data == "admin:import:cancel")
+async def import_cancel(cb: CallbackQuery):
+    """Отменяет ожидание файла для импорта."""
+
+    await set_setting("import_target", "")
+    await send_md_safe(cb.message, "Загрузка отменена.", reply_markup=admin_kb())
     await cb.answer()
 
 @router.message(F.content_type == ContentType.DOCUMENT)
