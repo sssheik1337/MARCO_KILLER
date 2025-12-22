@@ -263,6 +263,20 @@ def promo_preview_keyboard() -> InlineKeyboardMarkup:
     )
 
 
+def announce_preview_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура подтверждения отправки объявления без товара."""
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Отправить всем", callback_data="admin:announce:confirm"),
+                InlineKeyboardButton(text="❌ Отмена", callback_data="admin:announce:cancel"),
+            ],
+            [InlineKeyboardButton(text="🏠 В меню", callback_data="home")],
+        ]
+    )
+
+
 def promo_source_keyboard() -> InlineKeyboardMarkup:
     """Клавиатура выбора источника товара для промо (каталог или наличие)."""
 
@@ -889,13 +903,13 @@ async def announce_url(msg: Message, state: FSMContext):
         await send_md_safe(
             msg,
             "Подтвердите отправку.",
-            reply_markup=promo_preview_keyboard(),
+            reply_markup=announce_preview_keyboard(),
         )
     else:
         await send_md_safe(
             msg,
             preview_text,
-            reply_markup=promo_preview_keyboard(),
+            reply_markup=announce_preview_keyboard(),
         )
 
 
