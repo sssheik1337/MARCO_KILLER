@@ -182,6 +182,17 @@ def edit_prompt_kb(target: str) -> InlineKeyboardMarkup:
     )
 
 
+def import_cancel_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура для отмены ожидаемой загрузки файла."""
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Отменить", callback_data="admin:import:cancel")],
+            [InlineKeyboardButton(text="🏠 В меню", callback_data="home")],
+        ]
+    )
+
+
 @router.callback_query(F.data == "admin:open")
 async def open_admin(cb: CallbackQuery):
     await send_md_safe(
@@ -424,7 +435,17 @@ async def imp_start(cb: CallbackQuery):
     await send_md_safe(
         cb.message,
         target["prompt"],
+        reply_markup=import_cancel_keyboard(),
     )
+    await cb.answer()
+
+
+@router.callback_query(F.data == "admin:import:cancel")
+async def import_cancel(cb: CallbackQuery):
+    """Отменяет ожидание файла для импорта."""
+
+    await set_setting("import_target", "")
+    await send_md_safe(cb.message, "Загрузка отменена.", reply_markup=admin_kb())
     await cb.answer()
 
 @router.message(F.content_type == ContentType.DOCUMENT)
