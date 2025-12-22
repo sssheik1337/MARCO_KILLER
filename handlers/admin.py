@@ -661,7 +661,16 @@ async def promo_choose_type(cb: CallbackQuery, state: FSMContext):
 
     await state.update_data(promo_type=promo_type)
     await state.set_state(PromoBroadcastState.waiting_extra)
-    await send_md_safe(cb.message, "Введите дополнительный текст акции (можно оставить пустым):")
+    await send_md_safe(
+        cb.message,
+        "Введите дополнительный текст акции (можно оставить пустым):",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="⏭ Пропустить", callback_data="admin:promo:extra_skip")],
+                [InlineKeyboardButton(text="🏠 В меню", callback_data="home")],
+            ]
+        ),
+    )
     await cb.answer()
 
 
@@ -673,6 +682,16 @@ async def promo_extra_text(msg: Message, state: FSMContext):
     await state.update_data(promo_extra=extra_text)
     await state.set_state(PromoBroadcastState.waiting_url)
     await send_md_safe(msg, "Пришлите URL для кнопки (или «-» если кнопка не нужна):")
+
+
+@router.callback_query(F.data == "admin:promo:extra_skip")
+async def promo_extra_skip(cb: CallbackQuery, state: FSMContext):
+    """Пропускает ввод дополнительного текста и переходит к шагу URL."""
+
+    await state.update_data(promo_extra="")
+    await state.set_state(PromoBroadcastState.waiting_url)
+    await send_md_safe(cb.message, "Пришлите URL для кнопки (или «-» если кнопка не нужна):")
+    await cb.answer("Текст пропущен")
 
 
 @router.message(PromoBroadcastState.waiting_url)
