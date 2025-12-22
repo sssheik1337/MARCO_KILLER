@@ -787,8 +787,9 @@ async def promo_confirm(cb: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     preview_text = data.get("promo_preview")
     promo_url = data.get("promo_url")
-    if not preview_text:
-        await cb.answer("Нет данных для отправки", show_alert=True)
+    product = data.get("promo_product")
+    if not preview_text or not product:
+        await cb.answer("Нечего отправлять", show_alert=True)
         return
 
     await send_md_safe(cb.message, "Рассылка запущена, сообщим об итогах.")
@@ -930,8 +931,9 @@ async def announce_confirm(cb: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     preview_text = data.get("announce_preview")
     announce_url = data.get("announce_url")
-    if not preview_text:
-        await cb.answer("Нет данных для отправки", show_alert=True)
+    announce_text = data.get("announce_text", "")
+    if not preview_text or not announce_text:
+        await cb.answer("Нечего отправлять", show_alert=True)
         return
 
     await send_md_safe(cb.message, "Рассылка запущена, сообщим об итогах.")
