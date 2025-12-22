@@ -399,6 +399,7 @@ async def on_stock_city_selected(cb: CallbackQuery):
         await cb.message.answer(
             "Выберите раздел остатков:",
             reply_markup=kb_stock_sections(city),
+            parse_mode=None,
         )
     else:
         await send_md_safe(
@@ -417,7 +418,7 @@ async def on_stock_select_section(cb: CallbackQuery):
     message = cb.message
     if message.document:
         await _safe_delete_message(message)
-        message = await cb.message.answer("Загрузка...")
+        message = await cb.message.answer("Загрузка...", parse_mode=None)
 
     if city == "spb" and section == "fabrics":
         await _show_spb_collections(message, cb.from_user.id, city, section, 1)
