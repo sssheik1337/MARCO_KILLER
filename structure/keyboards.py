@@ -34,8 +34,8 @@ def main_menu(is_admin: bool) -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton(text="📄 Реквизиты", callback_data="menu:requisites"),
+            InlineKeyboardButton(text="❓ Задать вопрос", callback_data="menu:question"),
         ],
-        [InlineKeyboardButton(text="❓ Задать вопрос", callback_data="menu:question")],
         [InlineKeyboardButton(text="📞 Заявка на звонок", callback_data="menu:callback")],
         [InlineKeyboardButton(text="👤 Связь с руководителем", callback_data="menu:boss")],
         [InlineKeyboardButton(text="🐞 Сообщить об ошибке", callback_data="menu:bug")],
