@@ -222,7 +222,7 @@ def import_cancel_keyboard() -> InlineKeyboardMarkup:
 
 
 def promo_city_keyboard() -> InlineKeyboardMarkup:
-    """Клавиатура выбора города для промо-сценария."""
+    """Клавиатура выбора города для промо-сценария остатков."""
 
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -257,6 +257,20 @@ def promo_preview_keyboard() -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(text="✅ Отправить всем", callback_data="admin:promo:confirm"),
                 InlineKeyboardButton(text="❌ Отмена", callback_data="admin:promo:cancel"),
+            ],
+            [InlineKeyboardButton(text="🏠 В меню", callback_data="home")],
+        ]
+    )
+
+
+def promo_source_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура выбора источника товара для промо (каталог или наличие)."""
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="📦 Каталог", callback_data="admin:promo:source:catalog"),
+                InlineKeyboardButton(text="📦 Наличие", callback_data="admin:promo:source:stock"),
             ],
             [InlineKeyboardButton(text="🏠 В меню", callback_data="home")],
         ]
@@ -377,30 +391,63 @@ async def promo_start(cb: CallbackQuery, state: FSMContext):
     """Запускает сценарий промо-рассылки по выбранному товару."""
 
     await state.clear()
-    await state.set_state(PromoBroadcastState.choose_city)
+    await state.set_state(PromoBroadcastState.waiting_source)
     await send_md_safe(
         cb.message,
-        "Выберите город для промо:",
-        reply_markup=promo_city_keyboard(),
+        "Выберите источник товара для промо:",
+        reply_markup=promo_source_keyboard(),
     )
+    await cb.answer()
+
+
+@router.callback_query(F.data.startswith("admin:promo:source:"))
+async def promo_choose_source(cb: CallbackQuery, state: FSMContext):
+    """Фиксирует источник (каталог или наличие) и предлагает следующий шаг."""
+
+    source = cb.data.split(":")[-1]
+    if source not in {"catalog", "stock"}:
+        await cb.answer("Источник недоступен", show_alert=True)
+        return
+
+    await state.update_data(promo_source=source, promo_city=None)
+
+    if source == "catalog":
+        await state.set_state(PromoBroadcastState.waiting_section)
+        await send_md_safe(
+            cb.message,
+            "Выберите тип из каталога:",
+            reply_markup=promo_section_keyboard(),
+        )
+    else:
+        await state.set_state(PromoBroadcastState.waiting_city)
+        await send_md_safe(
+            cb.message,
+            "Выберите город для промо из наличия:",
+            reply_markup=promo_city_keyboard(),
+        )
     await cb.answer()
 
 
 @router.callback_query(F.data.startswith("admin:promo:city:"))
 async def promo_choose_city(cb: CallbackQuery, state: FSMContext):
-    """Фиксирует город промо-рассылки и предлагает выбрать раздел."""
+    """Фиксирует город промо-рассылки для остатков и предлагает выбрать раздел."""
 
     city = cb.data.split(":")[-1]
     if city not in {"msk", "spb"}:
         await cb.answer("Город недоступен", show_alert=True)
         return
 
+    data = await state.get_data()
+    if data.get("promo_source") != "stock":
+        await cb.answer("Сначала выберите источник «Наличие»", show_alert=True)
+        return
+
     await state.update_data(promo_city=city)
     profiles.set_city(cb.from_user.id, city)
-    await state.set_state(PromoBroadcastState.choose_section)
+    await state.set_state(PromoBroadcastState.waiting_section)
     await send_md_safe(
         cb.message,
-        "Выберите тип: ткани или фурнитура.",
+        "Выберите тип из наличия: ткани или фурнитура.",
         reply_markup=promo_section_keyboard(),
     )
     await cb.answer("Город установлен")
@@ -416,23 +463,40 @@ async def promo_choose_section(cb: CallbackQuery, state: FSMContext):
         return
 
     data = await state.get_data()
-    if not data.get("promo_city"):
+    source = data.get("promo_source")
+    if source not in {"catalog", "stock"}:
+        await cb.answer("Сначала выберите источник", show_alert=True)
+        return
+
+    if source == "stock" and not data.get("promo_city"):
         await cb.answer("Сначала выберите город", show_alert=True)
         return
 
     await state.update_data(promo_section=section)
     await state.set_state(PromoBroadcastState.waiting_product)
-    await send_md_safe(
-        cb.message,
-        "Выберите товар через каталог: город и раздел уже зафиксированы.\n"
-        "После выбора товара будет предложено настроить акцию.",
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text="Открыть категории", callback_data=f"csec:open:{section}")],
-                [InlineKeyboardButton(text="🏠 В меню", callback_data="home")],
-            ]
-        ),
-    )
+
+    if source == "catalog":
+        await send_md_safe(
+            cb.message,
+            "Выберите товар из каталога (город не требуется):",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="Открыть категории", callback_data=f"csec:open:{section}")],
+                    [InlineKeyboardButton(text="🏠 В меню", callback_data="home")],
+                ]
+            ),
+        )
+    else:
+        await send_md_safe(
+            cb.message,
+            "Выберите товар из наличия:",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="Открыть категории", callback_data=f"ssec:open:{section}")],
+                    [InlineKeyboardButton(text="🏠 В меню", callback_data="home")],
+                ]
+            ),
+        )
     await cb.answer()
 
 

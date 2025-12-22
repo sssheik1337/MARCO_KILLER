@@ -89,10 +89,11 @@ async def _try_capture_promo_selection(
     data = await state.get_data()
     promo_section = data.get("promo_section")
     promo_city = data.get("promo_city")
+    promo_source = data.get("promo_source")
     if promo_section and promo_section != section:
         await cb.answer("Этот товар из другого раздела", show_alert=True)
         return True
-    if promo_city and promo_city != city:
+    if promo_source == "stock" and promo_city and promo_city != city:
         await cb.answer("Выбран другой город", show_alert=True)
         return True
 

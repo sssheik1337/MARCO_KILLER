@@ -18,8 +18,9 @@ class SupportRequestState(StatesGroup):
 class PromoBroadcastState(StatesGroup):
     """Состояния для промо-рассылки по выбранному товару."""
 
-    choose_city = State()
-    choose_section = State()
+    waiting_source = State()
+    waiting_city = State()
+    waiting_section = State()
     waiting_product = State()
     waiting_type = State()
     waiting_extra = State()
