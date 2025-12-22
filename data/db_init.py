@@ -74,6 +74,14 @@ async def init_db() -> None:
         value TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS ready_catalogs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT NOT NULL,
+        file_id TEXT NOT NULL,
+        filename TEXT NOT NULL,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
     CREATE TABLE IF NOT EXISTS fabrics_catalog (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT,

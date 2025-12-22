@@ -17,13 +17,10 @@ def InlineKeyboardButton(
 
     _validate_button(text, callback_data)
     return _InlineKeyboardButton(text=text, callback_data=callback_data, url=url)
-from data import db_utils
 
 
-def main_menu(is_admin: bool, ready_catalog_url: str | None = None) -> InlineKeyboardMarkup:
-    """Формирует главное меню с разделами и ссылкой на готовые изделия."""
-
-    ready_url = ready_catalog_url or "https://example.com"
+def main_menu(is_admin: bool) -> InlineKeyboardMarkup:
+    """Формирует главное меню с разделами и кнопкой каталога готовых изделий без ссылки."""
 
     rows: list[list[InlineKeyboardButton]] = [
         [
@@ -49,7 +46,7 @@ def main_menu(is_admin: bool, ready_catalog_url: str | None = None) -> InlineKey
         ],
         [
             InlineKeyboardButton(
-                text="📸 Каталог готовых изделий", url=ready_url
+                text="📸 Каталог готовых изделий", callback_data="ready_catalog"
             ),
         ],
     ]
@@ -61,10 +58,9 @@ def main_menu(is_admin: bool, ready_catalog_url: str | None = None) -> InlineKey
 
 
 async def main_menu_with_link(is_admin: bool) -> InlineKeyboardMarkup:
-    """Возвращает главное меню с учётом ссылки на каталог готовых изделий."""
+    """Возвращает главное меню без использования ссылок на готовые изделия."""
 
-    ready_link = await db_utils.get_setting("ready_catalog_url", "")
-    return main_menu(is_admin, ready_link or None)
+    return main_menu(is_admin)
 
 
 def catalog_menu() -> InlineKeyboardMarkup:

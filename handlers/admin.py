@@ -47,7 +47,6 @@ _EDITABLE_SETTINGS = {
     "address": "Адрес/маршрут",
     "worktime": "Режим работы",
     "requisites": "Реквизиты",
-    "ready_catalog_url": "Ссылка на каталог готовых изделий",
 }
 
 
@@ -143,7 +142,6 @@ def admin_kb():
          InlineKeyboardButton(text="🗺️ Адрес/маршрут", callback_data="admin:edit:address")],
         [InlineKeyboardButton(text="🕘 Режим работы", callback_data="admin:edit:worktime"),
          InlineKeyboardButton(text="📄 Реквизиты", callback_data="admin:edit:requisites")],
-        [InlineKeyboardButton(text="Изменить ссылку на каталог готовых изделий", callback_data="admin:edit:ready_catalog_url")],
         [InlineKeyboardButton(text="📤 Каталог тканей", callback_data="admin:import:fabrics_catalog"),
          InlineKeyboardButton(text="📤 Каталог фурнитуры", callback_data="admin:import:hardware_catalog")],
         [InlineKeyboardButton(text="📦 Остатки тканей Москва", callback_data="admin:import:stock_fabrics_msk"),
@@ -358,20 +356,14 @@ async def ask_text(cb: CallbackQuery):
         return
     await set_setting("edit_target", key)
     cur = await get_setting(key, "")
-    if key == "ready_catalog_url":
-        prompt_lines = [
-            "Пришлите новую ссылку на каталог готовых изделий.",
-            "Текущая ссылка будет показана ниже, если она сохранена.",
-        ]
+    prompt_lines = [
+        f"Пришлите новый текст для «{pretty}». Поддерживается MarkdownV2.",
+        "Используйте кнопку «👁 Предпросмотр», чтобы оценить форматирование.",
+    ]
+    if cur:
+        prompt_lines.append("Текущая версия показана ниже.")
     else:
-        prompt_lines = [
-            f"Пришлите новый текст для «{pretty}». Поддерживается MarkdownV2.",
-            "Используйте кнопку «👁 Предпросмотр», чтобы оценить форматирование.",
-        ]
-        if cur:
-            prompt_lines.append("Текущая версия показана ниже.")
-        else:
-            prompt_lines.append("Текущая версия: —")
+        prompt_lines.append("Текущая версия: —")
 
     await send_md_safe(
         cb.message,
