@@ -1,10 +1,12 @@
 """Утилиты для рассылки уведомлений пользователям."""
 
+import asyncio
 import logging
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
+from aiogram.types import InlineKeyboardMarkup
 
-from data.db_utils import fetch_active_users, mark_user_blocked
+from data.db_utils import get_active_user_ids, mark_user_blocked
 from structure.markdown import MarkdownV2Escaper
 
 
@@ -57,23 +59,56 @@ def build_product_card(source: str, product: dict) -> str:
 async def broadcast(bot: Bot, text: str) -> tuple[int, int]:
     """Рассылает сообщение всем пользователям и ведёт учёт ошибок."""
 
-    recipients = await fetch_active_users()
-    sent = 0
+    escaped = MarkdownV2Escaper.escape_preserving(text)
+    delivered, blocked, failed = await send_bulk_message(
+        bot,
+        escaped,
+        parse_mode="MarkdownV2",
+    )
+    return delivered, blocked + failed
+
+
+async def send_bulk_message(
+    bot: Bot,
+    text: str,
+    *,
+    parse_mode: str | None = None,
+    reply_markup: InlineKeyboardMarkup | None = None,
+    disable_web_page_preview: bool | None = None,
+    throttle_delay: float = 0.05,
+) -> tuple[int, int, int]:
+    """Отправляет сообщение всем активным пользователям."""
+
+    recipients = await get_active_user_ids()
+    delivered = 0
+    blocked = 0
     failed = 0
 
     for tg_id in recipients:
         try:
-            escaped = MarkdownV2Escaper.escape_preserving(text)
-            await bot.send_message(tg_id, escaped)
-            sent += 1
+            await bot.send_message(
+                tg_id,
+                text,
+                parse_mode=parse_mode,
+                reply_markup=reply_markup,
+                disable_web_page_preview=disable_web_page_preview,
+            )
+            delivered += 1
         except TelegramForbiddenError:
-            failed += 1
+            blocked += 1
             await mark_user_blocked(tg_id)
         except TelegramBadRequest as exc:
-            failed += 1
-            logging.warning("Не удалось отправить уведомление %s: %s", tg_id, exc)
+            lowered = str(exc).lower()
+            if "chat not found" in lowered or "blocked by the user" in lowered:
+                blocked += 1
+                await mark_user_blocked(tg_id)
+            else:
+                failed += 1
+                logging.warning("Не удалось отправить уведомление %s: %s", tg_id, exc)
         except Exception as exc:  # pragma: no cover - сетевые ошибки
             failed += 1
             logging.warning("Сбой отправки уведомления %s: %s", tg_id, exc)
+        if throttle_delay > 0:
+            await asyncio.sleep(throttle_delay)
 
-    return sent, failed
+    return delivered, blocked, failed
