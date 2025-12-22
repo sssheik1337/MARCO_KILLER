@@ -703,7 +703,7 @@ async def promo_choose_type(cb: CallbackQuery, state: FSMContext):
 async def promo_extra_text(msg: Message, state: FSMContext):
     """Сохраняет дополнительный текст и запрашивает URL кнопки."""
 
-    extra_text = (msg.text or msg.caption or "").strip()
+    extra_text = message_to_markdown(msg)
     await state.update_data(promo_extra=extra_text)
     await state.set_state(PromoBroadcastState.waiting_url)
     await send_md_safe(msg, "Пришлите URL для кнопки (или «-» если кнопка не нужна):")
