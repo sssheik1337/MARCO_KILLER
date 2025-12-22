@@ -4,6 +4,7 @@ import re
 from collections import defaultdict
 
 from aiogram import F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import CallbackQuery, Message, FSInputFile
 from pathlib import Path
 
@@ -32,6 +33,18 @@ ITEM_PAGE_SIZE = 5
 HARDWARE_ITEM_PAGE_SIZE = 5
 
 _STOCK_SELECTIONS: dict[int, dict] = defaultdict(dict)
+
+async def _safe_delete_message(message: Message) -> None:
+    """Безопасно удаляет сообщение, игнорируя недоступные случаи."""
+
+    try:
+        await message.delete()
+    except TelegramBadRequest as exc:
+        if "message to delete not found" in str(exc).lower() or "can't be deleted" in str(exc).lower():
+            return
+        raise
+    except Exception:
+        return
 
 def _plain_title(section: str, city: str) -> str:
     """Возвращает заголовок раздела без Markdown-экранирования."""
@@ -381,11 +394,18 @@ async def on_stock_city_selected(cb: CallbackQuery):
     city = cb.data.split(":")[-1]
     _STOCK_SELECTIONS[cb.from_user.id].clear()
     _STOCK_SELECTIONS[cb.from_user.id]["city"] = city
-    await send_md_safe(
-        cb.message,
-        "Выберите раздел остатков:",
-        reply_markup=kb_stock_sections(city),
-    )
+    if cb.message.document:
+        await _safe_delete_message(cb.message)
+        await cb.message.answer(
+            "Выберите раздел остатков:",
+            reply_markup=kb_stock_sections(city),
+        )
+    else:
+        await send_md_safe(
+            cb.message,
+            "Выберите раздел остатков:",
+            reply_markup=kb_stock_sections(city),
+        )
     await cb.answer("Город выбран")
 
 
@@ -394,12 +414,17 @@ async def on_stock_select_section(cb: CallbackQuery):
     """Фиксирует выбор раздела остатков и открывает список видов."""
 
     _, city, section = cb.data.split(":")
+    message = cb.message
+    if message.document:
+        await _safe_delete_message(message)
+        message = await cb.message.answer("Загрузка...")
+
     if city == "spb" and section == "fabrics":
-        await _show_spb_collections(cb.message, cb.from_user.id, city, section, 1)
+        await _show_spb_collections(message, cb.from_user.id, city, section, 1)
     elif city == "msk" and section == "hardware":
-        await _show_hardware_kinds(cb.message, cb.from_user.id, city, 1)
+        await _show_hardware_kinds(message, cb.from_user.id, city, 1)
     else:
-        await _show_kinds(cb.message, cb.from_user.id, city, section)
+        await _show_kinds(message, cb.from_user.id, city, section)
     await cb.answer()
 
 
