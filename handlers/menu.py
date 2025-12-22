@@ -33,11 +33,16 @@ from structure.states import SupportRequestState
 from services.pagination import slice_page
 from services import profiles
 from data import db_utils
+from data.ready_catalogs import get_ready_catalogs, get_ready_catalog_by_id
 from services.exchange import current_range, range_label
 from services.product_render import (
     as_float as _as_float,
     format_money as _format_money,
     format_money_with_currency as _format_money_with_currency,
+)
+from structure.ready_catalogs import (
+    ready_catalogs_user_keyboard,
+    ready_catalog_file_keyboard,
 )
 
 router = Router()
@@ -209,6 +214,46 @@ async def on_home(cb: CallbackQuery):
     await cb.answer()
 
 
+@router.callback_query(F.data == "ready_catalog:back")
+async def ready_catalog_back(cb: CallbackQuery):
+    """Возврат из каталогов готовых изделий в главное меню."""
+
+    menu_markup = await _main_menu(cb.from_user.id)
+    if _has_media(cb.message):
+        await _safe_delete_message(cb.message)
+        await cb.message.answer("Главное меню:", reply_markup=menu_markup)
+    else:
+        await send_md_safe(cb.message, "Главное меню:", reply_markup=menu_markup)
+    await cb.answer()
+
+
+@router.callback_query(F.data.regexp(r"^ready_catalog:open:\d+$"))
+async def ready_catalog_send(cb: CallbackQuery):
+    """Отправляет файл выбранного каталога готовых изделий."""
+
+    catalog_id = int(cb.data.split(":")[-1])
+    catalog = await get_ready_catalog_by_id(catalog_id)
+    if not catalog:
+        await send_md_safe(
+            cb.message,
+            "Каталог не найден.",
+            reply_markup=await _main_menu(cb.from_user.id),
+        )
+        await cb.answer()
+        return
+
+    if _has_media(cb.message):
+        await _safe_delete_message(cb.message)
+
+    await cb.message.answer_document(
+        catalog["file_id"],
+        caption=catalog.get("title") or catalog.get("filename"),
+        reply_markup=ready_catalog_file_keyboard(),
+        parse_mode=None,
+    )
+    await cb.answer()
+
+
 async def _show_catalog_menu(target: Message) -> None:
     """Отображает меню выбора раздела каталога."""
 
@@ -220,6 +265,33 @@ async def on_catalog(cb: CallbackQuery):
     """Показывает выбор раздела каталога."""
 
     await _show_catalog_menu(cb.message)
+    await cb.answer()
+
+
+@router.callback_query(F.data == "ready_catalog")
+async def on_ready_catalogs(cb: CallbackQuery):
+    """Показывает доступные каталоги готовых изделий."""
+
+    target_message = cb.message
+    if target_message.document:
+        await _safe_delete_message(target_message)
+        target_message = await cb.message.answer("Загрузка...", parse_mode=None)
+
+    catalogs = await get_ready_catalogs()
+    if not catalogs:
+        await send_md_safe(
+            target_message,
+            "Каталоги пока не добавлены.",
+            reply_markup=await _main_menu(cb.from_user.id),
+        )
+        await cb.answer()
+        return
+
+    await send_md_safe(
+        target_message,
+        "Каталоги готовых изделий:",
+        reply_markup=ready_catalogs_user_keyboard(catalogs),
+    )
     await cb.answer()
 
 
