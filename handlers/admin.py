@@ -424,6 +424,13 @@ async def save_text(msg: Message):
 @router.callback_query(F.data.startswith("admin:import:"))
 async def imp_start(cb: CallbackQuery):
     target_key = cb.data.split(":", maxsplit=2)[-1]
+
+    if target_key == "cancel":
+        await set_setting("import_target", "")
+        await send_md_safe(cb.message, "Загрузка отменена.", reply_markup=admin_kb())
+        await cb.answer()
+        return
+
     target = _IMPORT_TARGETS.get(target_key)
 
     if not target:
