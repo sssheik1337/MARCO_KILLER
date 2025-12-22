@@ -20,9 +20,10 @@ def InlineKeyboardButton(
 
 
 def main_menu(is_admin: bool) -> InlineKeyboardMarkup:
-    """Формирует главное меню с разделами и кнопкой каталога готовых изделий без ссылки."""
+    """Формирует главное меню с выделенным каталогом готовых изделий."""
 
     rows: list[list[InlineKeyboardButton]] = [
+        [InlineKeyboardButton(text="📸 Каталог готовых изделий", callback_data="ready_catalog")],
         [
             InlineKeyboardButton(text="📚 Каталог", callback_data="catalog"),
             InlineKeyboardButton(text="📦 Наличие", callback_data="stock"),
@@ -33,22 +34,11 @@ def main_menu(is_admin: bool) -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton(text="📄 Реквизиты", callback_data="menu:requisites"),
-            InlineKeyboardButton(text="📞 Заявка на звонок", callback_data="menu:callback"),
         ],
-        [
-            InlineKeyboardButton(text="❓ Задать вопрос", callback_data="menu:question"),
-            InlineKeyboardButton(
-                text="👤 Связь с руководителем", callback_data="menu:boss"
-            ),
-        ],
-        [
-            InlineKeyboardButton(text="🐞 Сообщить об ошибке", callback_data="menu:bug"),
-        ],
-        [
-            InlineKeyboardButton(
-                text="📸 Каталог готовых изделий", callback_data="ready_catalog"
-            ),
-        ],
+        [InlineKeyboardButton(text="❓ Задать вопрос", callback_data="menu:question")],
+        [InlineKeyboardButton(text="📞 Заявка на звонок", callback_data="menu:callback")],
+        [InlineKeyboardButton(text="👤 Связь с руководителем", callback_data="menu:boss")],
+        [InlineKeyboardButton(text="🐞 Сообщить об ошибке", callback_data="menu:bug")],
     ]
 
     if is_admin:
