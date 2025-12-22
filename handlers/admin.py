@@ -145,8 +145,8 @@ async def notify_admin(msg: Message, command: CommandObject | None):
     )
 
 
-def admin_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
+def admin_kb(show_credentials: bool = False):
+    rows = [
         [InlineKeyboardButton(text="📇 Править контакты", callback_data="admin:edit:contacts"),
          InlineKeyboardButton(text="🗺️ Адрес/маршрут", callback_data="admin:edit:address")],
         [InlineKeyboardButton(text="🕘 Режим работы", callback_data="admin:edit:worktime"),
@@ -161,8 +161,11 @@ def admin_kb():
         [InlineKeyboardButton(text="✏️ Управление каталогами готовых изделий", callback_data="admin:ready:manage")],
         [InlineKeyboardButton(text="Публикация акции / новинки / распродажи", callback_data="admin:broadcast")],
         [InlineKeyboardButton(text="💵 Курс USD: авто/ручной", callback_data="admin:usd")],
-        [InlineKeyboardButton(text="🏠 В меню", callback_data="home")],
-    ])
+    ]
+    if show_credentials:
+        rows.insert(0, [InlineKeyboardButton(text="🔐 Данные для входа администратора", callback_data="admin:creds")])
+    rows.append([InlineKeyboardButton(text="🏠 В меню", callback_data="home")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def broadcast_type_kb() -> InlineKeyboardMarkup:
@@ -204,11 +207,35 @@ def import_cancel_keyboard() -> InlineKeyboardMarkup:
 
 @router.callback_query(F.data == "admin:open")
 async def open_admin(cb: CallbackQuery):
+    show_creds = is_superadmin(cb.from_user.id) if cb.from_user else False
     await send_md_safe(
         cb.message,
         "Админ-панель:",
-        reply_markup=admin_kb(),
+        reply_markup=admin_kb(show_creds),
     )
+    await cb.answer()
+
+
+@router.callback_query(F.data == "admin:creds")
+async def show_admin_creds(cb: CallbackQuery):
+    """Показывает логин/пароль администратора только суперадминам."""
+
+    if not (cb.from_user and is_superadmin(cb.from_user.id)):
+        await cb.answer("Недостаточно прав", show_alert=True)
+        return
+
+    text = (
+        "Логин администратора:\n"
+        f"{LOGIN_ADMIN}\n\n"
+        "Пароль администратора:\n"
+        f"{PASSWORD_ADMIN}\n\n"
+        "⚠️ Передавайте эти данные только доверенным лицам.\n\n"
+        "Инструкция:\n"
+        "1) Введите /getadmin\n"
+        "2) Введите логин\n"
+        "3) Введите пароль"
+    )
+    await send_md_safe(cb.message, text, reply_markup=admin_kb(show_credentials=True))
     await cb.answer()
 
 
