@@ -277,12 +277,23 @@ def promo_source_keyboard() -> InlineKeyboardMarkup:
     )
 
 
-def _build_promo_preview(product: dict, promo_type: str, extra_text: str | None, rng: str, usd: float | None) -> str:
+def _build_promo_preview(
+    product: dict,
+    promo_type: str,
+    extra_text: str | None,
+    rng: str,
+    usd: float | None,
+    *,
+    source: str,
+) -> str:
     """Собирает текст предпросмотра промо-рассылки."""
 
     label = _BROADCAST_TYPES[promo_type]["label"]
     header = f"*{escape_user(label)}*"
-    caption = build_product_caption(product, rng, usd, include_city=True)
+
+    include_city = source == "stock"
+    caption = build_product_caption(product, rng, usd, include_city=include_city)
+
     blocks = [header, caption]
     if extra_text:
         blocks.append(escape_user(extra_text))
@@ -711,7 +722,14 @@ async def promo_url(msg: Message, state: FSMContext):
         return
 
     rng, usd = await current_range()
-    preview_text = _build_promo_preview(product, promo_type, data.get("promo_extra"), rng, usd)
+    preview_text = _build_promo_preview(
+        product,
+        promo_type,
+        data.get("promo_extra"),
+        rng,
+        usd,
+        source=data.get("promo_source", "catalog"),
+    )
 
     await state.update_data(promo_url=url_value, promo_preview=preview_text)
     await state.set_state(PromoBroadcastState.waiting_confirm)
