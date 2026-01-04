@@ -1,7 +1,6 @@
 """Обработчики пользовательского меню."""
 import logging
-from aiogram.exceptions import TelegramBadRequest
-import logging
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from collections import defaultdict
 from typing import Any
 
@@ -33,6 +32,7 @@ from structure.states import SupportRequestState, PromoBroadcastState
 from services.pagination import slice_page
 from services import profiles
 from handlers.admin import promo_type_kb
+from data.admins import get_admin_ids
 from data import db_utils
 from data.ready_catalogs import get_ready_catalogs, get_ready_catalog_by_id
 from services.exchange import current_range, range_label
@@ -1556,7 +1556,8 @@ async def _start_request(cb: CallbackQuery, state: FSMContext, request_key: str)
 async def _notify_admins(msg: Message, request_key: str, user_text: str) -> None:
     """Отправляет уведомление администраторам о новом обращении."""
 
-    if not ADMINS:
+    admin_ids = await get_admin_ids()
+    if not admin_ids:
         return
 
     user = msg.from_user
@@ -1578,14 +1579,39 @@ async def _notify_admins(msg: Message, request_key: str, user_text: str) -> None
     )
     admin_message = "\n".join(lines)
 
-    for admin_id in ADMINS:
+    delivered = 0
+    blocked = 0
+    failed = 0
+
+    for admin_id in admin_ids:
         try:
             await msg.bot.send_message(
                 admin_id,
                 admin_message,
             )
+            delivered += 1
+        except TelegramForbiddenError:
+            blocked += 1
+            await db_utils.mark_user_blocked(admin_id)
+        except TelegramBadRequest as exc:
+            lowered = str(exc).lower()
+            if "chat not found" in lowered or "blocked by the user" in lowered:
+                blocked += 1
+                await db_utils.mark_user_blocked(admin_id)
+            else:
+                failed += 1
+                logger.warning("Не удалось уведомить администратора %s: %s", admin_id, exc)
         except Exception as exc:
+            failed += 1
             logger.warning("Не удалось уведомить администратора %s: %s", admin_id, exc)
+
+    if blocked or failed:
+        logger.info(
+            "Итоги уведомления администраторов: доставлено=%s, заблокировано=%s, ошибок=%s",
+            delivered,
+            blocked,
+            failed,
+        )
 
 
 def _extract_user_input(msg: Message) -> str:
