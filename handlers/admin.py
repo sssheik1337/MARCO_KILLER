@@ -458,12 +458,8 @@ async def broadcast_cancel(cb: CallbackQuery, state: FSMContext):
 
 
 # простые текстовые поля (без JSON)
-@router.callback_query(F.data.startswith("admin:edit:"))
+@router.callback_query(F.data.regexp(r"^admin:edit:(contacts|address|worktime|requisites)$"))
 async def ask_text(cb: CallbackQuery, state: FSMContext):
-    if cb.data in {"admin:edit:confirm", "admin:edit:cancel"}:
-        return
-    if cb.data.startswith("admin:edit:back:"):
-        return
     key = cb.data.split(":")[-1]
     pretty = _EDITABLE_SETTINGS.get(key)
     if not pretty:
@@ -483,7 +479,7 @@ async def ask_text(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
 
 
-@router.callback_query(F.data.startswith("admin:edit:back:"))
+@router.callback_query(F.data.regexp(r"^admin:edit:back:(contacts|address|worktime|requisites)$"))
 async def edit_back(cb: CallbackQuery, state: FSMContext):
     """Возвращает к экрану ввода текста."""
 
