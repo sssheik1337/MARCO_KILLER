@@ -19,7 +19,7 @@ from data.admins import is_superadmin
 from structure.markdown import edit_md_safe, message_to_markdown, escape_user, send_md_safe_to_chat
 from structure.keyboards import cancel_keyboard
 from structure.ready_catalogs import ready_catalogs_manage_keyboard, ready_catalog_item_keyboard
-from structure.states import BroadcastState, ReadyCatalogState
+from structure.states import AdminTextEditState, BroadcastState, ReadyCatalogState
 from data.ready_catalogs import (
     add_ready_catalog,
     delete_ready_catalog,
@@ -108,7 +108,20 @@ def edit_prompt_kb(target: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="👁 Предпросмотр", callback_data=f"admin:preview:{target}")],
-            [InlineKeyboardButton(text="⬅️ Админ-меню", callback_data="admin:open")],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_fsm")],
+        ]
+    )
+
+
+def edit_confirm_kb() -> InlineKeyboardMarkup:
+    """Клавиатура подтверждения сохранения текста."""
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Сохранить", callback_data="admin:edit:confirm"),
+                InlineKeyboardButton(text="❌ Отмена", callback_data="admin:edit:cancel"),
+            ],
         ]
     )
 
@@ -435,32 +448,23 @@ async def broadcast_cancel(cb: CallbackQuery, state: FSMContext):
 
 # простые текстовые поля (без JSON)
 @router.callback_query(F.data.startswith("admin:edit:"))
-async def ask_text(cb: CallbackQuery):
+async def ask_text(cb: CallbackQuery, state: FSMContext):
     key = cb.data.split(":")[-1]
     pretty = _EDITABLE_SETTINGS.get(key)
     if not pretty:
         await cb.answer()
         return
     await set_setting("edit_target", key)
-    cur = await get_setting(key, "")
     prompt_lines = [
         f"Пришлите новый текст для «{pretty}». Поддерживается MarkdownV2.",
         "Используйте кнопку «👁 Предпросмотр», чтобы оценить форматирование.",
     ]
-    if cur:
-        prompt_lines.append("Текущая версия показана ниже.")
-    else:
-        prompt_lines.append("Текущая версия: —")
-
+    await state.set_state(AdminTextEditState.waiting_text)
     await edit_md_safe(
         cb.message,
         "\n".join(prompt_lines),
         reply_markup=edit_prompt_kb(key),
     )
-
-    if cur:
-        await send_md_safe_to_chat(cb.message.bot, cb.message.chat.id, "Текущая версия:")
-        await send_md_safe_to_chat(cb.message.bot, cb.message.chat.id, cur)
     await cb.answer()
 
 
@@ -478,26 +482,59 @@ async def preview_text(cb: CallbackQuery):
         await cb.answer()
         return
 
-    await send_md_safe(cb.message, "Предпросмотр:")
-    await send_md_safe(cb.message, stored)
+    await send_md_safe_to_chat(cb.message.bot, cb.message.chat.id, "Текущая версия:")
+    await send_md_safe_to_chat(cb.message.bot, cb.message.chat.id, stored)
     await cb.answer()
 
 
-@router.message(F.content_type == ContentType.TEXT)
-async def save_text(msg: Message):
-    target = await get_setting("edit_target","")
+@router.message(AdminTextEditState.waiting_text)
+async def edit_text_input(msg: Message, state: FSMContext):
+    """Сохраняет новый текст в состояние и показывает предпросмотр."""
+
+    target = await get_setting("edit_target", "")
     if target not in _EDITABLE_SETTINGS:
+        await state.clear()
         return
-    if target == "ready_catalog_url":
-        await set_setting(target, (msg.text or msg.caption or "").strip())
-    else:
-        await set_setting(target, message_to_markdown(msg))
-    await set_setting("edit_target","")
-    await send_md_safe(
-        msg,
-        "Готово ✅",
-        reply_markup=admin_kb(),
-    )
+
+    new_text = message_to_markdown(msg)
+    if not new_text.strip():
+        await send_md_safe(msg, "Текст не может быть пустым. Введите новый текст:")
+        return
+
+    await state.update_data(edit_text=new_text)
+    await state.set_state(AdminTextEditState.waiting_confirm)
+    await send_md_safe(msg, "Предпросмотр:")
+    await send_md_safe(msg, new_text)
+    await send_md_safe(msg, "Сохранить изменения?", reply_markup=edit_confirm_kb())
+
+
+@router.callback_query(F.data == "admin:edit:confirm")
+async def edit_text_confirm(cb: CallbackQuery, state: FSMContext):
+    """Подтверждает сохранение нового текста."""
+
+    data = await state.get_data()
+    new_text = data.get("edit_text", "")
+    target = await get_setting("edit_target", "")
+    if not new_text or target not in _EDITABLE_SETTINGS:
+        await state.clear()
+        await cb.answer("Нечего сохранять", show_alert=True)
+        return
+
+    await set_setting(target, new_text)
+    await set_setting("edit_target", "")
+    await state.clear()
+    await send_md_safe(cb.message, "Готово ✅", reply_markup=admin_kb())
+    await cb.answer()
+
+
+@router.callback_query(F.data == "admin:edit:cancel")
+async def edit_text_cancel(cb: CallbackQuery, state: FSMContext):
+    """Отменяет редактирование текста."""
+
+    await state.clear()
+    await set_setting("edit_target", "")
+    await send_md_safe(cb.message, "Редактирование отменено.", reply_markup=admin_kb())
+    await cb.answer()
 
 # импорты
 @router.callback_query(F.data.startswith("admin:import:"))

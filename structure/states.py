@@ -8,6 +8,12 @@ class AdminEditState(StatesGroup):
     waiting_xlsx_city = State()
     waiting_xlsx_file = State()
 
+class AdminTextEditState(StatesGroup):
+    """Состояния редактирования текстовых полей в админ-панели."""
+
+    waiting_text = State()
+    waiting_confirm = State()
+
 
 class SupportRequestState(StatesGroup):
     """Состояния для пользовательских обращений из главного меню."""
