@@ -28,17 +28,15 @@ from structure.markdown import (
     send_md_safe,
     send_md_safe_to_chat,
 )
-from structure.states import SupportRequestState, PromoBroadcastState
+from structure.states import SupportRequestState
 from services.pagination import slice_page
 from services import profiles
-from handlers.admin import promo_type_kb
 from data.admins import get_admin_ids
 from data import db_utils
 from data.ready_catalogs import get_ready_catalogs, get_ready_catalog_by_id
-from services.exchange import current_range, range_label
+from data.file_storage import CATALOG_FILE_KEYS
 from services.product_render import (
     as_float as _as_float,
-    format_money as _format_money,
     format_money_with_currency as _format_money_with_currency,
 )
 from structure.ready_catalogs import (
@@ -72,45 +70,6 @@ def _user_city(user_id: int) -> str:
 
     return profiles.get_city_or_default(user_id, DEFAULT_CITY)
 
-
-async def _try_capture_promo_selection(
-    cb: CallbackQuery,
-    state: FSMContext,
-    product: dict,
-    section: str,
-    city: str,
-) -> bool:
-    """Перехватывает выбор товара, если админ запустил промо-сценарий."""
-
-    state_name = await state.get_state()
-    if state_name != PromoBroadcastState.waiting_product.state:
-        return False
-
-    data = await state.get_data()
-    promo_section = data.get("promo_section")
-    promo_city = data.get("promo_city")
-    promo_source = data.get("promo_source")
-    if promo_section and promo_section != section:
-        await cb.answer("Этот товар из другого раздела", show_alert=True)
-        return True
-    if promo_source == "stock" and promo_city and promo_city != city:
-        await cb.answer("Выбран другой город", show_alert=True)
-        return True
-
-    product_payload = dict(product)
-    product_payload.setdefault("section", section)
-    product_payload.setdefault("city", city)
-
-    await state.update_data(promo_product=product_payload)
-    await state.set_state(PromoBroadcastState.waiting_type)
-    await send_md_safe(
-        cb.message,
-        f"Товар выбран: {inline_code(product_payload.get('name') or 'Без названия')}\n"
-        "Выберите тип акции:",
-        reply_markup=promo_type_kb(),
-    )
-    await cb.answer("Товар выбран")
-    return True
 
 def _has_media(message: Message) -> bool:
     """Проверяет, содержит ли сообщение вложение, которое нельзя отредактировать как текст."""
@@ -302,6 +261,35 @@ async def _show_catalog_menu(target: Message) -> None:
     await send_md_safe(target, "Выберите раздел каталога:", reply_markup=catalog_menu())
 
 
+async def _send_catalog_file(cb: CallbackQuery, section: str) -> None:
+    """Отправляет файл каталога по выбранному разделу."""
+
+    setting_key = CATALOG_FILE_KEYS.get(section)
+    if not setting_key:
+        await cb.answer("Раздел недоступен", show_alert=True)
+        return
+
+    file_id = await db_utils.get_setting(setting_key, "")
+    if not file_id:
+        await send_md_safe(
+            cb.message,
+            "Данные пока не загружены",
+            reply_markup=catalog_menu(),
+        )
+        await cb.answer()
+        return
+
+    if _has_media(cb.message):
+        await _safe_delete_message(cb.message)
+    await cb.message.answer_document(
+        file_id,
+        caption="Каталог тканей" if section == "fabrics" else "Каталог фурнитуры",
+        reply_markup=catalog_menu(),
+        parse_mode=None,
+    )
+    await cb.answer()
+
+
 @router.callback_query(F.data == "catalog")
 async def on_catalog(cb: CallbackQuery):
     """Показывает выбор раздела каталога."""
@@ -339,51 +327,16 @@ async def on_ready_catalogs(cb: CallbackQuery):
 
 @router.callback_query(F.data == "catalog:fabrics")
 async def on_catalog_fabrics(cb: CallbackQuery):
-    """Открывает каталог тканей из общего прайс-листа."""
-    city = _user_city(cb.from_user.id)
-    categories = [c for c in await db_utils.fetch_categories("fabrics", city) if c]
-    if not categories:
-        await send_md_safe(
-            cb.message,
-            "Каталог пока пуст. Позиции появятся позже.",
-            reply_markup=await _main_menu(cb.from_user.id),
-        )
-        await cb.answer()
-        return
+    """Отправляет файл каталога тканей."""
 
-    enumerated = [(name, str(idx)) for idx, name in enumerate(categories)]
-    page_items, page, total = slice_page(enumerated, 1, PAGE_SIZE)
-    await send_md_safe(
-        cb.message,
-        "Категории:",
-        reply_markup=pager(f"{CAT_CAT_PREFIX}:fabrics", page_items, page, total),
-    )
-    await cb.answer()
+    await _send_catalog_file(cb, "fabrics")
 
 
 @router.callback_query(F.data == "catalog:hardware")
 async def on_catalog_hardware(cb: CallbackQuery):
-    """Открывает каталог фурнитуры из общего прайс-листа."""
+    """Отправляет файл каталога фурнитуры."""
 
-    city = _user_city(cb.from_user.id)
-    categories = [c for c in await db_utils.fetch_categories("hardware", city) if c]
-    if not categories:
-        await send_md_safe(
-            cb.message,
-            "Каталог пока пуст. Позиции появятся позже.",
-            reply_markup=await _main_menu(cb.from_user.id),
-        )
-        await cb.answer()
-        return
-
-    enumerated = [(name, str(idx)) for idx, name in enumerate(categories)]
-    page_items, page, total = slice_page(enumerated, 1, PAGE_SIZE)
-    await send_md_safe(
-        cb.message,
-        "Категории:",
-        reply_markup=pager(f"{CAT_CAT_PREFIX}:hardware", page_items, page, total),
-    )
-    await cb.answer()
+    await _send_catalog_file(cb, "hardware")
 
 
 @router.callback_query(F.data == "stock")
@@ -439,12 +392,9 @@ async def _send_catalog_sections(target: Message, user_id: int, page: int = 1) -
     labeled = _label_sections(sections)
     page_items, page, total = slice_page(labeled, page, PAGE_SIZE)
 
-    rng, usd = await current_range()
-    label = range_label(rng, usd)
-
     await send_md_safe(
         target,
-        label,
+        "Выберите раздел каталога:",
         reply_markup=pager(CAT_SEC_PREFIX, page_items, page, total),
     )
     return True
@@ -525,13 +475,8 @@ def _catalog_products_keyboard(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def _format_money_value(value: object) -> str:
-    money = _format_money(_as_float(value))
-    return money
-
-
-def _build_fabrics_caption(product: dict, rng: str, usd: float | None) -> str:
-    """Формирует карточку ткани с ценами и диапазонами."""
+def _build_fabrics_caption(product: dict) -> str:
+    """Формирует карточку ткани с ценами."""
 
     lines: list[str] = []
     lines.append(f"*{escape_user(product.get('name'))}*")
@@ -550,16 +495,6 @@ def _build_fabrics_caption(product: dict, rng: str, usd: float | None) -> str:
     lines.append(
         escape_user(f"• В отрез: {_text_or_dash(product.get('wholesale_piece'))}")
     )
-
-    price_piece_range = _format_money_value(product.get(f"price_piece_{rng}"))
-    price_roll_range = _format_money_value(product.get(f"price_roll_{rng}"))
-    lines.append("")
-    lines.append("Розница по курсу:")
-    lines.append(escape_user(f"• Ролик: {price_roll_range}"))
-    lines.append(escape_user(f"• Отрез: {price_piece_range}"))
-    range_hint = range_label(rng, usd)
-    if range_hint:
-        lines.append(escape_user(range_hint))
 
     special = product.get("special")
     if special:
@@ -1161,20 +1096,15 @@ async def product_card(cb: CallbackQuery, state: FSMContext):
     product_info = products[product_idx]
     p = await db_utils.fetch_product(product_info.get("name", ""), section=section)
 
-    if await _try_capture_promo_selection(cb, state, p, section, city):
-        return
-
-    rng, usd = await current_range()
     if logger.isEnabledFor(logging.DEBUG):
         logger.debug(
-            "Карточка товара %s, диапазон %s, данные: %s",
+            "Карточка товара %s, данные: %s",
             product_info.get("name"),
-            rng,
             p,
         )
 
     if section == "fabrics":
-        caption = _build_fabrics_caption(p, rng, usd)
+        caption = _build_fabrics_caption(p)
     else:
         caption = _build_hardware_caption(p)
 
@@ -1344,9 +1274,6 @@ async def stock_product_card(cb: CallbackQuery, state: FSMContext):
     if not item:
         await send_md_safe(cb.message, "Данные об остатках пока отсутствуют.")
         await cb.answer()
-        return
-
-    if await _try_capture_promo_selection(cb, state, item, section, city):
         return
 
     lines = [inline_code(item.get("name"))]

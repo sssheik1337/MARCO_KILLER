@@ -537,17 +537,6 @@ def stock_product_controls(product_id: int) -> InlineKeyboardMarkup:
     )
 
 
-def usd_keyboard() -> InlineKeyboardMarkup:
-    """Клавиатура управления экраном курса USD."""
-
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="🔄 Обновить", callback_data="admin:usd:refresh")],
-            [InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")],
-        ]
-    )
-
-
 def import_result_keyboard() -> InlineKeyboardMarkup:
     """Клавиатура после успешного импорта с быстрым переходом в каталог."""
 
