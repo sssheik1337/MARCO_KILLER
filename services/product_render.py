@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import Any
 
 from structure.markdown import escape_user, inline_code
-from services.exchange import range_label
 
 _CITY_LABELS = {
     "msk": "Москва",
@@ -62,29 +61,22 @@ def _city_label(city: str | None) -> str:
 
 def build_product_caption(
     product: dict,
-    rng: str,
-    usd: float | None,
     *,
     include_city: bool = False,
     prefix: str | None = None,
 ) -> str:
     """Собирает описание товара для отправки в MarkdownV2."""
 
-    range_key = rng.replace("-", "_")
-    lbl = range_label(range_key, usd)
-
     if product.get("section") == "fabrics":
-        piece = format_money(as_float(product.get(f"price_piece_{range_key}")))
-        roll = format_money(as_float(product.get(f"price_roll_{range_key}")))
-        price_line = f"Отрез: {piece} · Ролик: {roll}"
-        course_line = f"💵 {lbl}"
+        roll = product.get("wholesale_roll") or "—"
+        piece = product.get("wholesale_piece") or "—"
+        price_line = f"Опт от ролика: {roll} · Опт в отрез: {piece}"
         article_value = inline_code(product.get("article"))
     else:
         currency = product.get("currency") or ""
         rrc = format_money_with_currency(as_float(product.get("price_rrc")), currency)
         opt = format_money_with_currency(as_float(product.get("price_opt")), currency)
         price_line = f"РРЦ: {rrc} · Опт: {opt}"
-        course_line = lbl
         article_value = inline_code(product.get("article"))
 
     lines: list[str] = []
@@ -118,9 +110,6 @@ def build_product_caption(
         )
 
     lines.append(escape_user(price_line))
-    if course_line:
-        lines.append(escape_user(course_line))
-
     in_stock = product.get("in_stock")
     if in_stock is not None:
         lines.append(_line("Наличие", in_stock))

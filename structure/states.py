@@ -8,6 +8,12 @@ class AdminEditState(StatesGroup):
     waiting_xlsx_city = State()
     waiting_xlsx_file = State()
 
+class AdminTextEditState(StatesGroup):
+    """Состояния редактирования текстовых полей в админ-панели."""
+
+    waiting_text = State()
+    waiting_confirm = State()
+
 
 class SupportRequestState(StatesGroup):
     """Состояния для пользовательских обращений из главного меню."""
@@ -15,23 +21,9 @@ class SupportRequestState(StatesGroup):
     waiting_text = State()
 
 
-class PromoBroadcastState(StatesGroup):
-    """Состояния для промо-рассылки по выбранному товару."""
+class BroadcastState(StatesGroup):
+    """Состояния для универсальной рассылки всем пользователям."""
 
-    waiting_source = State()
-    waiting_city = State()
-    waiting_section = State()
-    waiting_product = State()
-    waiting_type = State()
-    waiting_extra = State()
-    waiting_url = State()
-    waiting_confirm = State()
-
-
-class AnnouncementState(StatesGroup):
-    """Состояния для объявления без привязки к товару."""
-
-    waiting_type = State()
     waiting_text = State()
     waiting_url = State()
     waiting_confirm = State()

@@ -25,7 +25,7 @@ def main_menu(is_admin: bool) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = [
         [InlineKeyboardButton(text="📸 Каталог готовых изделий", callback_data="ready_catalog")],
         [
-            InlineKeyboardButton(text="📚 Каталог", callback_data="catalog"),
+            InlineKeyboardButton(text="📚 Прайс-лист", callback_data="catalog"),
             InlineKeyboardButton(text="📦 Наличие", callback_data="stock"),
         ],
         [
@@ -42,7 +42,7 @@ def main_menu(is_admin: bool) -> InlineKeyboardMarkup:
     ]
 
     if is_admin:
-        rows.append([InlineKeyboardButton(text="🛠 Админ-панель", callback_data="admin:open")])
+        rows.append([InlineKeyboardButton(text="🛠 Админ-меню", callback_data="menu:toggle_admin")])
 
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -532,17 +532,6 @@ def stock_product_controls(product_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="↩️ Назад", callback_data="back")],
-            [InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")],
-        ]
-    )
-
-
-def usd_keyboard() -> InlineKeyboardMarkup:
-    """Клавиатура управления экраном курса USD."""
-
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="🔄 Обновить", callback_data="admin:usd:refresh")],
             [InlineKeyboardButton(text="🏠 Главное меню", callback_data="home")],
         ]
     )

@@ -10,6 +10,8 @@ from pathlib import Path
 
 from data.stock_interface import load_city_stock
 from data.stock_models import StockItemCity
+from data.db_utils import get_setting
+from data.file_storage import STOCK_FILE_KEYS
 from services.pagination import slice_page
 from structure.keyboards import (
     build_hardware_items_keyboard,
@@ -45,6 +47,34 @@ async def _safe_delete_message(message: Message) -> None:
         raise
     except Exception:
         return
+
+
+async def _send_stock_file(message: Message, city: str, section: str) -> bool:
+    """Отправляет файл остатков для выбранного города и раздела."""
+
+    city_keys = STOCK_FILE_KEYS.get(city, {})
+    setting_key = city_keys.get(section)
+    if not setting_key:
+        return False
+
+    file_id = await get_setting(setting_key, "")
+    if not file_id:
+        await send_md_safe(
+            message,
+            "Данные пока не загружены",
+            reply_markup=kb_stock_sections(city),
+        )
+        return True
+
+    if message.document:
+        await _safe_delete_message(message)
+    await message.answer_document(
+        file_id,
+        caption=f"{SECTION_TITLES.get(section, section)} • {CITY_TITLES.get(city, city)}",
+        reply_markup=kb_stock_sections(city),
+        parse_mode=None,
+    )
+    return True
 
 def _plain_title(section: str, city: str) -> str:
     """Возвращает заголовок раздела без Markdown-экранирования."""
@@ -415,17 +445,10 @@ async def on_stock_select_section(cb: CallbackQuery):
     """Фиксирует выбор раздела остатков и открывает список видов."""
 
     _, city, section = cb.data.split(":")
-    message = cb.message
-    if message.document:
-        await _safe_delete_message(message)
-        message = await cb.message.answer("Загрузка...", parse_mode=None)
-
-    if city == "spb" and section == "fabrics":
-        await _show_spb_collections(message, cb.from_user.id, city, section, 1)
-    elif city == "msk" and section == "hardware":
-        await _show_hardware_kinds(message, cb.from_user.id, city, 1)
-    else:
-        await _show_kinds(message, cb.from_user.id, city, section)
+    handled = await _send_stock_file(cb.message, city, section)
+    if not handled:
+        await cb.answer("Раздел недоступен", show_alert=True)
+        return
     await cb.answer()
 
 

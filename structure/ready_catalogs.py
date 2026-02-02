@@ -12,7 +12,7 @@ def ready_catalogs_manage_keyboard(catalogs: list[dict]) -> InlineKeyboardMarkup
         [InlineKeyboardButton(text=cat["title"], callback_data=f"admin:ready:item:{cat['id']}")]
         for cat in catalogs
     ]
-    rows.append([InlineKeyboardButton(text="🏠 В меню", callback_data="home")])
+    rows.append([InlineKeyboardButton(text="⬅️ Админ-меню", callback_data="admin:open")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -25,7 +25,7 @@ def ready_catalog_item_keyboard(catalog_id: int) -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="🔁 Заменить файл", callback_data=f"admin:ready:replace:{catalog_id}")],
             [InlineKeyboardButton(text="🗑 Удалить каталог", callback_data=f"admin:ready:delete:{catalog_id}")],
             [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin:ready:manage")],
-            [InlineKeyboardButton(text="🏠 В меню", callback_data="home")],
+            [InlineKeyboardButton(text="⬅️ Админ-меню", callback_data="admin:open")],
         ]
     )
 
