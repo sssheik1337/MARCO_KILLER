@@ -1438,6 +1438,17 @@ async def _send_setting_text(target: Message, user_id: int, key: str, empty_text
 
     stored = await db_utils.get_setting(key, "")
     reply_markup = await _main_menu(user_id)
+    image_id = await db_utils.get_setting(f"{key}_image", "")
+    if image_id:
+        caption = stored or empty_text
+        await target.answer_photo(
+            image_id,
+            caption=caption,
+            reply_markup=reply_markup,
+            parse_mode="MarkdownV2",
+        )
+        return
+
     if stored:
         await send_md_safe(target, stored, reply_markup=reply_markup)
     else:

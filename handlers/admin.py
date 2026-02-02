@@ -518,11 +518,25 @@ async def preview_text(cb: CallbackQuery):
         await cb.answer()
         return
 
-    await edit_md_safe(
-        cb.message,
-        "Текущая версия:\n\n" + stored,
-        reply_markup=edit_preview_kb(key),
-    )
+    image_id = await get_setting(f"{key}_image", "")
+    preview_text = "Текущая версия:\n\n" + stored
+    if image_id:
+        try:
+            await cb.message.delete()
+        except Exception:
+            pass
+        await cb.message.answer_photo(
+            image_id,
+            caption=preview_text,
+            reply_markup=edit_preview_kb(key),
+            parse_mode="MarkdownV2",
+        )
+    else:
+        await edit_md_safe(
+            cb.message,
+            preview_text,
+            reply_markup=edit_preview_kb(key),
+        )
     await cb.answer()
 
 
@@ -535,15 +549,25 @@ async def edit_text_input(msg: Message, state: FSMContext):
         await state.clear()
         return
 
+    photo_id = None
+    if msg.photo:
+        photo_id = msg.photo[-1].file_id
     new_text = message_to_markdown(msg)
     if not new_text.strip():
         await send_md_safe(msg, "Текст не может быть пустым. Введите новый текст:")
         return
 
-    await state.update_data(edit_text=new_text)
+    await state.update_data(edit_text=new_text, edit_image=photo_id)
     await state.set_state(AdminTextEditState.waiting_confirm)
-    await send_md_safe(msg, "Предпросмотр:")
-    await send_md_safe(msg, new_text)
+    if photo_id:
+        await msg.answer_photo(
+            photo_id,
+            caption=new_text,
+            parse_mode="MarkdownV2",
+        )
+    else:
+        await send_md_safe(msg, "Предпросмотр:")
+        await send_md_safe(msg, new_text)
     await send_md_safe(msg, "Сохранить изменения?", reply_markup=edit_confirm_kb())
 
 
@@ -553,6 +577,7 @@ async def edit_text_confirm(cb: CallbackQuery, state: FSMContext):
 
     data = await state.get_data()
     new_text = data.get("edit_text", "")
+    new_image = data.get("edit_image")
     target = await get_setting("edit_target", "")
     if not new_text or target not in _EDITABLE_SETTINGS:
         await state.clear()
@@ -560,6 +585,8 @@ async def edit_text_confirm(cb: CallbackQuery, state: FSMContext):
         return
 
     await set_setting(target, new_text)
+    if new_image:
+        await set_setting(f"{target}_image", new_image)
     await set_setting("edit_target", "")
     await state.clear()
     await send_md_safe(cb.message, "Готово ✅", reply_markup=admin_kb())

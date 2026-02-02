@@ -25,7 +25,7 @@ def main_menu(is_admin: bool) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = [
         [InlineKeyboardButton(text="📸 Каталог готовых изделий", callback_data="ready_catalog")],
         [
-            InlineKeyboardButton(text="📚 Каталог", callback_data="catalog"),
+            InlineKeyboardButton(text="📚 Прайс-лист", callback_data="catalog"),
             InlineKeyboardButton(text="📦 Наличие", callback_data="stock"),
         ],
         [
