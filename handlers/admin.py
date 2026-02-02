@@ -103,7 +103,7 @@ def admin_kb(show_credentials: bool = False):
 
 
 def edit_prompt_kb(target: str) -> InlineKeyboardMarkup:
-    """Формирует клавиатуру с кнопкой предпросмотра текущего текста."""
+    """Формирует клавиатуру для редактирования текста."""
 
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -122,6 +122,17 @@ def edit_confirm_kb() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="✅ Сохранить", callback_data="admin:edit:confirm"),
                 InlineKeyboardButton(text="❌ Отмена", callback_data="admin:edit:cancel"),
             ],
+        ]
+    )
+
+
+def edit_preview_kb(target: str) -> InlineKeyboardMarkup:
+    """Клавиатура предпросмотра текущей версии."""
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✏️ Редактировать", callback_data=f"admin:edit:back:{target}")],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_fsm")],
         ]
     )
 
@@ -468,6 +479,31 @@ async def ask_text(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
 
 
+@router.callback_query(F.data.startswith("admin:edit:back:"))
+async def edit_back(cb: CallbackQuery, state: FSMContext):
+    """Возвращает к экрану ввода текста."""
+
+    key = cb.data.split(":")[-1]
+    pretty = _EDITABLE_SETTINGS.get(key)
+    if not pretty:
+        await cb.answer()
+        return
+
+    await set_setting("edit_target", key)
+    await state.set_state(AdminTextEditState.waiting_text)
+    await edit_md_safe(
+        cb.message,
+        "\n".join(
+            [
+                f"Пришлите новый текст для «{pretty}». Поддерживается MarkdownV2.",
+                "Если нужно, нажмите «👁 Предпросмотр», чтобы увидеть текущую версию.",
+            ]
+        ),
+        reply_markup=edit_prompt_kb(key),
+    )
+    await cb.answer()
+
+
 @router.callback_query(F.data.startswith("admin:preview:"))
 async def preview_text(cb: CallbackQuery):
     """Показывает текущую версию настройки с сохранением форматирования."""
@@ -482,17 +518,10 @@ async def preview_text(cb: CallbackQuery):
         await cb.answer()
         return
 
-    await send_md_safe_to_chat(
-        cb.message.bot,
-        cb.message.chat.id,
-        "Текущая версия:",
-        reply_markup=edit_prompt_kb(key),
-    )
-    await send_md_safe_to_chat(
-        cb.message.bot,
-        cb.message.chat.id,
-        stored,
-        reply_markup=edit_prompt_kb(key),
+    await edit_md_safe(
+        cb.message,
+        "Текущая версия:\n\n" + stored,
+        reply_markup=edit_preview_kb(key),
     )
     await cb.answer()
 
