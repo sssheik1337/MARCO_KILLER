@@ -99,7 +99,6 @@ def admin_kb(show_credentials: bool = False):
     ]
     if show_credentials:
         rows.insert(0, [InlineKeyboardButton(text="🔐 Данные для входа администратора", callback_data="admin:creds")])
-    rows.append([InlineKeyboardButton(text="🏠 В меню", callback_data="home")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 

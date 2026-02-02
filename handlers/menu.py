@@ -1644,6 +1644,9 @@ async def cancel_fsm(cb: CallbackQuery, state: FSMContext):
     """Отменяет текущее состояние и возвращает пользователя в главное меню."""
 
     await state.clear()
-    menu_markup = await _main_menu(cb.from_user.id)
-    await send_md_safe(cb.message, "Действие отменено.", reply_markup=menu_markup)
+    if await is_admin(cb.from_user.id):
+        await send_md_safe(cb.message, "Действие отменено.", reply_markup=admin_kb())
+    else:
+        menu_markup = await _main_menu(cb.from_user.id)
+        await send_md_safe(cb.message, "Действие отменено.", reply_markup=menu_markup)
     await cb.answer()
