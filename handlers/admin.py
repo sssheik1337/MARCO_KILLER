@@ -457,7 +457,7 @@ async def ask_text(cb: CallbackQuery, state: FSMContext):
     await set_setting("edit_target", key)
     prompt_lines = [
         f"Пришлите новый текст для «{pretty}». Поддерживается MarkdownV2.",
-        "Используйте кнопку «👁 Предпросмотр», чтобы оценить форматирование.",
+        "Если нужно, нажмите «👁 Предпросмотр», чтобы увидеть текущую версию.",
     ]
     await state.set_state(AdminTextEditState.waiting_text)
     await edit_md_safe(
@@ -482,8 +482,18 @@ async def preview_text(cb: CallbackQuery):
         await cb.answer()
         return
 
-    await send_md_safe_to_chat(cb.message.bot, cb.message.chat.id, "Текущая версия:")
-    await send_md_safe_to_chat(cb.message.bot, cb.message.chat.id, stored)
+    await send_md_safe_to_chat(
+        cb.message.bot,
+        cb.message.chat.id,
+        "Текущая версия:",
+        reply_markup=edit_prompt_kb(key),
+    )
+    await send_md_safe_to_chat(
+        cb.message.bot,
+        cb.message.chat.id,
+        stored,
+        reply_markup=edit_prompt_kb(key),
+    )
     await cb.answer()
 
 
