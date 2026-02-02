@@ -95,6 +95,7 @@ def admin_kb(show_credentials: bool = False):
         [InlineKeyboardButton(text="➕ Добавить каталог готовых изделий", callback_data="admin:ready:add")],
         [InlineKeyboardButton(text="✏️ Управление каталогами готовых изделий", callback_data="admin:ready:manage")],
         [InlineKeyboardButton(text="📢 Рассылка всем", callback_data="admin:broadcast:start")],
+        [InlineKeyboardButton(text="👤 Пользовательское меню", callback_data="menu:toggle_user")],
     ]
     if show_credentials:
         rows.insert(0, [InlineKeyboardButton(text="🔐 Данные для входа администратора", callback_data="admin:creds")])

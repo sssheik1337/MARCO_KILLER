@@ -42,7 +42,7 @@ def main_menu(is_admin: bool) -> InlineKeyboardMarkup:
     ]
 
     if is_admin:
-        rows.append([InlineKeyboardButton(text="🛠 Админ-панель", callback_data="admin:open")])
+        rows.append([InlineKeyboardButton(text="🛠 Админ-меню", callback_data="menu:toggle_admin")])
 
     return InlineKeyboardMarkup(inline_keyboard=rows)
 

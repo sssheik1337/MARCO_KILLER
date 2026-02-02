@@ -8,7 +8,7 @@ import aiosqlite
 from aiogram import Router, F
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton
-from config import PAGE_SIZE, ADMINS, DEFAULT_CITY, DB_PATH
+from config import PAGE_SIZE, DEFAULT_CITY, DB_PATH
 from structure.keyboards import (
     catalog_menu,
     main_menu_with_link,
@@ -31,10 +31,11 @@ from structure.markdown import (
 from structure.states import SupportRequestState
 from services.pagination import slice_page
 from services import profiles
-from data.admins import get_admin_ids
+from data.admins import get_admin_ids, is_admin
 from data import db_utils
 from data.ready_catalogs import get_ready_catalogs, get_ready_catalog_by_id
 from data.file_storage import CATALOG_FILE_KEYS
+from handlers.admin import admin_kb
 from services.product_render import (
     as_float as _as_float,
     format_money_with_currency as _format_money_with_currency,
@@ -55,14 +56,10 @@ _STOCK_CONTEXT: dict[int, dict[int, dict[str, Any]]] = defaultdict(dict)
 
 # --- утилиты ---
 
-def _is_admin(user_id: int) -> bool:
-    return user_id in ADMINS
-
-
 async def _main_menu(user_id: int) -> InlineKeyboardMarkup:
     """Возвращает главное меню с учётом ссылки на каталог готовых изделий."""
 
-    return await main_menu_with_link(_is_admin(user_id))
+    return await main_menu_with_link(await is_admin(user_id))
 
 
 def _user_city(user_id: int) -> str:
@@ -99,6 +96,33 @@ async def _ask_city(target: Message, action: str) -> None:
     """Отправляет предложение выбрать город для указанного раздела."""
 
     await send_md_safe(target, "Выберите город:", reply_markup=city_selector(action))
+
+
+async def _toggle_to_admin_menu(cb: CallbackQuery) -> None:
+    """Переключает пользовательское меню в админ-панель."""
+
+    if not await is_admin(cb.from_user.id):
+        await cb.answer("Недостаточно прав", show_alert=True)
+        return
+
+    if _has_media(cb.message):
+        await _safe_delete_message(cb.message)
+        await cb.message.answer("Админ-панель:", reply_markup=admin_kb(), parse_mode=None)
+    else:
+        await edit_md_safe(cb.message, "Админ-панель:", reply_markup=admin_kb())
+    await cb.answer()
+
+
+async def _toggle_to_user_menu(cb: CallbackQuery) -> None:
+    """Переключает админ-панель в пользовательское меню."""
+
+    menu_markup = await _main_menu(cb.from_user.id)
+    if _has_media(cb.message):
+        await _safe_delete_message(cb.message)
+        await cb.message.answer("Главное меню:", reply_markup=menu_markup, parse_mode=None)
+    else:
+        await edit_md_safe(cb.message, "Главное меню:", reply_markup=menu_markup)
+    await cb.answer()
 
 
 async def _catalog_items_count(table: str, city: str | None = None) -> int | None:
@@ -212,6 +236,20 @@ async def on_home(cb: CallbackQuery):
             reply_markup=menu_markup,
         )
     await cb.answer()
+
+
+@router.callback_query(F.data == "menu:toggle_admin")
+async def toggle_admin_menu(cb: CallbackQuery):
+    """Переключает меню в режим админ-панели."""
+
+    await _toggle_to_admin_menu(cb)
+
+
+@router.callback_query(F.data == "menu:toggle_user")
+async def toggle_user_menu(cb: CallbackQuery):
+    """Переключает меню в режим пользователя."""
+
+    await _toggle_to_user_menu(cb)
 
 
 @router.callback_query(F.data == "ready_catalog:back")
@@ -385,7 +423,7 @@ async def _send_catalog_sections(target: Message, user_id: int, page: int = 1) -
         await send_md_safe(
             target,
             "Каталог пока пуст. Позиции появятся позже.",
-            reply_markup=empty_catalog_keyboard(_is_admin(user_id)),
+            reply_markup=empty_catalog_keyboard(await is_admin(user_id)),
         )
         return False
 
