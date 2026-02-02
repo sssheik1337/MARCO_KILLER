@@ -16,7 +16,7 @@ from data.db_utils import get_setting, set_setting
 from config import LOGIN_ADMIN, PASSWORD_ADMIN
 from formatter import send_md_safe
 from data.admins import is_superadmin
-from structure.markdown import message_to_markdown, escape_user, send_md_safe_to_chat
+from structure.markdown import edit_md_safe, message_to_markdown, escape_user, send_md_safe_to_chat
 from structure.keyboards import cancel_keyboard
 from structure.ready_catalogs import ready_catalogs_manage_keyboard, ready_catalog_item_keyboard
 from structure.states import BroadcastState, ReadyCatalogState
@@ -108,7 +108,7 @@ def edit_prompt_kb(target: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="👁 Предпросмотр", callback_data=f"admin:preview:{target}")],
-            [InlineKeyboardButton(text="🏠 В меню", callback_data="home")],
+            [InlineKeyboardButton(text="⬅️ Админ-меню", callback_data="admin:open")],
         ]
     )
 
@@ -119,7 +119,7 @@ def import_cancel_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="❌ Отменить", callback_data="admin:import:cancel")],
-            [InlineKeyboardButton(text="🏠 В меню", callback_data="home")],
+            [InlineKeyboardButton(text="⬅️ Админ-меню", callback_data="admin:open")],
         ]
     )
 
@@ -132,7 +132,7 @@ def broadcast_confirm_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="✅ Отправить всем", callback_data="admin:broadcast:confirm"),
                 InlineKeyboardButton(text="❌ Отмена", callback_data="admin:broadcast:cancel"),
             ],
-            [InlineKeyboardButton(text="🏠 В меню", callback_data="home")],
+            [InlineKeyboardButton(text="⬅️ Админ-меню", callback_data="admin:open")],
         ]
     )
 
@@ -233,6 +233,7 @@ async def broadcast_start(cb: CallbackQuery, state: FSMContext):
     await send_md_safe(
         cb.message,
         "Введите текст рассылки (можно с MarkdownV2, эмодзи, переносами):",
+        reply_markup=cancel_keyboard(),
     )
     await cb.answer()
 
@@ -338,7 +339,7 @@ async def broadcast_text(msg: Message, state: FSMContext):
 
     await state.update_data(broadcast_text=text)
     await state.set_state(BroadcastState.waiting_url)
-    await send_md_safe(msg, "Введите URL или \"-\" если кнопка не нужна:")
+    await send_md_safe(msg, "Введите URL или \"-\" если кнопка не нужна:", reply_markup=cancel_keyboard())
 
 
 @router.message(BroadcastState.waiting_url)
@@ -451,15 +452,15 @@ async def ask_text(cb: CallbackQuery):
     else:
         prompt_lines.append("Текущая версия: —")
 
-    await send_md_safe(
+    await edit_md_safe(
         cb.message,
         "\n".join(prompt_lines),
         reply_markup=edit_prompt_kb(key),
     )
 
     if cur:
-        await send_md_safe(cb.message, "Текущая версия:")
-        await send_md_safe(cb.message, cur)
+        await send_md_safe_to_chat(cb.message.bot, cb.message.chat.id, "Текущая версия:")
+        await send_md_safe_to_chat(cb.message.bot, cb.message.chat.id, cur)
     await cb.answer()
 
 
