@@ -469,6 +469,7 @@ async def ask_text(cb: CallbackQuery, state: FSMContext):
     prompt_lines = [
         f"Пришлите новый текст для «{pretty}». Поддерживается MarkdownV2.",
         "Если нужно, нажмите «👁 Предпросмотр», чтобы увидеть текущую версию.",
+        "Можно приложить изображение вместе с текстом.",
     ]
     await state.set_state(AdminTextEditState.waiting_text)
     await edit_md_safe(
@@ -497,6 +498,7 @@ async def edit_back(cb: CallbackQuery, state: FSMContext):
             [
                 f"Пришлите новый текст для «{pretty}». Поддерживается MarkdownV2.",
                 "Если нужно, нажмите «👁 Предпросмотр», чтобы увидеть текущую версию.",
+                "Можно приложить изображение вместе с текстом.",
             ]
         ),
         reply_markup=edit_prompt_kb(key),
