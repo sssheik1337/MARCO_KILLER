@@ -28,7 +28,7 @@ from data.ready_catalogs import (
     update_ready_catalog_file,
     update_ready_catalog_title,
 )
-from services.notifications import send_bulk_message
+from services.notifications import send_bulk_media, send_bulk_message
 from data.file_storage import ADMIN_IMPORT_KEYS
 
 router = Router()
@@ -253,10 +253,10 @@ async def broadcast_start(cb: CallbackQuery, state: FSMContext):
     """Запускает сценарий универсальной рассылки."""
 
     await state.clear()
-    await state.set_state(BroadcastState.waiting_text)
+    await state.set_state(BroadcastState.waiting_content)
     await send_md_safe(
         cb.message,
-        "Введите текст рассылки (можно с MarkdownV2, эмодзи, переносами):",
+        "Пришлите сообщение для рассылки: текст, фото, видео, GIF или документ.\nМожно добавить подпись с MarkdownV2.",
         reply_markup=cancel_keyboard(),
     )
     await cb.answer()
@@ -352,16 +352,58 @@ async def ready_catalog_delete(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
 
 
-@router.message(BroadcastState.waiting_text)
-async def broadcast_text(msg: Message, state: FSMContext):
-    """Сохраняет текст рассылки и запрашивает URL кнопки."""
+@router.message(BroadcastState.waiting_content)
+async def broadcast_content(msg: Message, state: FSMContext):
+    """Сохраняет контент рассылки и запрашивает URL кнопки."""
 
-    text = message_to_markdown(msg)
-    if not text.strip():
-        await send_md_safe(msg, "Текст не может быть пустым. Введите текст рассылки:")
+    content_type = msg.content_type
+    supported_types = {
+        ContentType.TEXT,
+        ContentType.PHOTO,
+        ContentType.VIDEO,
+        ContentType.ANIMATION,
+        ContentType.DOCUMENT,
+    }
+    if content_type not in supported_types:
+        await send_md_safe(
+            msg,
+            "Поддерживаются только: текст, фото, видео, GIF и документ. Пришлите подходящее сообщение.",
+        )
         return
 
-    await state.update_data(broadcast_text=text)
+    text = message_to_markdown(msg)
+    payload: dict[str, str | None] = {"broadcast_type": "text", "broadcast_text": text}
+
+    if content_type == ContentType.PHOTO:
+        payload = {
+            "broadcast_type": "photo",
+            "broadcast_file_id": msg.photo[-1].file_id,
+            "broadcast_caption": text,
+        }
+    elif content_type == ContentType.VIDEO:
+        payload = {
+            "broadcast_type": "video",
+            "broadcast_file_id": msg.video.file_id,
+            "broadcast_caption": text,
+        }
+    elif content_type == ContentType.ANIMATION:
+        payload = {
+            "broadcast_type": "animation",
+            "broadcast_file_id": msg.animation.file_id,
+            "broadcast_caption": text,
+        }
+    elif content_type == ContentType.DOCUMENT:
+        payload = {
+            "broadcast_type": "document",
+            "broadcast_file_id": msg.document.file_id,
+            "broadcast_caption": text,
+        }
+
+    if payload.get("broadcast_type") == "text" and not text.strip():
+        await send_md_safe(msg, "Текст не может быть пустым. Пришлите сообщение для рассылки.")
+        return
+
+    await state.update_data(**payload)
     await state.set_state(BroadcastState.waiting_url)
     await send_md_safe(msg, "Введите URL или \"-\" если кнопка не нужна:", reply_markup=cancel_keyboard())
 
@@ -374,8 +416,22 @@ async def broadcast_url(msg: Message, state: FSMContext):
     url_value = None if not url_text or url_text == "-" else url_text
 
     data = await state.get_data()
-    text = data.get("broadcast_text", "")
-    if not text:
+    broadcast_type = data.get("broadcast_type")
+    text = data.get("broadcast_text")
+    file_id = data.get("broadcast_file_id")
+    caption = data.get("broadcast_caption")
+
+    if not broadcast_type:
+        await state.clear()
+        await send_md_safe(msg, "Сценарий сброшен. Начните заново.", reply_markup=admin_kb())
+        return
+
+    if broadcast_type == "text" and not (text or "").strip():
+        await state.clear()
+        await send_md_safe(msg, "Сценарий сброшен. Начните заново.", reply_markup=admin_kb())
+        return
+
+    if broadcast_type != "text" and not file_id:
         await state.clear()
         await send_md_safe(msg, "Сценарий сброшен. Начните заново.", reply_markup=admin_kb())
         return
@@ -389,11 +445,33 @@ async def broadcast_url(msg: Message, state: FSMContext):
             inline_keyboard=[[InlineKeyboardButton(text="Подробнее", url=url_value)]]
         )
 
-    await send_md_safe(
-        msg,
-        text,
-        reply_markup=button_markup,
-    )
+    if broadcast_type == "text":
+        await send_md_safe(
+            msg,
+            text,
+            reply_markup=button_markup,
+        )
+    else:
+        # Для предпросмотра отправляем тот же тип вложения, который уйдёт пользователям.
+        media_sender = {
+            "photo": msg.bot.send_photo,
+            "video": msg.bot.send_video,
+            "animation": msg.bot.send_animation,
+            "document": msg.bot.send_document,
+        }.get(broadcast_type)
+        if not media_sender:
+            await state.clear()
+            await send_md_safe(msg, "Неподдерживаемый тип вложения.", reply_markup=admin_kb())
+            return
+
+        await media_sender(
+            msg.chat.id,
+            **{broadcast_type: file_id},
+            caption=caption,
+            parse_mode="MarkdownV2" if caption else None,
+            reply_markup=button_markup,
+        )
+
     await send_md_safe(
         msg,
         "Подтвердите отправку.",
@@ -401,7 +479,16 @@ async def broadcast_url(msg: Message, state: FSMContext):
     )
 
 
-async def _run_broadcast(bot, text: str, url: str | None, chat_id: int):
+async def _run_broadcast(
+    bot,
+    *,
+    broadcast_type: str,
+    text: str | None,
+    file_id: str | None,
+    caption: str | None,
+    url: str | None,
+    chat_id: int,
+):
     """Фоновая отправка универсальной рассылки."""
 
     reply_markup = None
@@ -410,12 +497,22 @@ async def _run_broadcast(bot, text: str, url: str | None, chat_id: int):
             inline_keyboard=[[InlineKeyboardButton(text="Подробнее", url=url)]]
         )
 
-    delivered, blocked, failed = await send_bulk_message(
-        bot,
-        text,
-        parse_mode="MarkdownV2",
-        reply_markup=reply_markup,
-    )
+    if broadcast_type == "text":
+        delivered, blocked, failed = await send_bulk_message(
+            bot,
+            text or "",
+            parse_mode="MarkdownV2",
+            reply_markup=reply_markup,
+        )
+    else:
+        delivered, blocked, failed = await send_bulk_media(
+            bot,
+            content_type=broadcast_type,
+            file_id=file_id or "",
+            caption=caption,
+            parse_mode="MarkdownV2" if caption else None,
+            reply_markup=reply_markup,
+        )
     summary_lines = [
         "Рассылка завершена:",
         f"✅ Доставлено: {delivered}",
@@ -435,16 +532,38 @@ async def broadcast_confirm(cb: CallbackQuery, state: FSMContext):
         return
 
     data = await state.get_data()
-    text = data.get("broadcast_text", "")
+    broadcast_type = data.get("broadcast_type")
+    text = data.get("broadcast_text")
+    file_id = data.get("broadcast_file_id")
+    caption = data.get("broadcast_caption")
     url_value = data.get("broadcast_url")
-    if not text:
+
+    if not broadcast_type:
+        await cb.answer("Нечего отправлять", show_alert=True)
+        return
+
+    if broadcast_type == "text" and not (text or "").strip():
+        await cb.answer("Нечего отправлять", show_alert=True)
+        return
+
+    if broadcast_type != "text" and not file_id:
         await cb.answer("Нечего отправлять", show_alert=True)
         return
 
     await send_md_safe(cb.message, "Рассылка запущена, сообщим об итогах.")
     await state.clear()
 
-    asyncio.create_task(_run_broadcast(cb.bot, text, url_value, cb.from_user.id))
+    asyncio.create_task(
+        _run_broadcast(
+            cb.bot,
+            broadcast_type=broadcast_type,
+            text=text,
+            file_id=file_id,
+            caption=caption,
+            url=url_value,
+            chat_id=cb.from_user.id,
+        )
+    )
     await cb.answer()
 
 
