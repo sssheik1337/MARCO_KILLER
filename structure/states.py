@@ -24,7 +24,7 @@ class SupportRequestState(StatesGroup):
 class BroadcastState(StatesGroup):
     """Состояния для универсальной рассылки всем пользователям."""
 
-    waiting_text = State()
+    waiting_content = State()
     waiting_url = State()
     waiting_confirm = State()
 

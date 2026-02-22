@@ -112,3 +112,86 @@ async def send_bulk_message(
             await asyncio.sleep(throttle_delay)
 
     return delivered, blocked, failed
+
+
+async def send_bulk_media(
+    bot: Bot,
+    *,
+    content_type: str,
+    file_id: str,
+    caption: str | None = None,
+    parse_mode: str | None = None,
+    reply_markup: InlineKeyboardMarkup | None = None,
+    throttle_delay: float = 0.05,
+) -> tuple[int, int, int]:
+    """Отправляет медиа/файл всем активным пользователям."""
+
+    recipients = await get_active_user_ids()
+    delivered = 0
+    blocked = 0
+    failed = 0
+
+    sender_map = {
+        "photo": lambda chat_id: bot.send_photo(
+            chat_id,
+            photo=file_id,
+            caption=caption,
+            parse_mode=parse_mode,
+            reply_markup=reply_markup,
+        ),
+        "video": lambda chat_id: bot.send_video(
+            chat_id,
+            video=file_id,
+            caption=caption,
+            parse_mode=parse_mode,
+            reply_markup=reply_markup,
+        ),
+        "animation": lambda chat_id: bot.send_animation(
+            chat_id,
+            animation=file_id,
+            caption=caption,
+            parse_mode=parse_mode,
+            reply_markup=reply_markup,
+        ),
+        "document": lambda chat_id: bot.send_document(
+            chat_id,
+            document=file_id,
+            caption=caption,
+            parse_mode=parse_mode,
+            reply_markup=reply_markup,
+        ),
+        "audio": lambda chat_id: bot.send_audio(
+            chat_id,
+            audio=file_id,
+            caption=caption,
+            parse_mode=parse_mode,
+            reply_markup=reply_markup,
+        ),
+    }
+
+    send_method = sender_map.get(content_type)
+    if not send_method:
+        raise ValueError(f"Неподдерживаемый тип контента: {content_type}")
+
+    for tg_id in recipients:
+        try:
+            await send_method(tg_id)
+            delivered += 1
+        except TelegramForbiddenError:
+            blocked += 1
+            await mark_user_blocked(tg_id)
+        except TelegramBadRequest as exc:
+            lowered = str(exc).lower()
+            if "chat not found" in lowered or "blocked by the user" in lowered:
+                blocked += 1
+                await mark_user_blocked(tg_id)
+            else:
+                failed += 1
+                logging.warning("Не удалось отправить медиа %s: %s", tg_id, exc)
+        except Exception as exc:  # pragma: no cover - сетевые ошибки
+            failed += 1
+            logging.warning("Сбой отправки медиа %s: %s", tg_id, exc)
+        if throttle_delay > 0:
+            await asyncio.sleep(throttle_delay)
+
+    return delivered, blocked, failed
