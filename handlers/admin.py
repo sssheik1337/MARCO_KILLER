@@ -822,7 +822,15 @@ async def import_cancel(cb: CallbackQuery):
     await cb.answer()
 
 @router.message(F.content_type == ContentType.DOCUMENT)
-async def import_xlsx(msg: Message):
+async def import_xlsx(msg: Message, state: FSMContext):
+    current_state = await state.get_state()
+    if current_state in {
+        BroadcastState.waiting_content.state,
+        BroadcastState.waiting_url.state,
+        BroadcastState.waiting_confirm.state,
+    }:
+        return
+
     target_key = await get_setting("import_target", "")
     if not target_key:
         return
