@@ -256,7 +256,7 @@ async def broadcast_start(cb: CallbackQuery, state: FSMContext):
     await state.set_state(BroadcastState.waiting_content)
     await send_md_safe(
         cb.message,
-        "Пришлите сообщение для рассылки: текст, фото, видео, GIF или документ.\nМожно добавить подпись с MarkdownV2.",
+        "Пришлите сообщение для рассылки: текст, фото, видео, аудио, GIF или документ.\nМожно добавить подпись с MarkdownV2.",
         reply_markup=cancel_keyboard(),
     )
     await cb.answer()
@@ -356,50 +356,15 @@ async def ready_catalog_delete(cb: CallbackQuery, state: FSMContext):
 async def broadcast_content(msg: Message, state: FSMContext):
     """Сохраняет контент рассылки и запрашивает URL кнопки."""
 
-    content_type = msg.content_type
-    supported_types = {
-        ContentType.TEXT,
-        ContentType.PHOTO,
-        ContentType.VIDEO,
-        ContentType.ANIMATION,
-        ContentType.DOCUMENT,
-    }
-    if content_type not in supported_types:
+    payload = _extract_broadcast_payload(msg)
+    if payload is None:
         await send_md_safe(
             msg,
-            "Поддерживаются только: текст, фото, видео, GIF и документ. Пришлите подходящее сообщение.",
+            "Поддерживаются только: текст, фото, видео, аудио, GIF и документ. Пришлите подходящее сообщение.",
         )
         return
 
-    text = message_to_markdown(msg)
-    payload: dict[str, str | None] = {"broadcast_type": "text", "broadcast_text": text}
-
-    if content_type == ContentType.PHOTO:
-        payload = {
-            "broadcast_type": "photo",
-            "broadcast_file_id": msg.photo[-1].file_id,
-            "broadcast_caption": text,
-        }
-    elif content_type == ContentType.VIDEO:
-        payload = {
-            "broadcast_type": "video",
-            "broadcast_file_id": msg.video.file_id,
-            "broadcast_caption": text,
-        }
-    elif content_type == ContentType.ANIMATION:
-        payload = {
-            "broadcast_type": "animation",
-            "broadcast_file_id": msg.animation.file_id,
-            "broadcast_caption": text,
-        }
-    elif content_type == ContentType.DOCUMENT:
-        payload = {
-            "broadcast_type": "document",
-            "broadcast_file_id": msg.document.file_id,
-            "broadcast_caption": text,
-        }
-
-    if payload.get("broadcast_type") == "text" and not text.strip():
+    if payload.get("broadcast_type") == "text" and not (payload.get("broadcast_text") or "").strip():
         await send_md_safe(msg, "Текст не может быть пустым. Пришлите сообщение для рассылки.")
         return
 
@@ -439,44 +404,142 @@ async def broadcast_url(msg: Message, state: FSMContext):
     await state.update_data(broadcast_url=url_value)
     await state.set_state(BroadcastState.waiting_confirm)
 
-    button_markup = None
-    if url_value:
-        button_markup = InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text="Подробнее", url=url_value)]]
-        )
-
-    if broadcast_type == "text":
-        await send_md_safe(
-            msg,
-            text,
-            reply_markup=button_markup,
-        )
-    else:
-        # Для предпросмотра отправляем тот же тип вложения, который уйдёт пользователям.
-        media_sender = {
-            "photo": msg.bot.send_photo,
-            "video": msg.bot.send_video,
-            "animation": msg.bot.send_animation,
-            "document": msg.bot.send_document,
-        }.get(broadcast_type)
-        if not media_sender:
-            await state.clear()
-            await send_md_safe(msg, "Неподдерживаемый тип вложения.", reply_markup=admin_kb())
-            return
-
-        await media_sender(
-            msg.chat.id,
-            **{broadcast_type: file_id},
-            caption=caption,
-            parse_mode="MarkdownV2" if caption else None,
-            reply_markup=button_markup,
-        )
-
+    await _send_broadcast_preview(
+        msg,
+        broadcast_type=broadcast_type,
+        text=text,
+        file_id=file_id,
+        caption=caption,
+        url=url_value,
+    )
     await send_md_safe(
         msg,
         "Подтвердите отправку.",
         reply_markup=broadcast_confirm_keyboard(),
     )
+
+
+@router.message(BroadcastState.waiting_confirm)
+async def broadcast_confirm_replace_content(msg: Message, state: FSMContext):
+    """Позволяет заменить контент рассылки до подтверждения отправки."""
+
+    payload = _extract_broadcast_payload(msg)
+    if payload is None:
+        await send_md_safe(
+            msg,
+            "Сейчас вы на шаге подтверждения. Пришлите текст/медиа для замены или нажмите «✅ Отправить всем».",
+        )
+        return
+
+    if payload.get("broadcast_type") == "text" and not (payload.get("broadcast_text") or "").strip():
+        await send_md_safe(msg, "Текст не может быть пустым. Пришлите сообщение для рассылки.")
+        return
+
+    data = await state.get_data()
+    url_value = data.get("broadcast_url")
+
+    await state.update_data(**payload)
+    await _send_broadcast_preview(
+        msg,
+        broadcast_type=payload.get("broadcast_type") or "text",
+        text=payload.get("broadcast_text"),
+        file_id=payload.get("broadcast_file_id"),
+        caption=payload.get("broadcast_caption"),
+        url=url_value,
+    )
+    await send_md_safe(
+        msg,
+        "Контент обновлён. Подтвердите отправку или отправьте новый контент.",
+        reply_markup=broadcast_confirm_keyboard(),
+    )
+
+
+async def _send_broadcast_preview(
+    msg: Message,
+    *,
+    broadcast_type: str,
+    text: str | None,
+    file_id: str | None,
+    caption: str | None,
+    url: str | None,
+):
+    """Отправляет предпросмотр рассылки в формате итогового сообщения."""
+
+    button_markup = None
+    if url:
+        button_markup = InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text="Подробнее", url=url)]]
+        )
+
+    if broadcast_type == "text":
+        await send_md_safe(
+            msg,
+            text or "",
+            reply_markup=button_markup,
+        )
+        return
+
+    media_sender = {
+        "photo": msg.bot.send_photo,
+        "video": msg.bot.send_video,
+        "animation": msg.bot.send_animation,
+        "document": msg.bot.send_document,
+        "audio": msg.bot.send_audio,
+    }.get(broadcast_type)
+
+    if not media_sender:
+        await send_md_safe(msg, "Неподдерживаемый тип вложения.", reply_markup=admin_kb())
+        return
+
+    await media_sender(
+        msg.chat.id,
+        **{broadcast_type: file_id},
+        caption=caption,
+        parse_mode="MarkdownV2" if caption else None,
+        reply_markup=button_markup,
+    )
+
+
+def _extract_broadcast_payload(msg: Message) -> dict[str, str | None] | None:
+    """Извлекает данные сообщения для последующей рассылки."""
+
+    content_type = msg.content_type
+    text = message_to_markdown(msg)
+
+    if content_type == ContentType.TEXT:
+        return {"broadcast_type": "text", "broadcast_text": text}
+    if content_type == ContentType.PHOTO:
+        return {
+            "broadcast_type": "photo",
+            "broadcast_file_id": msg.photo[-1].file_id,
+            "broadcast_caption": text,
+        }
+    if content_type == ContentType.VIDEO:
+        return {
+            "broadcast_type": "video",
+            "broadcast_file_id": msg.video.file_id,
+            "broadcast_caption": text,
+        }
+    if content_type == ContentType.ANIMATION:
+        return {
+            "broadcast_type": "animation",
+            "broadcast_file_id": msg.animation.file_id,
+            "broadcast_caption": text,
+        }
+    if content_type == ContentType.DOCUMENT:
+        return {
+            "broadcast_type": "document",
+            "broadcast_file_id": msg.document.file_id,
+            "broadcast_caption": text,
+        }
+    if content_type == ContentType.AUDIO:
+        return {
+            "broadcast_type": "audio",
+            "broadcast_file_id": msg.audio.file_id,
+            "broadcast_caption": text,
+        }
+
+    return None
 
 
 async def _run_broadcast(

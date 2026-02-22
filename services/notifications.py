@@ -160,6 +160,13 @@ async def send_bulk_media(
             parse_mode=parse_mode,
             reply_markup=reply_markup,
         ),
+        "audio": lambda chat_id: bot.send_audio(
+            chat_id,
+            audio=file_id,
+            caption=caption,
+            parse_mode=parse_mode,
+            reply_markup=reply_markup,
+        ),
     }
 
     send_method = sender_map.get(content_type)
